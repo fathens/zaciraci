@@ -5,11 +5,16 @@
 //! を直接突く形でユニットテストする。`PortfolioCostInputs` は BTreeMap で
 //! 直構築可能なため、モックを用意せずとも以下の境界が網羅できる:
 //!
-//! - NaN / ±Infinity / 負値 weight が `is_finite() && >= 0.0` 境界で 0 に
-//!   クランプされ、Markowitz への NaN cascade 経路が型レベルで塞がれる
-//! - tokens / weights 長さ不一致が `debug_assert_eq!` で fail-loud
-//! - total_value=0 や全 weight=0 で全 token が `estimation_failures` 経路に
-//!   合流（NaN を埋めず除外する設計の検証）
+//! - NaN / ±Infinity / 負値 target_w が `estimation_failures` に倒される
+//!   （0 にクランプして Markowitz が「コストなし」と誤認する経路を遮断）
+//! - tokens / target_weights / current_weights 長さ不一致が `debug_assert_eq!` で fail-loud
+//! - total_value=0（全 held_size=0）で全 token が `estimation_failures` に合流
+//! - 全 target_w=0 は estimation_failures ではなく deductions[i] = 0
+//!   （Δw refactor の semantics: target_w=0 は full exit 経路、Markowitz
+//!   は weight=0 で当該銘柄を 0 寄与にする）
+//! - `target_w == current_w` で Δw ≈ 0 → deductions[i] = 0 (取引なし)
+//! - 部分 exit (current=1.0 → target=0.6) は full entry (current=0 → target=0.6)
+//!   より低い deduction（trade size がより小さいため variable_cost が縮む）
 //! - `inputs.paths` / `inputs.rates` の片方欠損は防御的にスキップ
 //! - `existing_deposits` ヒットで storage 固定費が抑制される
 
@@ -84,56 +89,55 @@ fn make_inputs(
 }
 
 // ---------------------------------------------------------------------------
-// (a) NaN / ±Infinity / 負値 weight クランプ
+// (a) NaN / ±Infinity / 負値 target_w
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_compute_cost_deductions_nan_weight_clamps_to_zero_and_falls_through() {
-    // NaN weight は入口で 0.0 にクランプされ、assumed_in=0 → ZeroPosition
-    // → estimation_failures 経路に合流する（NaN を Markowitz に流入させない）。
+fn test_compute_cost_deductions_nan_target_w_falls_through_to_failures() {
+    // NaN target_w は upstream のロジック異常シグナル。silent に 0 へ
+    // 倒すと optimizer が「コストなし」で誤認するため、estimation_failures
+    // に合流させて retain_excluding で除外する。
     let sym = token("nan");
     let tokens = vec![token_data(sym.clone())];
     let inputs = make_inputs(std::slice::from_ref(&sym), HashSet::new());
     let total = BigDecimal::from(ONE_NEAR_YOCTO);
-    let result = compute_cost_deductions(&[f64::NAN], &tokens, &inputs, &total);
+    let result = compute_cost_deductions(&[f64::NAN], &[0.0], &tokens, &inputs, &total);
     assert!(
         result.deductions.is_empty(),
-        "NaN weight must not produce a deduction entry"
+        "NaN target_w must not produce a deduction entry"
     );
     assert_eq!(result.estimation_failures, vec![sym]);
 }
 
 #[test]
-fn test_compute_cost_deductions_positive_infinity_weight_clamps_to_zero() {
-    // +Infinity も is_finite() == false により 0 化、ZeroPosition 経路へ。
+fn test_compute_cost_deductions_positive_infinity_target_w_falls_through_to_failures() {
     let sym = token("posinf");
     let tokens = vec![token_data(sym.clone())];
     let inputs = make_inputs(std::slice::from_ref(&sym), HashSet::new());
     let total = BigDecimal::from(ONE_NEAR_YOCTO);
-    let result = compute_cost_deductions(&[f64::INFINITY], &tokens, &inputs, &total);
+    let result = compute_cost_deductions(&[f64::INFINITY], &[0.0], &tokens, &inputs, &total);
     assert!(result.deductions.is_empty());
     assert_eq!(result.estimation_failures, vec![sym]);
 }
 
 #[test]
-fn test_compute_cost_deductions_negative_infinity_weight_clamps_to_zero() {
+fn test_compute_cost_deductions_negative_infinity_target_w_falls_through_to_failures() {
     let sym = token("neginf");
     let tokens = vec![token_data(sym.clone())];
     let inputs = make_inputs(std::slice::from_ref(&sym), HashSet::new());
     let total = BigDecimal::from(ONE_NEAR_YOCTO);
-    let result = compute_cost_deductions(&[f64::NEG_INFINITY], &tokens, &inputs, &total);
+    let result = compute_cost_deductions(&[f64::NEG_INFINITY], &[0.0], &tokens, &inputs, &total);
     assert!(result.deductions.is_empty());
     assert_eq!(result.estimation_failures, vec![sym]);
 }
 
 #[test]
-fn test_compute_cost_deductions_negative_finite_weight_clamps_to_zero() {
-    // 有限の負値も `.max(0.0)` で 0 化される（不変条件: w >= 0.0）。
+fn test_compute_cost_deductions_negative_finite_target_w_falls_through_to_failures() {
     let sym = token("neg");
     let tokens = vec![token_data(sym.clone())];
     let inputs = make_inputs(std::slice::from_ref(&sym), HashSet::new());
     let total = BigDecimal::from(ONE_NEAR_YOCTO);
-    let result = compute_cost_deductions(&[-0.5], &tokens, &inputs, &total);
+    let result = compute_cost_deductions(&[-0.5], &[0.0], &tokens, &inputs, &total);
     assert!(result.deductions.is_empty());
     assert_eq!(result.estimation_failures, vec![sym]);
 }
@@ -144,51 +148,65 @@ fn test_compute_cost_deductions_negative_finite_weight_clamps_to_zero() {
 
 #[cfg(debug_assertions)]
 #[test]
-#[should_panic(expected = "tokens and weights must have the same length")]
+#[should_panic(expected = "tokens and target_weights must have the same length")]
 fn test_compute_cost_deductions_length_mismatch_panics_in_debug() {
-    // G2 の zip + debug_assert_eq! 構造の検証。release ビルドでは silent
-    // truncation するが、debug ビルドで早期検出する設計を確認する。
     let a = token("a");
     let b = token("b");
     let tokens = vec![token_data(a.clone()), token_data(b.clone())];
     let inputs = make_inputs(&[a, b], HashSet::new());
     let total = BigDecimal::from(ONE_NEAR_YOCTO);
-    // weights の長さ (1) が tokens の長さ (2) と一致しない。
-    let _ = compute_cost_deductions(&[0.5], &tokens, &inputs, &total);
+    let _ = compute_cost_deductions(&[0.5], &[0.0, 0.0], &tokens, &inputs, &total);
 }
 
 // ---------------------------------------------------------------------------
-// (c) total_value=0 ケース（全 token 脱落の代表シナリオ）
+// (c) total_value=0 / 全 weight=0 ケース
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_compute_cost_deductions_total_value_zero_drops_all_tokens() {
-    // total_value=0 → assumed_in = 0 × weight = 0 で全 token が
-    // ZeroPosition により estimation_failures に合流する。
-    // これは「全 token が脱落するため Hold に倒れる」病理パスの入口で、
-    // run_one_iteration が None を返す前提条件を担保する。
+fn test_compute_cost_deductions_total_value_zero_drops_all_held_tokens_to_failures() {
+    // total_value=0 → held_size = 0 で ZeroPosition → estimation_failures。
+    // Δw refactor 後も「held=0 はコスト比率を割れない」不変条件は維持される。
     let a = token("a");
     let b = token("b");
     let tokens = vec![token_data(a.clone()), token_data(b.clone())];
     let inputs = make_inputs(&[a.clone(), b.clone()], HashSet::new());
     let total = BigDecimal::from(0);
-    let result = compute_cost_deductions(&[0.5, 0.5], &tokens, &inputs, &total);
+    let result = compute_cost_deductions(&[0.5, 0.5], &[0.0, 0.0], &tokens, &inputs, &total);
     assert!(result.deductions.is_empty());
     assert_eq!(result.estimation_failures, vec![a, b]);
 }
 
 #[test]
-fn test_compute_cost_deductions_all_zero_weights_drop_all_tokens() {
-    // 全 weight=0 でも assumed_in=0 → ZeroPosition が同じく全 token を
-    // estimation_failures に合流させる（total=0 と等価な経路）。
+fn test_compute_cost_deductions_all_zero_target_w_yields_zero_deductions() {
+    // Δw refactor: 全 target_w = 0 でも estimation_failures ではなく
+    // deductions[i] = 0 を返す。Markowitz 側で `weight × (r - 0) = 0` に
+    // なって当該銘柄に依存しないため、portfolio 比較に影響しない。
+    // current_w も 0 なので「保有なし、目標も 0」で実取引も発生しない。
     let a = token("a");
     let b = token("b");
     let tokens = vec![token_data(a.clone()), token_data(b.clone())];
     let inputs = make_inputs(&[a.clone(), b.clone()], HashSet::new());
     let total = BigDecimal::from(ONE_NEAR_YOCTO);
-    let result = compute_cost_deductions(&[0.0, 0.0], &tokens, &inputs, &total);
-    assert!(result.deductions.is_empty());
-    assert_eq!(result.estimation_failures, vec![a, b]);
+    let result = compute_cost_deductions(&[0.0, 0.0], &[0.0, 0.0], &tokens, &inputs, &total);
+    assert!(result.estimation_failures.is_empty());
+    assert_eq!(result.deductions.len(), 2);
+    for sym in [&a, &b] {
+        assert_eq!(result.deductions.get(sym).copied(), Some(0.0));
+    }
+}
+
+#[test]
+fn test_compute_cost_deductions_target_w_zero_with_current_w_yields_zero_deduction() {
+    // target_w=0 で current_w > 0 (full exit)。Markowitz の構造的限界として
+    // SELL コストは weight=0 で打ち消されるが、deduction フィールド自体は
+    // 0 として埋めて failures に倒さない（optimizer 入力との単位整合）。
+    let sym = token("exit-only");
+    let tokens = vec![token_data(sym.clone())];
+    let inputs = make_inputs(std::slice::from_ref(&sym), HashSet::new());
+    let total = BigDecimal::from(ONE_NEAR_YOCTO);
+    let result = compute_cost_deductions(&[0.0], &[0.5], &tokens, &inputs, &total);
+    assert!(result.estimation_failures.is_empty());
+    assert_eq!(result.deductions.get(&sym).copied(), Some(0.0));
 }
 
 // ---------------------------------------------------------------------------
@@ -196,15 +214,11 @@ fn test_compute_cost_deductions_all_zero_weights_drop_all_tokens() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_compute_cost_deductions_mixed_weights_with_target_w_zero() {
-    // Phase 2 移行前の Entry-from-cash モデルが exit token (target_w=0) で
-    // 何が起きるかを pin する。`[0.6, 0.0, 0.4]` で:
-    //   - exit token (w=0): assumed_in = 0 → ZeroPosition → estimation_failures
-    //   - entry tokens (w>0): 正常経路で deductions に残る
-    // 後続反復で `retain_excluding(estimation_failures)` により exit token が
-    // portfolio から外され、結果として「全 exit する」判断に SELL コストが
-    // 計上されない既知の limitation を test として固定する。
-    // Phase 2 で Δw ベースに切り替わるとこのテストは「変更されるべき」シグナル。
+fn test_compute_cost_deductions_mixed_target_w_zero_yields_zero_deduction_with_full_exit() {
+    // Δw refactor 後: target_w=0 で current_w>0 (full exit) は estimation_failures
+    // ではなく deductions[i] = 0 を返す。Markowitz は weight=0 で当該銘柄を
+    // 0 寄与にするため exit cost は portfolio 比較に流れないが、deductions マップ
+    // としては有効値として埋まる。entry tokens は通常通り cost 計算される。
     let entry_a = token("entry-a");
     let exit_b = token("exit-b");
     let entry_c = token("entry-c");
@@ -219,20 +233,15 @@ fn test_compute_cost_deductions_mixed_weights_with_target_w_zero() {
     );
     let total = BigDecimal::from(ONE_NEAR_YOCTO);
 
-    let result = compute_cost_deductions(&[0.6, 0.0, 0.4], &tokens, &inputs, &total);
+    // current_w: exit_b は 0.5 を保有中 (full exit シナリオ)、他は entry from cash
+    let result =
+        compute_cost_deductions(&[0.6, 0.0, 0.4], &[0.0, 0.5, 0.0], &tokens, &inputs, &total);
 
-    // exit token は estimation_failures のみに現れる
-    assert_eq!(
-        result.estimation_failures,
-        vec![exit_b.clone()],
-        "target_w=0 token must fall through to estimation_failures (Entry-from-cash limitation)"
-    );
-    assert!(
-        !result.deductions.contains_key(&exit_b),
-        "target_w=0 token must not appear in deductions"
-    );
+    // exit token は deductions に 0.0 として現れる（failures ではない）
+    assert!(result.estimation_failures.is_empty());
+    assert_eq!(result.deductions.get(&exit_b).copied(), Some(0.0));
 
-    // entry token はそれぞれ deductions に有限非負値で残る
+    // entry tokens は通常の cost 計算で deduction を得る
     for entry in [&entry_a, &entry_c] {
         let v = *result
             .deductions
@@ -243,26 +252,21 @@ fn test_compute_cost_deductions_mixed_weights_with_target_w_zero() {
             "deduction for {entry} must be finite-non-negative: got {v}"
         );
     }
-    assert_eq!(
-        result.deductions.len(),
-        2,
-        "exactly the two entry tokens must contribute deductions"
-    );
+    assert_eq!(result.deductions.len(), 3);
 }
 
 #[test]
-fn test_compute_cost_deductions_mixed_weights_higher_target_w_higher_assumed_in() {
-    // mixed weight で「entry-from-cash モデルでは target_w に取引額が比例する」
-    // ことを確認。`[0.9, 0.1]` で entry_a の deduction の variable 部分が
-    // entry_b より大きい total コストを生む（fixed_cost は同条件で同値）。
-    // Δw ベース PR でこの単調性が崩れないか検知するためのアンカー。
+fn test_compute_cost_deductions_higher_held_dilutes_fixed_cost_ratio() {
+    // Entry from cash の比較: target_w が大きい銘柄ほど held_size も大きく、
+    // fixed_cost が希釈されて deduction ratio が小さくなる。
+    // [0.9, 0.1] vs current=[0,0] → trade==held で旧モデルと同等の振る舞い。
     let entry_a = token("big");
     let entry_b = token("small");
     let tokens = vec![token_data(entry_a.clone()), token_data(entry_b.clone())];
     let inputs = make_inputs(&[entry_a.clone(), entry_b.clone()], HashSet::new());
     let total = BigDecimal::from(ONE_NEAR_YOCTO);
 
-    let result = compute_cost_deductions(&[0.9, 0.1], &tokens, &inputs, &total);
+    let result = compute_cost_deductions(&[0.9, 0.1], &[0.0, 0.0], &tokens, &inputs, &total);
 
     let v_big = *result
         .deductions
@@ -273,15 +277,60 @@ fn test_compute_cost_deductions_mixed_weights_higher_target_w_higher_assumed_in(
         .get(&entry_b)
         .expect("small token deduction");
 
-    // fixed_cost が同条件 (deposits 共通) のため、deduction の差は variable 部分で
-    // 駆動される。assumed_in の比率は 9:1 でも fixed_cost の希釈で v_big < v_small。
-    // この監視点は Δw 導入で逆転する可能性があるので、現状の単調性を pin。
     assert!(
         v_big < v_small,
-        "with shared fixed_cost, larger assumed_in dilutes ratio: big={v_big} small={v_small}"
+        "larger held dilutes fixed-cost share: big={v_big} small={v_small}"
     );
     assert!(v_big.is_finite() && v_big >= 0.0);
     assert!(v_small.is_finite() && v_small >= 0.0);
+}
+
+#[test]
+fn test_compute_cost_deductions_no_op_when_target_matches_current() {
+    // Δw ≈ 0 (target_w == current_w) なら取引なし → deduction = 0。
+    // estimate_trade_cost を呼ばない短絡経路で、cost 推定の AMM ロード /
+    // gas 推定を回避するパフォーマンス上の利点もある。
+    let sym = token("hold");
+    let tokens = vec![token_data(sym.clone())];
+    let inputs = make_inputs(std::slice::from_ref(&sym), HashSet::new());
+    let total = BigDecimal::from(ONE_NEAR_YOCTO);
+
+    let result = compute_cost_deductions(&[0.6], &[0.6], &tokens, &inputs, &total);
+
+    assert!(result.estimation_failures.is_empty());
+    assert_eq!(result.deductions.get(&sym).copied(), Some(0.0));
+}
+
+#[test]
+fn test_compute_cost_deductions_partial_exit_lower_than_full_entry() {
+    // 部分 exit (current=1.0 → target=0.6, |Δw|=0.4) は held=0.6 で
+    // 同 held を full entry (current=0 → target=0.6) した場合より trade size が
+    // 小さい (0.4 vs 0.6) ので variable_cost 部分が減り、deduction ratio が
+    // 小さくなる。Δw refactor の本質を pin する property test。
+    let sym = token("partial");
+    let tokens = vec![token_data(sym.clone())];
+    let inputs = make_inputs(std::slice::from_ref(&sym), HashSet::new());
+    let total = BigDecimal::from(ONE_NEAR_YOCTO);
+
+    let partial_exit = compute_cost_deductions(&[0.6], &[1.0], &tokens, &inputs, &total);
+    let full_entry = compute_cost_deductions(&[0.6], &[0.0], &tokens, &inputs, &total);
+
+    let v_partial = *partial_exit
+        .deductions
+        .get(&sym)
+        .expect("partial-exit deduction");
+    let v_full = *full_entry
+        .deductions
+        .get(&sym)
+        .expect("full-entry deduction");
+
+    assert!(
+        v_partial < v_full,
+        "partial exit (smaller |Δw|) must yield lower deduction than full entry: \
+         partial={v_partial} full={v_full}"
+    );
+    assert!(v_partial.is_finite() && v_partial >= 0.0);
+    assert!(v_full.is_finite() && v_full >= 0.0);
 }
 
 // ---------------------------------------------------------------------------
@@ -292,7 +341,7 @@ fn test_compute_cost_deductions_mixed_weights_higher_target_w_higher_assumed_in(
 fn test_compute_cost_deductions_empty_tokens_returns_empty_result() {
     let inputs = make_inputs(&[], HashSet::new());
     let total = BigDecimal::from(ONE_NEAR_YOCTO);
-    let result = compute_cost_deductions(&[], &[], &inputs, &total);
+    let result = compute_cost_deductions(&[], &[], &[], &inputs, &total);
     assert!(result.deductions.is_empty());
     assert!(result.estimation_failures.is_empty());
 }
@@ -308,7 +357,7 @@ fn test_compute_cost_deductions_missing_path_silently_skips_token() {
     // make_inputs に渡すのは present だけ → missing.path は欠損
     let inputs = make_inputs(std::slice::from_ref(&present), HashSet::new());
     let total = BigDecimal::from(ONE_NEAR_YOCTO);
-    let result = compute_cost_deductions(&[0.5, 0.5], &tokens, &inputs, &total);
+    let result = compute_cost_deductions(&[0.5, 0.5], &[0.0, 0.0], &tokens, &inputs, &total);
     // present は正常経路で deduction or failures いずれかに入る
     let total_referenced = result.deductions.len() + result.estimation_failures.len();
     assert_eq!(
@@ -334,7 +383,7 @@ fn test_compute_cost_deductions_missing_rate_silently_skips_token() {
     let mut inputs = make_inputs(&[present.clone(), missing_rate.clone()], HashSet::new());
     inputs.rates.remove(&missing_rate);
     let total = BigDecimal::from(ONE_NEAR_YOCTO);
-    let result = compute_cost_deductions(&[0.5, 0.5], &tokens, &inputs, &total);
+    let result = compute_cost_deductions(&[0.5, 0.5], &[0.0, 0.0], &tokens, &inputs, &total);
     assert!(
         !result.deductions.contains_key(&missing_rate)
             && !result.estimation_failures.contains(&missing_rate),
@@ -348,14 +397,14 @@ fn test_compute_cost_deductions_missing_rate_silently_skips_token() {
 
 #[test]
 fn test_compute_cost_deductions_normal_token_produces_finite_deduction() {
-    // 有限 weight + 揃った path/rate + 非ゼロ total で deduction が得られる。
+    // entry from cash (current=0 → target=1.0) で deduction が得られる。
     // 値は EXPECTED_SLIPPAGE_DEDUCTION (variable) + storage/gas (fixed) の和で、
     // CostDeduction::new の不変条件 (`is_finite() && >= 0.0`) を満たす。
     let sym = token("normal");
     let tokens = vec![token_data(sym.clone())];
     let inputs = make_inputs(std::slice::from_ref(&sym), HashSet::new());
     let total = BigDecimal::from(ONE_NEAR_YOCTO);
-    let result = compute_cost_deductions(&[1.0], &tokens, &inputs, &total);
+    let result = compute_cost_deductions(&[1.0], &[0.0], &tokens, &inputs, &total);
     assert!(result.estimation_failures.is_empty());
     let value = *result
         .deductions
@@ -374,7 +423,7 @@ fn test_compute_cost_deductions_existing_deposit_lowers_fixed_cost() {
 
     // case A: deposit なし → storage 固定費が掛かる
     let inputs_no_dep = make_inputs(std::slice::from_ref(&sym), HashSet::new());
-    let r_no_dep = compute_cost_deductions(&[1.0], &tokens, &inputs_no_dep, &total);
+    let r_no_dep = compute_cost_deductions(&[1.0], &[0.0], &tokens, &inputs_no_dep, &total);
     let v_no_dep = *r_no_dep
         .deductions
         .get(&sym)
@@ -384,7 +433,7 @@ fn test_compute_cost_deductions_existing_deposit_lowers_fixed_cost() {
     let mut deposits = HashSet::new();
     deposits.insert(TokenAccount::from(sym.clone()));
     let inputs_with_dep = make_inputs(std::slice::from_ref(&sym), deposits);
-    let r_with_dep = compute_cost_deductions(&[1.0], &tokens, &inputs_with_dep, &total);
+    let r_with_dep = compute_cost_deductions(&[1.0], &[0.0], &tokens, &inputs_with_dep, &total);
     let v_with_dep = *r_with_dep
         .deductions
         .get(&sym)

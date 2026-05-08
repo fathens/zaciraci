@@ -2119,7 +2119,7 @@ pub async fn execute_portfolio_optimization(
 
 /// 現在の重みを計算
 /// 型安全: holdingsはTokenAmount（smallest_units + decimals）、total_valueはNearValue（NEAR単位）
-fn calculate_current_weights(tokens: &[TokenInfo], wallet: &WalletInfo) -> Vec<f64> {
+pub fn calculate_current_weights(tokens: &[TokenInfo], wallet: &WalletInfo) -> Vec<f64> {
     let mut weights = vec![0.0; tokens.len()];
     let total_value = &wallet.total_value;
 

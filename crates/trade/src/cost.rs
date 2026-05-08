@@ -4,7 +4,7 @@
 //! ガス・storage・スリッページマージンを差し引くための純関数群。
 
 use crate::Result;
-use bigdecimal::{BigDecimal, ToPrimitive, Zero};
+use bigdecimal::{BigDecimal, FromPrimitive, ToPrimitive, Zero};
 use blockchain::ref_finance::path::preview::estimate_swap_gas_cost_yocto;
 use blockchain::types::gas_price::GasPrice;
 use common::types::{ExchangeRate, NearValue, TokenAmount, YoctoValue};
@@ -30,8 +30,8 @@ pub(crate) const EXPECTED_SLIPPAGE_DEDUCTION: f64 = 0.005;
 /// RPC 由来の `storage_min` が壊れたノード／敵対的応答で異常に巨大な値
 /// （例: `u128::MAX`）を返した場合、`storage_per_token × new_token_count`
 /// が overflow して `saturating_mul` で `u128::MAX` に張り付き、固定コストが
-/// 取引額をはるかに超える結果として全トークンが `to_cost_deduction` 失敗で
-/// portfolio から除外される DoS 経路になり得る。
+/// 取引額をはるかに超える結果として全トークンが `to_cost_deduction_with_basis`
+/// 失敗で portfolio から除外される DoS 経路になり得る。
 ///
 /// 実運用上の `storage_min` は 10⁻⁴ NEAR ～ 1 NEAR オーダーなので、
 /// 1 NEAR を上限として min クランプし、境界で異常値を遮断する。
@@ -89,15 +89,15 @@ impl From<CostDeduction> for f64 {
     }
 }
 
-/// `to_cost_deduction` の失敗バリアント
+/// `to_cost_deduction_with_basis` の失敗バリアント
 ///
 /// 失敗した token は呼び出し側で `estimation_failures` 経路に合流させ、
 /// `retain_tokens` で portfolio から除外することを期待する。
 /// `f64::INFINITY` を返して silent に Markowitz に流入させてはならない。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum CostError {
-    /// `assumed_position` が 0 — コスト比率を取引額で割れず計算不能
-    #[error("cost deduction is undefined when assumed_position is 0")]
+    /// `held_size` が 0 — コスト比率を保有額で割れず計算不能（target_w = 0 の full exit 等）。
+    #[error("cost deduction is undefined when held_size is 0")]
     ZeroPosition,
     /// derive した比率が `f64::INFINITY` または `f64::NAN`（BigDecimal→f64 変換異常）
     #[error("derived cost ratio is non-finite (NaN/Infinity)")]
@@ -133,28 +133,62 @@ impl TradeCostBreakdown {
     /// `sum_p.abs() < 1e-15` 等のガード（`common::algorithm::portfolio.rs:739`）
     /// が NaN 比較で防御失効する。失敗 token は `retain_tokens` 経由で
     /// portfolio から除外されるべき。
-    pub(crate) fn to_cost_deduction(
+    /// Δw ベースのコスト deduction を計算する（Phase 2 形式）。
+    ///
+    /// - `trade_size`: 実際にスワップする量（`|Δw| × total_value`、yoctoNEAR）。
+    ///   `variable_ratio` は `estimate_trade_cost` 内で `assumed_in = trade_size`
+    ///   として算出される前提で渡される（呼び出し側が一致を保つ責任を負う）。
+    /// - `held_size`: target weight 下で保有する量（`target_w × total_value`、yoctoNEAR）。
+    ///   結果の deduction はこの値をベースに正規化され、Markowitz の
+    ///   `expected_return - deduction` と単位整合する。
+    ///
+    /// 数式:
+    ///
+    /// ```text
+    ///   total_cost_in_near = variable_ratio × trade_size_near + fixed_cost_near
+    ///   deduction          = total_cost_in_near / held_size_near
+    /// ```
+    ///
+    /// 旧 `to_cost_deduction(assumed_position)` は `trade_size == held_size` を
+    /// 前提とした Entry-from-cash モデルのため、`target_w = 0`（全 exit）で
+    /// SELL コストが消失する制約がある。本メソッドは trade_size と held_size を
+    /// 分離して扱うことで、partial exit / entry の両方向で正しい cost ratio を
+    /// 与える。`held_size = 0`（full exit）は依然として `ZeroPosition` で
+    /// 上位に通知し、呼び出し側で 0 deduction として扱う設計を採る。これは
+    /// Markowitz が target_w=0 の銘柄を `r - deduction` の符号で選好しない
+    /// （weight × return = 0 で contribution ゼロ）構造的限界に由来し、
+    /// 本メソッドの責務外。
+    ///
+    /// # 不変条件
+    ///
+    /// - 戻り値の `CostDeduction` は `is_finite() && >= 0.0` を必ず満たす。
+    /// - `held_size = 0` → `Err(CostError::ZeroPosition)`。
+    /// - BigDecimal→f64 変換失敗 → `Err(CostError::NonFiniteRatio)`。
+    /// - `variable_ratio` が non-finite → `Err(CostError::NonFiniteRatio)`。
+    pub(crate) fn to_cost_deduction_with_basis(
         &self,
-        assumed_position: &YoctoValue,
+        trade_size: &YoctoValue,
+        held_size: &YoctoValue,
     ) -> std::result::Result<CostDeduction, CostError> {
-        if assumed_position.as_bigdecimal().is_zero() {
+        if held_size.as_bigdecimal().is_zero() {
             return Err(CostError::ZeroPosition);
         }
-        // NEAR スケールで f64 変換 (~10⁻³ オーダー → f64 仮数部範囲内)
-        let fixed_near = self.fixed_cost.to_near();
-        let position_near = assumed_position.to_near();
-        let ratio_bd = fixed_near.as_bigdecimal() / position_near.as_bigdecimal();
-        // `BigDecimal::to_f64` は値が大きすぎて f64 に収まらない場合に `None` を
-        // 返す。`?` で `None` 経路は `NonFiniteRatio` として伝播するため、以降の
-        // `ratio` は有限性が保証されており再検査は不要。
-        let ratio = ratio_bd.to_f64().ok_or(CostError::NonFiniteRatio)?;
-        // `variable_ratio` は self の別経路（`compute_variable_ratio`）から来る
-        // 独立なフィールドのため、`ratio` の有限性とは別ラインで検査する。
         if !self.variable_ratio.is_finite() {
             return Err(CostError::NonFiniteRatio);
         }
-        let total = self.variable_ratio + ratio;
-        CostDeduction::new(total).ok_or(CostError::NonFiniteRatio)
+        // BigDecimal で精度を保ったまま「変動費 NEAR + 固定費 NEAR」を構築し、
+        // 最後に held_size_near で割って ratio を作る。f64 経由の中間誤差を
+        // できるだけ排除しつつ、変換失敗は `NonFiniteRatio` で fail-soft。
+        let trade_near = trade_size.to_near();
+        let held_near = held_size.to_near();
+        let fixed_near = self.fixed_cost.to_near();
+        let var_ratio_bd = bigdecimal::BigDecimal::from_f64(self.variable_ratio)
+            .ok_or(CostError::NonFiniteRatio)?;
+        let var_cost_near = trade_near.as_bigdecimal() * var_ratio_bd;
+        let total_cost_near = var_cost_near + fixed_near.as_bigdecimal();
+        let ratio_bd = total_cost_near / held_near.as_bigdecimal();
+        let ratio = ratio_bd.to_f64().ok_or(CostError::NonFiniteRatio)?;
+        CostDeduction::new(ratio).ok_or(CostError::NonFiniteRatio)
     }
 }
 
@@ -181,8 +215,8 @@ pub(crate) fn estimate_trade_cost(
 ) -> Result<TradeCostBreakdown> {
     // cron tick path で呼ばれるため `debug_assert!` は使わない（CONTRIBUTING.md
     // の cron-path assert ban 趣旨）。caller 側のロジック異常で `cap × N` が
-    // 膨れて `fixed_cost` が取引額を超え、全 token が `to_cost_deduction` 失敗
-    // で除外される DoS 経路を runtime で遮断する。
+    // 膨れて `fixed_cost` が取引額を超え、全 token が `to_cost_deduction_with_basis`
+    // 失敗で除外される DoS 経路を runtime で遮断する。
     if new_token_count > MAX_NEW_TOKEN_COUNT {
         anyhow::bail!(
             "new_token_count {new_token_count} exceeds MAX_NEW_TOKEN_COUNT {MAX_NEW_TOKEN_COUNT}"
@@ -215,7 +249,7 @@ pub(crate) fn estimate_trade_cost(
 /// RPC 由来の値が `u128` に収まらない or 上限を超える場合は `STORAGE_MIN_SANE_CAP`
 /// にクランプされる。これにより `saturating_mul(new_token_count)` が
 /// `u128::MAX` に張り付いて固定コストが取引額を超え、全トークンが
-/// `to_cost_deduction` 失敗で portfolio から除外される DoS 経路を遮断する。
+/// `to_cost_deduction_with_basis` 失敗で portfolio から除外される DoS 経路を遮断する。
 ///
 /// # observability
 ///
@@ -289,7 +323,7 @@ fn compute_variable_ratio(
 ///
 /// `BigDecimal::to_f64` は bigdecimal クレート仕様上ほぼ `None` を返さないが、
 /// 極端な scale を持つ BigDecimal で失敗する余地は残る。失敗時は `Err` を伝播し、
-/// caller (`compute_variable_ratio` → `to_cost_deduction` → `compute_cost_deductions`)
+/// caller (`compute_variable_ratio` → `to_cost_deduction_with_basis` → `compute_cost_deductions`)
 /// で `estimation_failures` 経路に合流させて当該 token を portfolio から除外する。
 /// 旧実装は `EXPECTED_SLIPPAGE_DEDUCTION` を返していたが、caller 側で同定数を再加算する
 /// ため二重加算（実質 1.0%）になる semantic mistake と、敵対 RPC 経由で
