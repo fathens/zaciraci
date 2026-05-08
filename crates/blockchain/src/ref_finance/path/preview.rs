@@ -75,24 +75,32 @@ fn emit_cap_warn_rate_limited(raw: u128, depth: usize, gas_price: GasPrice) {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
+    if try_acquire_cap_warn_slot(now) {
+        let log = DEFAULT.new(o!("function" => "swap_gas_cost_yocto_u128"));
+        warn!(log, "gas yocto clamped to sane cap";
+            "raw" => raw,
+            "cap" => GAS_YOCTO_SANE_CAP,
+            "depth" => depth,
+            "gas_price_yocto" => gas_price.to_balance(),
+            "rate_limit_secs" => GAS_CAP_WARN_INTERVAL_SECS,
+        );
+    }
+}
+
+/// rate-limit slot 取得の純粋ロジック (テスト用に時刻を引数化)。
+///
+/// `last + GAS_CAP_WARN_INTERVAL_SECS <= now` の場合のみ slot を取得し
+/// `GAS_CAP_LAST_WARN_UNIX` を `now` に CAS で書き換える。`true` を返したら
+/// caller は warn を emit してよい。並列 thread の同時取得は 1 thread のみが
+/// 成功する。
+fn try_acquire_cap_warn_slot(now: u64) -> bool {
     let last = GAS_CAP_LAST_WARN_UNIX.load(Ordering::Relaxed);
     if now.saturating_sub(last) < GAS_CAP_WARN_INTERVAL_SECS {
-        return;
+        return false;
     }
-    if GAS_CAP_LAST_WARN_UNIX
+    GAS_CAP_LAST_WARN_UNIX
         .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
-        .is_err()
-    {
-        return;
-    }
-    let log = DEFAULT.new(o!("function" => "swap_gas_cost_yocto_u128"));
-    warn!(log, "gas yocto clamped to sane cap";
-        "raw" => raw,
-        "cap" => GAS_YOCTO_SANE_CAP,
-        "depth" => depth,
-        "gas_price_yocto" => gas_price.to_balance(),
-        "rate_limit_secs" => GAS_CAP_WARN_INTERVAL_SECS,
-    );
+        .is_ok()
 }
 
 /// 指定 depth の swap で消費するガス料金を yoctoNEAR で見積もる。
@@ -253,6 +261,73 @@ mod tests {
         let hostile = GasPrice::from_balance(NearToken::from_yoctonear(10u128.pow(20)));
         let result = swap_gas_cost_yocto_u128(hostile, 1);
         assert_eq!(result, GAS_YOCTO_SANE_CAP);
+    }
+
+    /// rate-limit ロジックの直接検証ヘルパー。並列 test と同じ static を共有
+    /// するため `serial_test::serial` で個別実行を強制し、毎回 0 にリセットする。
+    fn reset_cap_warn_static() {
+        GAS_CAP_LAST_WARN_UNIX.store(0, Ordering::Relaxed);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_try_acquire_cap_warn_slot_first_call_acquires() {
+        reset_cap_warn_static();
+        let now = 1_000_000_u64;
+        assert!(
+            try_acquire_cap_warn_slot(now),
+            "first call must acquire slot when static is 0"
+        );
+        // 初回取得後は static が `now` に進む。
+        assert_eq!(GAS_CAP_LAST_WARN_UNIX.load(Ordering::Relaxed), now);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_try_acquire_cap_warn_slot_within_interval_blocks() {
+        reset_cap_warn_static();
+        let t0 = 1_000_000_u64;
+        assert!(try_acquire_cap_warn_slot(t0));
+        // INTERVAL 未満で同じ thread が再度取得しようとしても false
+        let t1 = t0 + GAS_CAP_WARN_INTERVAL_SECS - 1;
+        assert!(
+            !try_acquire_cap_warn_slot(t1),
+            "second call within {GAS_CAP_WARN_INTERVAL_SECS}s must be rate-limited"
+        );
+        assert_eq!(
+            GAS_CAP_LAST_WARN_UNIX.load(Ordering::Relaxed),
+            t0,
+            "blocked call must not update the static"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_try_acquire_cap_warn_slot_after_interval_acquires() {
+        reset_cap_warn_static();
+        let t0 = 1_000_000_u64;
+        assert!(try_acquire_cap_warn_slot(t0));
+        let t1 = t0 + GAS_CAP_WARN_INTERVAL_SECS;
+        assert!(
+            try_acquire_cap_warn_slot(t1),
+            "call >= INTERVAL after the first must acquire slot again"
+        );
+        assert_eq!(GAS_CAP_LAST_WARN_UNIX.load(Ordering::Relaxed), t1);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_try_acquire_cap_warn_slot_clock_regression_blocks() {
+        // CAS で last を取り直すため、clock が後退してもまず INTERVAL ガードで弾く。
+        reset_cap_warn_static();
+        let t0 = 1_000_000_u64;
+        assert!(try_acquire_cap_warn_slot(t0));
+        let t_back = t0.saturating_sub(GAS_CAP_WARN_INTERVAL_SECS / 2);
+        assert!(
+            !try_acquire_cap_warn_slot(t_back),
+            "regressed clock must not acquire slot inside the interval"
+        );
+        assert_eq!(GAS_CAP_LAST_WARN_UNIX.load(Ordering::Relaxed), t0);
     }
 
     #[test]
