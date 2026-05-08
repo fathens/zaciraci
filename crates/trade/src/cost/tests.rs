@@ -252,3 +252,128 @@ fn test_clamp_storage_min_saturating_mul_safe_with_max_token_count() {
         "STORAGE_MIN_SANE_CAP × MAX_NEW_TOKEN_COUNT must not overflow u128"
     );
 }
+
+#[test]
+fn test_estimate_trade_cost_at_max_new_token_count_succeeds() {
+    // 境界値: new_token_count = MAX_NEW_TOKEN_COUNT (= 16) は通過する
+    use blockchain::types::gas_price::GasPrice;
+    use dex::TokenPath;
+    use near_sdk::NearToken;
+
+    let path = TokenPath(vec![]);
+    let assumed_in = YoctoValue::from_yocto_u128(ONE_NEAR_YOCTO);
+    let spot_rate = ExchangeRate::wnear();
+    let gas_price = GasPrice::from_balance(NearToken::from_yoctonear(100_000_000));
+    let storage_min = YoctoValue::from_yocto_u128(100_000_000_000_000_000_000_000);
+
+    let result = estimate_trade_cost(
+        &path,
+        &assumed_in,
+        &spot_rate,
+        gas_price,
+        &storage_min,
+        MAX_NEW_TOKEN_COUNT,
+    );
+    assert!(
+        result.is_ok(),
+        "MAX_NEW_TOKEN_COUNT must be accepted, got {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_estimate_trade_cost_one_hop_pool_includes_amm_loss() {
+    // 1-hop AMM end-to-end: 単一プール経由で variable_ratio に
+    // EXPECTED_SLIPPAGE_DEDUCTION (0.005) + AMM fee + price impact が乗ること。
+    //
+    // プール構成: token_x / wnear, balances 1000 token_x : 100_000 wnear
+    //   → spot rate: 1 token_x = 100 NEAR (price 100), wnear 24 decimals
+    //   → fee = 30 / 10000 = 0.3%
+    //
+    // 注意: estimate_trade_cost の path 入力は token_x → wnear で、
+    // input は token_x の YoctoValue (NearValue にデコードされる)、
+    // output は wnear の最小単位を NearValue に再変換したもの。
+    use bigdecimal::BigDecimal;
+    use blockchain::types::gas_price::GasPrice;
+    use chrono::Utc;
+    use dex::{PoolInfo, PoolInfoBared, TokenIn, TokenOut, TokenPath};
+    use near_sdk::NearToken;
+    use near_sdk::json_types::U128;
+    use std::sync::Arc;
+
+    // wnear (24 decimals) と token_x (24 decimals) を仮定
+    let pool = Arc::new(PoolInfo::new(
+        0,
+        PoolInfoBared {
+            pool_kind: "SIMPLE_POOL".to_string(),
+            token_account_ids: vec![
+                "token_x.near".parse().unwrap(),
+                "wrap.near".parse().unwrap(),
+            ],
+            // 1000 token_x : 100_000 wnear (両方 24 decimals)
+            amounts: vec![U128(1_000 * ONE_NEAR_YOCTO), U128(100_000 * ONE_NEAR_YOCTO)],
+            total_fee: 30,
+            shares_total_supply: U128(0),
+            amp: 0,
+        },
+        Utc::now().naive_utc(),
+    ));
+    let pair = pool
+        .get_pair(TokenIn::from(0), TokenOut::from(1))
+        .expect("valid pair");
+    let path = TokenPath(vec![pair]);
+
+    // assumed_in: 1 token_x (= 1e24 yocto token_x)
+    let assumed_in = YoctoValue::from_yocto_u128(ONE_NEAR_YOCTO);
+    // spot_rate: 1 token_x = 100 NEAR → ExchangeRate(raw_rate = 1e24/100, decimals=24)
+    let spot_rate = ExchangeRate::from_raw_rate(BigDecimal::from(ONE_NEAR_YOCTO / 100), 24);
+    let gas_price = GasPrice::from_balance(NearToken::from_yoctonear(100_000_000));
+    let storage_min = YoctoValue::from_yocto_u128(100_000_000_000_000_000_000_000);
+
+    let breakdown = estimate_trade_cost(&path, &assumed_in, &spot_rate, gas_price, &storage_min, 1)
+        .expect("end-to-end AMM path must succeed");
+
+    // variable_ratio は EXPECTED_SLIPPAGE_DEDUCTION 以上
+    // (= AMM fee + price impact が乗る分だけ大きい)
+    assert!(
+        breakdown.variable_ratio >= EXPECTED_SLIPPAGE_DEDUCTION,
+        "AMM fee + price impact must be added on top of EXPECTED_SLIPPAGE_DEDUCTION; got {}",
+        breakdown.variable_ratio
+    );
+    // 上限のサニティ: 1 token_x / 1000 token_x ≈ 0.1% price impact + 0.3% fee
+    // + 0.5% slippage budget = ~0.9% で 5% を大きく超えないこと
+    assert!(
+        breakdown.variable_ratio < 0.05,
+        "AMM loss should not exceed 5% for a 0.1% pool fraction; got {}",
+        breakdown.variable_ratio
+    );
+}
+
+#[test]
+fn test_estimate_trade_cost_above_max_new_token_count_bails() {
+    // 境界値: new_token_count > MAX_NEW_TOKEN_COUNT (17) は bail! で除外される
+    use blockchain::types::gas_price::GasPrice;
+    use dex::TokenPath;
+    use near_sdk::NearToken;
+
+    let path = TokenPath(vec![]);
+    let assumed_in = YoctoValue::from_yocto_u128(ONE_NEAR_YOCTO);
+    let spot_rate = ExchangeRate::wnear();
+    let gas_price = GasPrice::from_balance(NearToken::from_yoctonear(100_000_000));
+    let storage_min = YoctoValue::from_yocto_u128(100_000_000_000_000_000_000_000);
+
+    let err = estimate_trade_cost(
+        &path,
+        &assumed_in,
+        &spot_rate,
+        gas_price,
+        &storage_min,
+        MAX_NEW_TOKEN_COUNT + 1,
+    )
+    .expect_err("MAX_NEW_TOKEN_COUNT + 1 must be rejected");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("MAX_NEW_TOKEN_COUNT"),
+        "expected MAX_NEW_TOKEN_COUNT in error, got: {msg}"
+    );
+}
