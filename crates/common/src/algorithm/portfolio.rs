@@ -569,7 +569,11 @@ pub(crate) fn apply_prediction_error_diagonal(
         let Some(&pev) = pred_err_var.get(token) else {
             continue;
         };
-        if !pev.is_finite() {
+        // Consumer-side re-guard: `variances` は pub フィールドのため struct
+        // literal 経由で MSRE の不変条件（非負・有限）を bypass された値が
+        // 混入し得る。負値は加算で variance を減らして Cholesky 後段の数値
+        // 不整合を起こす経路、非有限値は NaN cascade 経路を遮断する。
+        if !pev.is_finite() || pev < 0.0 {
             continue;
         }
         let scaled = k * pev;
@@ -1869,6 +1873,13 @@ pub async fn execute_portfolio_optimization(
     let raw_expected_returns = calculate_expected_returns(&selected_tokens, &selected_predictions);
 
     // 取引コスト控除（cost_deductions が空のときは raw を素通し）
+    //
+    // Consumer-side re-guard: `cost_deductions` は pub フィールドのため struct
+    // literal 経由で `CostDeduction::new` の不変条件 (`is_finite() && >= 0.0`)
+    // を bypass された値が混入し得る。非有限または負値は 0.0 にクランプし、
+    // `r - NaN = NaN` cascade で box_maximize_sharpe Cholesky 後段の NaN 比較
+    // ガード（`sum_p.abs() < 1e-15` 等）が無効化される経路を遮断する。
+    // follow-up: BTreeMap<_, CostDeduction> へ型 lift して入口で塞ぐ。
     let expected_returns: Vec<f64> = if portfolio_data.cost_deductions.is_empty() {
         raw_expected_returns
     } else {
@@ -1880,6 +1891,7 @@ pub async fn execute_portfolio_optimization(
                     .cost_deductions
                     .get(&t.symbol)
                     .copied()
+                    .filter(|v| v.is_finite() && *v >= 0.0)
                     .unwrap_or(0.0);
                 r - deduction
             })

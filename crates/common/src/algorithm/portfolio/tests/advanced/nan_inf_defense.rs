@@ -185,6 +185,66 @@ fn test_apply_prediction_error_diagonal_skips_non_finite() {
     assert!((result[[1, 1]] - 0.02).abs() < 1e-10);
 }
 
+/// `cost_deductions` の pub field bypass で NaN/Inf/負値が混入しても、
+/// `execute_portfolio_optimization` の consumer-side re-guard で 0.0 にクランプされ、
+/// 最適化が finite な weights / sharpe を返すこと。
+#[tokio::test]
+async fn test_execute_portfolio_optimization_re_guards_cost_deductions_injection() {
+    let tokens = create_sample_tokens();
+    let predictions = create_sample_predictions();
+    let historical_prices = create_sample_price_history();
+    let wallet = create_sample_wallet();
+
+    // pub field 経由で不変条件 (`is_finite() && >= 0.0`) を bypass した値を注入
+    let mut cost_deductions = BTreeMap::new();
+    cost_deductions.insert(token_out("token-a"), f64::NAN);
+    cost_deductions.insert(token_out("token-b"), f64::INFINITY);
+    cost_deductions.insert(token_out("token-c"), -0.5);
+
+    let pd = PortfolioData {
+        tokens,
+        predictions,
+        historical_prices,
+        cost_deductions,
+        ..Default::default()
+    };
+    let report = execute_portfolio_optimization(&wallet, pd, 0.05)
+        .await
+        .expect("re-guard prevents NaN cascade");
+
+    // sharpe / weights が finite で sum が ~1.0
+    assert!(report.optimal_weights.sharpe_ratio.is_finite());
+    let sum: f64 = report
+        .optimal_weights
+        .weights
+        .values()
+        .filter_map(|w| w.to_f64())
+        .sum();
+    assert!(sum.is_finite(), "weight sum must be finite, got {sum}");
+}
+
+#[test]
+fn test_apply_prediction_error_diagonal_skips_negative_variance() {
+    // MSRE は非負（mean of squared error）。pub field bypass で混入した
+    // 負の variance は consumer-side re-guard で skip する。
+    let cov = diag_2x2(0.01, 0.02);
+    let tokens = vec![token_out("aa"), token_out("bb")];
+    let mut variances = BTreeMap::new();
+    variances.insert(token_out("aa"), -0.005);
+    variances.insert(token_out("bb"), -1.0);
+
+    let result = apply_prediction_error_diagonal(
+        cov,
+        &tokens,
+        &variances,
+        1.0,
+        PredErrDiagonalMode::Additive,
+    );
+    // 負値は skip → 据え置き
+    assert!((result[[0, 0]] - 0.01).abs() < 1e-10);
+    assert!((result[[1, 1]] - 0.02).abs() < 1e-10);
+}
+
 #[test]
 fn test_validate_weights_all_valid() {
     let weights = vec![0.3, 0.5, 0.2];
