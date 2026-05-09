@@ -30,7 +30,7 @@ async fn create_test_evaluation_period() -> String {
 }
 
 async fn cleanup_holdings_for_period(period_id: &str) {
-    let conn = crate::connection_pool::get().await.unwrap();
+    let conn = crate::connection_pool::get_test_only().await.unwrap();
     let pid = period_id.to_string();
     conn.interact(move |conn| {
         diesel::delete(

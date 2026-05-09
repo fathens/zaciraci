@@ -60,7 +60,7 @@ async fn test_initial_value_db_roundtrip() {
 async fn insert_with_created_at(period_id: &str, created_at: NaiveDateTime) -> Result<()> {
     use diesel::sql_types::{Numeric, Timestamp, Varchar};
 
-    let conn = connection_pool::get().await?;
+    let conn = connection_pool::get_test_only().await?;
     let period_id = period_id.to_string();
     conn.interact(move |conn| {
         diesel::sql_query(

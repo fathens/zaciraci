@@ -3,7 +3,7 @@ use bigdecimal::Zero;
 
 /// テスト用ヘルパー: prediction_records テーブルの全レコードを削除
 pub async fn clean_table() -> Result<()> {
-    let conn = connection_pool::get().await?;
+    let conn = connection_pool::get_test_only().await?;
     conn.interact(|conn| diesel::delete(prediction_records::table).execute(conn))
         .await
         .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
@@ -45,7 +45,7 @@ pub async fn insert_evaluated_record(
     let absolute_error = (&predicted - &actual).abs();
     let evaluated_at = target_time + chrono::TimeDelta::hours(1);
 
-    let conn = connection_pool::get().await?;
+    let conn = connection_pool::get_test_only().await?;
     let result = conn
         .interact(move |conn| {
             // 挿入
@@ -141,7 +141,7 @@ pub async fn insert_invariant_violating_record(
         created_at,
     );
 
-    let conn = connection_pool::get().await?;
+    let conn = connection_pool::get_test_only().await?;
     conn.interact(move |conn| {
         diesel::insert_into(prediction_records::table)
             .values(&new_record)
@@ -166,23 +166,28 @@ pub async fn insert_invariant_violating_record(
 /// - DBA 直接 INSERT / raw SQL bypass / migration 前レガシーデータ
 ///
 /// 動作 (`conn.transaction` 内で atomic に実行):
-/// 1. `ALTER TABLE ... DROP CONSTRAINT created_at_geq_data_cutoff` で CHECK 剥がし
-/// 2. `new_unchecked` で違反行を INSERT
-/// 3. `ALTER TABLE ... ADD CONSTRAINT ... CHECK (...) NOT VALID` で再度 attach
+/// 1. `SET LOCAL lock_timeout = '5s'` で ACCESS EXCLUSIVE lock 取得失敗時の hang を防ぐ
+/// 2. `ALTER TABLE ... DROP CONSTRAINT IF EXISTS ...` で CHECK 剥がし
+/// 3. `new_unchecked` で違反行を INSERT
+/// 4. `ALTER TABLE ... ADD CONSTRAINT ... CHECK (...) NOT VALID` で再度 attach
 ///
 /// # 不変条件
 ///
+/// - **テスト DB のみで動作**: [`connection_pool::get_test_only`] 経由で
+///   `current_database()` が `postgres_test` であることを実行時に検証する。
+///   本番 DB に対する `DATABASE_URL` 誤設定下での実行を構造的に阻止する
+///   (CHECK 制約の永続的 NOT VALID 降格 = Layer 3 防御の永続消失を防ぐ)。
 /// - **トランザクション必須**: 3 statement を `conn.transaction` で wrap し、
 ///   INSERT が型不一致 / FK / NOT NULL 違反等で失敗した場合に Layer 3 の CHECK が
 ///   永続消失して後続テストが Layer 4 pin を偽通過する経路を塞ぐ。
 /// - **呼び出し元 `#[serial]` 必須**: 本ヘルパは ALTER TABLE で DB スキーマを
 ///   一時操作するため、並列テストで他テストの INSERT/UPDATE と race するのを
 ///   `serial_test::serial` で抑止する前提。
-/// - **`clean_table()` での違反行消去前提**: 本ヘルパで挿入した違反行を残したまま
-///   後続テストを実行すると、CHECK は `NOT VALID` 状態 (既存違反行は許容、
-///   新規 INSERT/UPDATE には enforce) で動作する。テスト DB の制約状態が
-///   migration 直後の `VALID` から `NOT VALID` にダウングレードされるため、
-///   完全な Layer 3 防御を必要とする後続テストを混在させないこと。
+/// - **テスト末尾で `restore_layer3_check_validity()` 必須**: 本ヘルパ実行後の
+///   CHECK は `NOT VALID` 状態 (既存違反行は許容、新規 INSERT/UPDATE には enforce)
+///   になる。テスト DB を共有する後続テストで Layer 3 防御が validated 状態である
+///   ことを期待するテストが偽通過しないよう、`clean_table()` で違反行を消去した
+///   後に [`restore_layer3_check_validity`] で `VALIDATED` 状態に戻すこと。
 pub async fn insert_data_leakage_violator(
     token: &str,
     quote_token: &str,
@@ -200,25 +205,60 @@ pub async fn insert_data_leakage_violator(
         created_at,
     );
 
-    let conn = connection_pool::get().await?;
+    let conn = connection_pool::get_test_only().await?;
+    let drop_sql = format!(
+        "ALTER TABLE prediction_records DROP CONSTRAINT IF EXISTS {}",
+        CREATED_AT_GEQ_DATA_CUTOFF_CONSTRAINT
+    );
+    let add_sql = format!(
+        "ALTER TABLE prediction_records ADD CONSTRAINT {} \
+         CHECK (created_at >= data_cutoff_time) NOT VALID",
+        CREATED_AT_GEQ_DATA_CUTOFF_CONSTRAINT
+    );
     conn.interact(move |conn| {
         conn.transaction(|conn| {
-            diesel::sql_query(
-                "ALTER TABLE prediction_records \
-                 DROP CONSTRAINT IF EXISTS created_at_geq_data_cutoff",
-            )
-            .execute(conn)?;
+            diesel::sql_query("SET LOCAL lock_timeout = '5s'").execute(conn)?;
+            diesel::sql_query(&drop_sql).execute(conn)?;
             diesel::insert_into(prediction_records::table)
                 .values(&new_record)
                 .execute(conn)?;
-            diesel::sql_query(
-                "ALTER TABLE prediction_records \
-                 ADD CONSTRAINT created_at_geq_data_cutoff \
-                 CHECK (created_at >= data_cutoff_time) NOT VALID",
-            )
-            .execute(conn)?;
+            diesel::sql_query(&add_sql).execute(conn)?;
             Ok::<_, diesel::result::Error>(())
         })
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
+
+    Ok(())
+}
+
+/// テスト用ヘルパー: Layer 3 CHECK 制約を `NOT VALID` から再 `VALIDATED` 状態に戻す。
+///
+/// [`insert_data_leakage_violator`] が走ると CHECK 制約は `NOT VALID` 状態になり
+/// (既存違反行は許容、新規 INSERT/UPDATE には enforce)、テスト DB を共有する後続の
+/// 全テストにわたって migration 直後の `VALIDATED` 状態が永続的に失われる。
+///
+/// 本ヘルパは:
+/// 1. `clean_table()` 等で違反行を消去した後に
+/// 2. `ALTER TABLE ... VALIDATE CONSTRAINT` を呼んで Layer 3 を再 validated に戻す
+///
+/// `insert_data_leakage_violator` を使った各テストは末尾で本ヘルパを呼ぶこと。
+/// テスト DB の制約状態を migration 直後と同じ `VALIDATED` に戻すことで、後続の
+/// Layer 3 直接検証テスト (`new_unchecked_with_data_leakage_is_rejected_by_check_constraint`
+/// 等) を偽通過させない。
+///
+/// `VALIDATE CONSTRAINT` は既存行を full scan するが、`prediction_records` は
+/// 小規模 (low thousands) なため lock 取得時間は無視できる。
+pub async fn restore_layer3_check_validity() -> Result<()> {
+    let conn = connection_pool::get_test_only().await?;
+    let validate_sql = format!(
+        "ALTER TABLE prediction_records VALIDATE CONSTRAINT {}",
+        CREATED_AT_GEQ_DATA_CUTOFF_CONSTRAINT
+    );
+    conn.interact(move |conn| {
+        diesel::sql_query("SET LOCAL lock_timeout = '5s'").execute(conn)?;
+        diesel::sql_query(&validate_sql).execute(conn)?;
+        Ok::<_, diesel::result::Error>(())
     })
     .await
     .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
@@ -247,7 +287,7 @@ pub async fn insert_unevaluated_record_at(
         created_at,
     )?;
 
-    let conn = connection_pool::get().await?;
+    let conn = connection_pool::get_test_only().await?;
     conn.interact(move |conn| {
         diesel::insert_into(prediction_records::table)
             .values(&new_record)

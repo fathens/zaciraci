@@ -55,7 +55,7 @@ async fn test_sort_order_by_target_time_desc() -> Result<()> {
     // r1 (oldest target) → evaluated_at = base + 10h (newest)
     // r2 (middle target) → evaluated_at = base + 5h (middle)
     // r3 (newest target) → evaluated_at = base + 3h (oldest)
-    let conn = connection_pool::get().await?;
+    let conn = connection_pool::get_test_only().await?;
     let r1_id = r1.id;
     let r2_id = r2.id;
     let r3_id = r3.id;
@@ -760,7 +760,7 @@ async fn test_layer3_check_rejects_created_at_before_data_cutoff() -> Result<()>
         created_at,
     );
 
-    let conn = connection_pool::get().await?;
+    let conn = connection_pool::get_test_only().await?;
     let result = conn
         .interact(move |conn| {
             diesel::insert_into(prediction_records::table)
@@ -773,8 +773,8 @@ async fn test_layer3_check_rejects_created_at_before_data_cutoff() -> Result<()>
     let err = result.expect_err("Layer 3 CHECK must reject created_at < data_cutoff_time");
     let msg = err.to_string();
     assert!(
-        msg.contains("created_at_geq_data_cutoff") || msg.contains("check"),
-        "expected CHECK violation referencing created_at_geq_data_cutoff, got: {msg}"
+        msg.contains(CREATED_AT_GEQ_DATA_CUTOFF_CONSTRAINT) || msg.contains("check"),
+        "expected CHECK violation referencing {CREATED_AT_GEQ_DATA_CUTOFF_CONSTRAINT}, got: {msg}"
     );
 
     Ok(())
@@ -849,6 +849,7 @@ async fn test_layer4_get_latest_fresh_excludes_violator_row() -> Result<()> {
     );
 
     clean_table().await?;
+    restore_layer3_check_validity().await?;
     Ok(())
 }
 
@@ -907,6 +908,7 @@ async fn test_layer4_earliest_fresh_visible_excludes_violator_row() -> Result<()
     );
 
     clean_table().await?;
+    restore_layer3_check_validity().await?;
     Ok(())
 }
 
