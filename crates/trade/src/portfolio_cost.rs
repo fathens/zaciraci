@@ -45,8 +45,9 @@ use common::algorithm::portfolio::{
     execute_portfolio_optimization,
 };
 use common::algorithm::types::{TokenData, WalletInfo};
+use common::config::ConfigAccess;
 use common::types::{ExchangeRate, TokenAccount, TokenInAccount, TokenOutAccount, YoctoValue};
-use dex::{PoolInfoList, TokenPath};
+use dex::{PoolInfoList, TokenPairLike, TokenPath};
 use logging::*;
 use near_sdk::AccountId;
 use std::collections::{BTreeMap, HashSet};
@@ -141,6 +142,11 @@ pub(crate) struct PortfolioCostInputs {
     pub(crate) storage_min: YoctoValue,
     pub(crate) existing_deposits: HashSet<TokenAccount>,
     pub(crate) bundles: BTreeMap<TokenOutAccount, TokenSwapBundle>,
+    /// 取引サイズ ÷ 経路上の最薄プール TVL の許容上限（`(0.001, 0.5]`、典型 0.02）。
+    /// `compute_cost_deductions` でこの比率を超える銘柄を `estimation_failures`
+    /// 経路に倒し、流動性に対して大きすぎる position が optimizer に流入する
+    /// のを防ぐ。`ConfigAccess::trade_max_position_vs_pool_ratio` で取得。
+    pub(crate) max_position_vs_pool_ratio: f64,
     /// `swap_path` が失敗した token（呼び出し側で `retain_excluding` 経由で除外）
     pub(crate) failed_tokens: Vec<TokenOutAccount>,
 }
@@ -173,14 +179,16 @@ pub(crate) enum CostAwareOutcome {
 /// `pools` は呼び出し側 (`execute_portfolio_strategy`) で 1 サイクル中に
 /// 1 度だけ取得した snapshot を共有する。同一サイクル内で `pool_info` を
 /// 二重に読まない (TOCTOU 解消) ためにこの引数で注入する。
-pub(crate) async fn collect_cost_inputs<C>(
+pub(crate) async fn collect_cost_inputs<C, Cfg>(
     client: &C,
     account: &AccountId,
     tokens: &[TokenData],
     pools: &Arc<PoolInfoList>,
+    cfg: &Cfg,
 ) -> Result<PortfolioCostInputs>
 where
     C: ViewContract + GasInfo,
+    Cfg: ConfigAccess,
 {
     let log = DEFAULT.new(o!("function" => "collect_cost_inputs"));
 
@@ -248,8 +256,38 @@ where
         storage_min,
         existing_deposits,
         bundles,
+        max_position_vs_pool_ratio: cfg.trade_max_position_vs_pool_ratio(),
         failed_tokens,
     })
+}
+
+/// 経路上の wnear-side TVL の最小値（yoctoNEAR 単位）。
+///
+/// `buy_path` と `sell_path` の各 hop のうち、wnear がいずれかのサイドに
+/// 立っている pool だけを対象に、その wnear 側 reserve を採取する。
+/// 全 hop が wnear-non-touching な経路（中継のみで wnear が現れない多 hop
+/// 経路）では `None` を返し、呼び出し側で比率制約をスキップさせる。
+///
+/// 実運用 (REF Finance + WNEAR-anchored portfolio) では BUY 経路の最初か
+/// SELL 経路の最後で必ず wnear が現れるため、`None` は中継のみの病的
+/// ケース（実態として発生しない）に限られる。
+fn path_min_wnear_tvl_yocto(bundle: &TokenSwapBundle) -> Option<u128> {
+    let wnear: &TokenAccount = &blockchain::ref_finance::token_account::WNEAR_TOKEN;
+    bundle
+        .buy_path
+        .0
+        .iter()
+        .chain(bundle.sell_path.0.iter())
+        .filter_map(|pair| {
+            if &pair.token_in_id().0 == wnear {
+                pair.amount_in().ok()
+            } else if &pair.token_out_id().0 == wnear {
+                pair.amount_out().ok()
+            } else {
+                None
+            }
+        })
+        .min()
 }
 
 /// 重みから銘柄ごとの cost_deduction 比率を計算する（Δw ベース）。
@@ -396,6 +434,33 @@ fn compute_cost_deductions(
         let Some(bundle) = inputs.bundles.get(&t.symbol) else {
             continue;
         };
+
+        // ポジション/プール比率制約（plan §3 P4）。trade_size が経路上で最も
+        // 薄い wnear-side TVL の `max_position_vs_pool_ratio` を超える銘柄は
+        // 流動性安全な rebalance 経路がないため候補から外す。AMM 上で実行時
+        // に price impact が指数的に増加するレジームを optimizer に持ち込まない。
+        if let Some(path_min_tvl_yocto) = path_min_wnear_tvl_yocto(bundle) {
+            let trade_yocto_bd = trade_size.as_bigdecimal();
+            let Some(max_size_bd) = BigDecimal::from_f64(inputs.max_position_vs_pool_ratio) else {
+                // typed config の clamp で既に finite かつ [0.001, 0.5] に
+                // 押し込んでいるが、bigdecimal の future minor で None を
+                // 返す可能性に備え fail-soft skip（cron tick crash 防止）。
+                estimation_failures.push(t.symbol.clone());
+                continue;
+            };
+            let cap_yocto = BigDecimal::from(path_min_tvl_yocto) * max_size_bd;
+            if trade_yocto_bd > &cap_yocto {
+                let log = DEFAULT.new(o!("function" => "compute_cost_deductions"));
+                debug!(log, "excluding token: trade size exceeds pool TVL ratio";
+                    "token" => %t.symbol,
+                    "trade_yocto" => %trade_yocto_bd,
+                    "path_min_tvl_yocto" => path_min_tvl_yocto,
+                    "ratio_cap" => inputs.max_position_vs_pool_ratio);
+                estimation_failures.push(t.symbol.clone());
+                continue;
+            }
+        }
+
         // CostError は `std::error::Error` 実装済みなので Into 経由で
         // anyhow::Error に橋渡しし、二重 nested match を平坦化する。
         let result = estimate_trade_cost(

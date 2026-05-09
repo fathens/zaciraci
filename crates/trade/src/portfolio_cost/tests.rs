@@ -88,6 +88,10 @@ fn make_inputs(
         storage_min: YoctoValue::from_yocto_u128(100_000_000_000_000_000_000_000),
         existing_deposits,
         bundles,
+        // 既存テストは empty_path() を使うため `path_min_wnear_tvl_yocto` が
+        // None を返し、比率制約は発火しない（無関係パスのテストへの影響なし）。
+        // ratio 自体は typed config 既定値 0.02 に揃えて明示する。
+        max_position_vs_pool_ratio: 0.02,
         failed_tokens: vec![],
     }
 }
@@ -427,6 +431,133 @@ fn test_compute_cost_deductions_existing_deposit_lowers_fixed_cost() {
         "existing_deposits must reduce fixed cost: with_dep={v_with_dep} vs no_dep={v_no_dep}"
     );
     assert!(v_with_dep.is_finite() && v_with_dep >= 0.0);
+}
+
+// ---------------------------------------------------------------------------
+// (g.6) ポジション/プール比率制約（plan §3 P4）
+// ---------------------------------------------------------------------------
+
+/// wnear ↔ token の単一プール `TokenSwapBundle` を構築するヘルパ。
+///
+/// `wnear_yocto` / `token_yocto` でプール残高（24 decimals 前提）を指定し、
+/// BUY (wnear → token) と SELL (token → wnear) の path を 1 hop ずつ作る。
+/// 比率制約のテスト専用で、`compute_cost_deductions` 全体の正常経路を
+/// 通過させるための最低限の構成。
+fn make_bundle_with_pool(
+    target: &TokenOutAccount,
+    wnear_yocto: u128,
+    token_yocto: u128,
+) -> TokenSwapBundle {
+    use dex::{PoolInfo, PoolInfoBared, TokenIn, TokenOut};
+    use near_sdk::json_types::U128;
+
+    let wnear_account: TokenAccount = blockchain::ref_finance::token_account::WNEAR_TOKEN.clone();
+    let pool = std::sync::Arc::new(PoolInfo::new(
+        0,
+        PoolInfoBared {
+            pool_kind: "SIMPLE_POOL".to_string(),
+            // index 0 = wnear, index 1 = target
+            token_account_ids: vec![wnear_account, target.0.clone()],
+            amounts: vec![U128(wnear_yocto), U128(token_yocto)],
+            total_fee: 30,
+            shares_total_supply: U128(0),
+            amp: 0,
+        },
+        Utc::now().naive_utc(),
+    ));
+    let buy_pair = pool
+        .get_pair(TokenIn::from(0), TokenOut::from(1))
+        .expect("buy pair (wnear -> token) is valid");
+    let sell_pair = pool
+        .get_pair(TokenIn::from(1), TokenOut::from(0))
+        .expect("sell pair (token -> wnear) is valid");
+    TokenSwapBundle {
+        buy_path: TokenPath(vec![buy_pair]),
+        sell_path: TokenPath(vec![sell_pair]),
+        rate: ExchangeRate::wnear(),
+    }
+}
+
+#[test]
+fn test_compute_cost_deductions_excludes_oversize_trade_vs_pool() {
+    // Pool TVL (wnear side) = 100 NEAR、ratio = 0.02 → cap = 2 NEAR。
+    // total_value = 100 NEAR、target_w = 0.5 → trade_size = 50 NEAR (>> 2 NEAR)
+    // で比率制約に引っかかり estimation_failures に倒れる。
+    let sym = token("memecoin");
+    let tokens = vec![token_data(sym.clone())];
+    let mut inputs = make_inputs(std::slice::from_ref(&sym), HashSet::new());
+    inputs.bundles.insert(
+        sym.clone(),
+        make_bundle_with_pool(
+            &sym,
+            100 * ONE_NEAR_YOCTO,   // 100 NEAR wnear side
+            1_000 * ONE_NEAR_YOCTO, // 1000 token side (24 decimals)
+        ),
+    );
+    inputs.max_position_vs_pool_ratio = 0.02;
+
+    let total = BigDecimal::from(100u128 * ONE_NEAR_YOCTO);
+    let result = compute_cost_deductions(&[0.5], &[0.0], &tokens, &inputs, &total);
+
+    assert!(
+        result.deductions.is_empty(),
+        "oversize trade vs pool must not produce a deduction"
+    );
+    assert_eq!(
+        result.estimation_failures,
+        vec![sym],
+        "oversize trade vs pool must surface in estimation_failures"
+    );
+}
+
+#[test]
+fn test_compute_cost_deductions_admits_safe_trade_vs_pool() {
+    // Pool TVL = 100 NEAR、ratio = 0.02 → cap = 2 NEAR。
+    // total_value = 100 NEAR、target_w = 0.01 → trade_size = 1 NEAR (< 2 NEAR)
+    // で比率制約を通過し正常経路へ進む。
+    let sym = token("safe");
+    let tokens = vec![token_data(sym.clone())];
+    let mut inputs = make_inputs(std::slice::from_ref(&sym), HashSet::new());
+    inputs.bundles.insert(
+        sym.clone(),
+        make_bundle_with_pool(&sym, 100 * ONE_NEAR_YOCTO, 1_000 * ONE_NEAR_YOCTO),
+    );
+    inputs.max_position_vs_pool_ratio = 0.02;
+
+    let total = BigDecimal::from(100u128 * ONE_NEAR_YOCTO);
+    let result = compute_cost_deductions(&[0.01], &[0.0], &tokens, &inputs, &total);
+
+    assert!(
+        !result.estimation_failures.contains(&sym),
+        "safe trade size must not be excluded by the ratio constraint"
+    );
+    let value = *result
+        .deductions
+        .get(&sym)
+        .expect("safe trade must produce a deduction");
+    assert!(value.is_finite() && value >= 0.0);
+}
+
+#[test]
+fn test_compute_cost_deductions_skips_ratio_check_for_wnear_less_path() {
+    // empty_path() の場合 path_min_wnear_tvl_yocto が None を返し、ratio 制約は
+    // 発火しない。trade_size が極端に大きくても比率制約では除外されないことを
+    // 確認（既存テストの前提を pin する canary）。
+    let sym = token("no_pool_path");
+    let tokens = vec![token_data(sym.clone())];
+    let inputs = make_inputs(std::slice::from_ref(&sym), HashSet::new());
+
+    // 任意の比率を最小値にしても、path にプールがない以上発火しない。
+    let mut inputs = inputs;
+    inputs.max_position_vs_pool_ratio = 0.001;
+
+    let total = BigDecimal::from(100u128 * ONE_NEAR_YOCTO);
+    let result = compute_cost_deductions(&[1.0], &[0.0], &tokens, &inputs, &total);
+
+    assert!(
+        !result.estimation_failures.contains(&sym),
+        "wnear-less path must skip the ratio check"
+    );
 }
 
 // ---------------------------------------------------------------------------

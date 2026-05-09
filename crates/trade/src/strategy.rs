@@ -944,6 +944,7 @@ where
             wallet.account_id(),
             &portfolio_data.tokens,
             params.pools,
+            cfg,
         )
         .await
         {
