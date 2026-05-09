@@ -134,6 +134,61 @@ fn estimate_swap_via_pools(
     Some(current_amount)
 }
 
+/// Estimate swap output along the same path under the no-price-impact
+/// (marginal) AMM rate.
+///
+/// At each hop, the output is the limit of `estimate_return` as the input
+/// approaches zero — i.e., the spot/marginal rate which still applies the
+/// pool fee but ignores the size-dependent reserve shift:
+///
+/// ```text
+/// out = amount_in × (FEE_DIVISOR - total_fee) × out_balance
+///                   ─────────────────────────────────────────
+///                                    FEE_DIVISOR × in_balance
+/// ```
+///
+/// This gives the no-impact reference output that `handle_swap` can compare
+/// against the actual `estimate_swap_via_pools` output to surface a
+/// `price_impact_ratio` for observation.
+///
+/// Returns `None` under the same conditions as `estimate_swap_via_pools`,
+/// plus when an in/out reserve is zero (no marginal rate exists).
+#[cfg(test)]
+fn estimate_no_impact_swap_via_pools(
+    pools: &dex::PoolInfoList,
+    swap_actions: &[SwapAction],
+    amount_in: u128,
+) -> Option<u128> {
+    use bigdecimal::{ToPrimitive, Zero};
+    debug_assert!(
+        swap_actions
+            .array_windows::<2>()
+            .all(|[a, b]| a.token_out == b.token_in),
+        "swap action chain is not connected"
+    );
+    let mut current_amount = BigDecimal::from(amount_in);
+    let fee_divisor = BigDecimal::from(dex::FEE_DIVISOR);
+    for action in swap_actions {
+        let pool = pools.get(action.pool_id).ok()?;
+        let in_idx = pool
+            .tokens()
+            .position(|t| t.as_account_id() == &action.token_in)?;
+        let out_idx = pool
+            .tokens()
+            .position(|t| t.as_account_id() == &action.token_out)?;
+        let in_balance = BigDecimal::from(pool.amount(dex::TokenIn::from(in_idx).as_index()).ok()?);
+        let out_balance =
+            BigDecimal::from(pool.amount(dex::TokenOut::from(out_idx).as_index()).ok()?);
+        if in_balance.is_zero() || out_balance.is_zero() || current_amount.is_zero() {
+            return None;
+        }
+        let amount_with_fee =
+            &current_amount * BigDecimal::from(dex::FEE_DIVISOR - pool.bare.total_fee);
+        current_amount = &amount_with_fee * &out_balance / (&fee_divisor * &in_balance);
+    }
+    current_amount.to_u128()
+}
+
 impl SimulationClient {
     /// Calculate swap output by walking SwapAction hops through pool estimate_return.
     /// Falls back to DB rate conversion if pool data is unavailable.

@@ -893,3 +893,202 @@ fn estimate_swap_multi_hop_second_pool_missing_returns_none() {
         "should return None when second hop pool is missing"
     );
 }
+
+// ---------------------------------------------------------------------------
+// estimate_no_impact_swap_via_pools (marginal/spot-rate reference)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn no_impact_single_hop_matches_marginal_rate() {
+    // Pool: 1000 NEAR / 5000 USDT, 0.3% fee. Marginal rate (NEAR→USDT) is
+    // (1 - 0.003) × 5000/1000 = 4.985 USDT per NEAR. Input = 1 NEAR (10^24
+    // yocto) → expected ≈ 4.985 USDT (4_985_000 in 6 decimals).
+    let pool = make_simple_pool(
+        1,
+        "wrap.near",
+        "usdt.tether-token.near",
+        1_000_000_000_000_000_000_000_000_000, // 1000 NEAR
+        5_000_000_000,                         // 5000 USDT
+        30,
+    );
+    let pools = dex::PoolInfoList::new(vec![pool]);
+
+    let actions = vec![SwapAction {
+        pool_id: 1,
+        token_in: "wrap.near".parse().unwrap(),
+        amount_in: Some(U128(1_000_000_000_000_000_000_000_000)),
+        token_out: "usdt.tether-token.near".parse().unwrap(),
+        min_amount_out: U128(0),
+    }];
+
+    let no_impact =
+        estimate_no_impact_swap_via_pools(&pools, &actions, 1_000_000_000_000_000_000_000_000)
+            .expect("no_impact output");
+
+    // Tight bound on 4.985 USDT.
+    assert_eq!(no_impact, 4_985_000, "marginal rate should be 4.985 USDT");
+}
+
+#[test]
+fn no_impact_strictly_above_actual_for_nontrivial_input() {
+    // For any amount_in > 0, AMM output is strictly less than marginal
+    // (no-impact) output because reserves shift against the trader.
+    let pool = make_simple_pool(
+        1,
+        "wrap.near",
+        "usdt.tether-token.near",
+        1_000_000_000_000_000_000_000_000_000,
+        5_000_000_000,
+        30,
+    );
+    let pools = dex::PoolInfoList::new(vec![pool]);
+
+    let actions = vec![SwapAction {
+        pool_id: 1,
+        token_in: "wrap.near".parse().unwrap(),
+        amount_in: Some(U128(1_000_000_000_000_000_000_000_000)),
+        token_out: "usdt.tether-token.near".parse().unwrap(),
+        min_amount_out: U128(0),
+    }];
+
+    let actual =
+        estimate_swap_via_pools(&pools, &actions, 1_000_000_000_000_000_000_000_000).unwrap();
+    let no_impact =
+        estimate_no_impact_swap_via_pools(&pools, &actions, 1_000_000_000_000_000_000_000_000)
+            .unwrap();
+
+    assert!(
+        no_impact > actual,
+        "marginal output {no_impact} must exceed actual {actual}"
+    );
+}
+
+#[test]
+fn no_impact_multi_hop_compounds_marginal_rates() {
+    // Hop 1: 1000 NEAR / 10_000 tokenA, 0.3% fee → marginal NEAR→A = 9.97
+    // Hop 2: 5000 tokenA / 2000 tokenB, 0.3% fee → marginal A→B = 0.3988
+    // Combined marginal NEAR→B = 9.97 × 0.3988 ≈ 3.9760
+    // Input 1 NEAR → expected ≈ 3.976000 tokenB (6 decimals → 3_976_036)
+    let pool1 = make_simple_pool(
+        1,
+        "wrap.near",
+        "token-a.near",
+        1_000_000_000_000_000_000_000_000_000,
+        10_000_000_000_000_000_000_000_000_000,
+        30,
+    );
+    let pool2 = make_simple_pool(
+        2,
+        "token-a.near",
+        "token-b.near",
+        5_000_000_000_000_000_000_000_000_000,
+        2_000_000_000,
+        30,
+    );
+    let pools = dex::PoolInfoList::new(vec![pool1, pool2]);
+
+    let actions = vec![
+        SwapAction {
+            pool_id: 1,
+            token_in: "wrap.near".parse().unwrap(),
+            amount_in: Some(U128(1_000_000_000_000_000_000_000_000)),
+            token_out: "token-a.near".parse().unwrap(),
+            min_amount_out: U128(0),
+        },
+        SwapAction {
+            pool_id: 2,
+            token_in: "token-a.near".parse().unwrap(),
+            amount_in: None,
+            token_out: "token-b.near".parse().unwrap(),
+            min_amount_out: U128(0),
+        },
+    ];
+
+    let no_impact =
+        estimate_no_impact_swap_via_pools(&pools, &actions, 1_000_000_000_000_000_000_000_000)
+            .unwrap();
+
+    // Compounded fee of 0.3% × 2 hops = 0.997² × 5000/1000 × 2000/5000
+    //   = 0.994009 × 5 × 0.4 = 1.988018
+    // Wait: pool1 amount_in (NEAR) = 1000 NEAR, amount_out (A) = 10_000 A
+    //   marginal NEAR→A = 0.997 × 10_000/1000 = 9.97
+    // pool2 amount_in (A) = 5000 A, amount_out (B) = 2000 B
+    //   marginal A→B = 0.997 × 2000/5000 = 0.3988
+    // 1 NEAR → 9.97 A → 9.97 × 0.3988 = 3.976036 B
+    // 6 decimals → 3_976_036.
+    assert_eq!(
+        no_impact, 3_976_036,
+        "compounded marginal rate output mismatch"
+    );
+}
+
+#[test]
+fn no_impact_zero_liquidity_returns_none() {
+    let pool = make_simple_pool(
+        1,
+        "wrap.near",
+        "usdt.tether-token.near",
+        0,
+        5_000_000_000,
+        30,
+    );
+    let pools = dex::PoolInfoList::new(vec![pool]);
+
+    let actions = vec![SwapAction {
+        pool_id: 1,
+        token_in: "wrap.near".parse().unwrap(),
+        amount_in: Some(U128(1_000_000_000_000_000_000_000_000)),
+        token_out: "usdt.tether-token.near".parse().unwrap(),
+        min_amount_out: U128(0),
+    }];
+
+    let result =
+        estimate_no_impact_swap_via_pools(&pools, &actions, 1_000_000_000_000_000_000_000_000);
+    assert!(
+        result.is_none(),
+        "zero liquidity should yield no marginal rate"
+    );
+}
+
+#[test]
+fn no_impact_zero_amount_in_returns_none() {
+    let pool = make_simple_pool(
+        1,
+        "wrap.near",
+        "usdt.tether-token.near",
+        1_000_000_000_000_000_000_000_000_000,
+        5_000_000_000,
+        30,
+    );
+    let pools = dex::PoolInfoList::new(vec![pool]);
+
+    let actions = vec![SwapAction {
+        pool_id: 1,
+        token_in: "wrap.near".parse().unwrap(),
+        amount_in: Some(U128(0)),
+        token_out: "usdt.tether-token.near".parse().unwrap(),
+        min_amount_out: U128(0),
+    }];
+
+    let result = estimate_no_impact_swap_via_pools(&pools, &actions, 0);
+    assert!(
+        result.is_none(),
+        "zero input should not yield a marginal rate"
+    );
+}
+
+#[test]
+fn no_impact_missing_pool_returns_none() {
+    let pools = dex::PoolInfoList::new(vec![]);
+
+    let actions = vec![SwapAction {
+        pool_id: 1,
+        token_in: "wrap.near".parse().unwrap(),
+        amount_in: Some(U128(1_000_000)),
+        token_out: "usdt.tether-token.near".parse().unwrap(),
+        min_amount_out: U128(0),
+    }];
+
+    let result = estimate_no_impact_swap_via_pools(&pools, &actions, 1_000_000);
+    assert!(result.is_none(), "missing pool should return None");
+}
