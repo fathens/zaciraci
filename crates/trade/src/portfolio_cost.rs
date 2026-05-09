@@ -20,10 +20,20 @@
 //!
 //! `compute_cost_deductions` は target weight と current weight (wallet 由来)
 //! の差分 `|Δw| × total_value` を実 trade size、`target_w × total_value` を
-//! held size として分離して扱う。これにより partial exit / entry の両方向で
-//! 正しい cost ratio を与え、Phase 1 の Entry-from-cash モデルが持っていた
-//! 「target_w=0 で SELL コスト消失」「partial entry で過大評価」の非対称な
-//! 誤差を解消する。詳細は `compute_cost_deductions` の docstring 参照。
+//! held size として分離して扱う。partial entry (target_w > current_w > 0)
+//! では、Phase 1 の Entry-from-cash モデルが「`target_w × total_value` を
+//! まるごと買うコスト」として過大評価していた非対称誤差を、`|Δw| × total_value`
+//! を取引サイズとして使うことで解消する。詳細は `compute_cost_deductions`
+//! の docstring 参照。
+//!
+//! ### Phase 2 で残る制約 (Phase 3 follow-up)
+//!
+//! `target_w == 0.0` (full exit) の経路では deduction を 0 で素通しする。
+//! Markowitz の objective `weight × (r - deduction)` が `target_w = 0` の場合
+//! 構造的に 0 になるため当該銘柄選好には影響しないが、SELL の transition cost
+//! は per-period return の objective に反映されない。Phase 3 で
+//! regularized Markowitz `argmax_w μᵀw - λ wᵀΣw - C(|Δw|)` として objective
+//! 内に直接 transition cost を入れる際に解消予定。
 
 use crate::Result;
 use crate::cost::estimate_trade_cost;
