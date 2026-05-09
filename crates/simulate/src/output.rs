@@ -42,7 +42,6 @@ pub struct PerformanceMetrics {
     pub win_rate: f64,
     pub final_balance_near: f64,
     pub total_realized_pnl_near: f64,
-    pub trade_count: usize,
     pub liquidation_count: usize,
     #[serde(flatten)]
     pub swap_stats: SwapStats,
@@ -247,11 +246,6 @@ impl SimulationResult {
 
         let swap_stats = SwapStats::from_events(&state.swap_events);
 
-        let trade_count = state
-            .trades
-            .iter()
-            .filter(|t| t.action != TradeAction::Liquidation)
-            .count();
         let liquidation_count = state
             .trades
             .iter()
@@ -262,7 +256,6 @@ impl SimulationResult {
             initial_capital: cli.initial_capital,
             snapshots: &state.snapshots,
             realized_pnl: state.realized_pnl,
-            trade_count,
             liquidation_count,
             rebalance_interval_days: cli.rebalance_interval_days,
             swap_stats,
@@ -288,7 +281,6 @@ struct PerformanceInput<'a> {
     initial_capital: f64,
     snapshots: &'a [crate::portfolio_state::PortfolioSnapshot],
     realized_pnl: i128,
-    trade_count: usize,
     liquidation_count: usize,
     rebalance_interval_days: i64,
     swap_stats: SwapStats,
@@ -299,7 +291,6 @@ fn calculate_performance(input: PerformanceInput<'_>) -> PerformanceMetrics {
         initial_capital,
         snapshots,
         realized_pnl,
-        trade_count,
         liquidation_count,
         rebalance_interval_days,
         swap_stats,
@@ -314,7 +305,6 @@ fn calculate_performance(input: PerformanceInput<'_>) -> PerformanceMetrics {
             win_rate: 0.0,
             final_balance_near: initial_capital,
             total_realized_pnl_near: pnl_to_near(realized_pnl),
-            trade_count,
             liquidation_count,
             swap_stats,
         };
@@ -362,7 +352,6 @@ fn calculate_performance(input: PerformanceInput<'_>) -> PerformanceMetrics {
         win_rate,
         final_balance_near: final_value,
         total_realized_pnl_near: pnl_to_near(realized_pnl),
-        trade_count,
         liquidation_count,
         swap_stats,
     }

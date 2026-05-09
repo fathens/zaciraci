@@ -65,11 +65,11 @@ async fn run_simulation_command(args: &cli::RunArgs, log: &slog::Logger) -> anyh
         println!("---");
         if perf.liquidation_count > 0 {
             println!(
-                "Trades: {} (+ {} liquidations)",
-                perf.trade_count, perf.liquidation_count
+                "Swaps: {} (+ {} liquidations)",
+                perf.swap_stats.total_swaps, perf.liquidation_count
             );
         } else {
-            println!("Trades: {}", perf.trade_count);
+            println!("Swaps: {}", perf.swap_stats.total_swaps);
         }
     }
 

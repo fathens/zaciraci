@@ -173,7 +173,6 @@ fn performance_empty_snapshots() {
         initial_capital: 100.0,
         snapshots: &[],
         realized_pnl: 0,
-        trade_count: 0,
         liquidation_count: 0,
         rebalance_interval_days: 1,
         swap_stats: SwapStats::default(),
@@ -192,7 +191,6 @@ fn performance_single_snapshot() {
         initial_capital: 100.0,
         snapshots: &snapshots,
         realized_pnl: 0,
-        trade_count: 0,
         liquidation_count: 0,
         rebalance_interval_days: 1,
         swap_stats: SwapStats::default(),
@@ -210,7 +208,6 @@ fn performance_zero_initial_capital() {
         initial_capital: 0.0,
         snapshots: &snapshots,
         realized_pnl: 0,
-        trade_count: 0,
         liquidation_count: 0,
         rebalance_interval_days: 1,
         swap_stats: SwapStats::default(),
@@ -232,7 +229,6 @@ fn performance_win_rate() {
         initial_capital: 100.0,
         snapshots: &snapshots,
         realized_pnl: 0,
-        trade_count: 0,
         liquidation_count: 0,
         rebalance_interval_days: 1,
         swap_stats: SwapStats::default(),
@@ -251,7 +247,6 @@ fn performance_total_return_loss() {
         initial_capital: 100.0,
         snapshots: &snapshots,
         realized_pnl: 0,
-        trade_count: 0,
         liquidation_count: 0,
         rebalance_interval_days: 1,
         swap_stats: SwapStats::default(),
@@ -454,7 +449,6 @@ fn performance_includes_new_fields() {
         initial_capital: 100.0,
         snapshots: &snapshots,
         realized_pnl,
-        trade_count: 10,
         liquidation_count: 3,
         rebalance_interval_days: 1,
         swap_stats: SwapStats::default(),
@@ -469,7 +463,6 @@ fn performance_includes_new_fields() {
         "realized pnl: {}",
         perf.total_realized_pnl_near
     );
-    assert_eq!(perf.trade_count, 10);
     assert_eq!(perf.liquidation_count, 3);
 }
 
@@ -632,7 +625,6 @@ fn performance_includes_non_default_swap_stats() {
         initial_capital: 100.0,
         snapshots: &snapshots,
         realized_pnl: 0,
-        trade_count: 5,
         liquidation_count: 0,
         rebalance_interval_days: 1,
         swap_stats: SwapStats {
