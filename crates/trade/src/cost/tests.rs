@@ -4,43 +4,89 @@ use std::str::FromStr;
 const ONE_NEAR_YOCTO: u128 = 1_000_000_000_000_000_000_000_000;
 
 #[test]
-fn test_to_cost_deduction_zero_position_returns_zero_position_error() {
+fn test_to_cost_deduction_with_basis_zero_held_returns_zero_position_error() {
     let breakdown = TradeCostBreakdown {
         variable_ratio: 0.005,
         fixed_cost: YoctoValue::from_yocto_u128(1_000_000_000_000_000_000_000),
     };
+    let trade = YoctoValue::from_yocto_u128(ONE_NEAR_YOCTO);
     let zero = YoctoValue::zero();
     assert_eq!(
-        breakdown.to_cost_deduction(&zero),
+        breakdown.to_cost_deduction_with_basis(&trade, &zero),
         Err(CostError::ZeroPosition)
     );
 }
 
 #[test]
-fn test_to_cost_deduction_finite_value_invariant() {
+fn test_to_cost_deduction_with_basis_equal_trade_held_matches_legacy_ratio() {
+    // trade_size == held_size のとき、新 API は旧 to_cost_deduction と同じ ratio を返す
+    // （Phase 1 互換）。0.01 (variable) + 0.001 (fixed/1) = 0.011。
     let breakdown = TradeCostBreakdown {
         variable_ratio: 0.01,
         fixed_cost: YoctoValue::from_yocto_u128(1_000_000_000_000_000_000_000),
     };
     let assumed = YoctoValue::from_yocto_u128(ONE_NEAR_YOCTO);
     let deduction = breakdown
-        .to_cost_deduction(&assumed)
-        .expect("zero position is the only failure path here");
+        .to_cost_deduction_with_basis(&assumed, &assumed)
+        .expect("non-zero held_size");
     let value = deduction.as_f64();
     assert!(value.is_finite() && value >= 0.0);
     assert!((value - 0.011).abs() < 1e-6, "expected 0.011, got {value}");
 }
 
 #[test]
-fn test_to_cost_deduction_rejects_non_finite_variable_ratio() {
+fn test_to_cost_deduction_with_basis_rejects_non_finite_variable_ratio() {
     let breakdown = TradeCostBreakdown {
         variable_ratio: f64::NAN,
         fixed_cost: YoctoValue::from_yocto_u128(1_000_000_000_000_000_000_000),
     };
     let assumed = YoctoValue::from_yocto_u128(ONE_NEAR_YOCTO);
     assert_eq!(
-        breakdown.to_cost_deduction(&assumed),
+        breakdown.to_cost_deduction_with_basis(&assumed, &assumed),
         Err(CostError::NonFiniteRatio)
+    );
+}
+
+#[test]
+fn test_to_cost_deduction_with_basis_zero_trade_only_fixed_cost_amortized() {
+    // partial entry / hold で trade=0 だが held>0 のケース: variable cost 0、
+    // fixed cost のみが held で割られる。production では Δw≈0 なので
+    // 0 deduction で短絡されるが、to_cost_deduction_with_basis の単独動作として
+    // ZeroPosition でなく fixed-only ratio を返すことを pin。
+    let breakdown = TradeCostBreakdown {
+        variable_ratio: 0.01,
+        fixed_cost: YoctoValue::from_yocto_u128(1_000_000_000_000_000_000_000), // 0.001 NEAR
+    };
+    let trade = YoctoValue::zero();
+    let held = YoctoValue::from_yocto_u128(ONE_NEAR_YOCTO);
+    let value = breakdown
+        .to_cost_deduction_with_basis(&trade, &held)
+        .expect("non-zero held_size")
+        .as_f64();
+    // var_cost = 0.01 × 0 = 0、fixed = 0.001、deduction = 0.001 / 1.0 = 0.001
+    assert!((value - 0.001).abs() < 1e-9, "expected 0.001, got {value}");
+}
+
+#[test]
+fn test_to_cost_deduction_with_basis_partial_exit_smaller_trade_than_held() {
+    // 部分 exit シナリオ: trade=0.4 NEAR, held=0.6 NEAR (target=0.6, current=1.0 等)
+    // var_cost = 0.01 × 0.4 = 0.004
+    // fixed = 0.001
+    // deduction = (0.004 + 0.001) / 0.6 ≈ 0.008333
+    let breakdown = TradeCostBreakdown {
+        variable_ratio: 0.01,
+        fixed_cost: YoctoValue::from_yocto_u128(1_000_000_000_000_000_000_000),
+    };
+    let trade = YoctoValue::from_yocto_u128(ONE_NEAR_YOCTO * 4 / 10);
+    let held = YoctoValue::from_yocto_u128(ONE_NEAR_YOCTO * 6 / 10);
+    let value = breakdown
+        .to_cost_deduction_with_basis(&trade, &held)
+        .expect("non-zero held")
+        .as_f64();
+    let expected = (0.01 * 0.4 + 0.001) / 0.6;
+    assert!(
+        (value - expected).abs() < 1e-9,
+        "expected {expected}, got {value}"
     );
 }
 
@@ -69,17 +115,58 @@ fn test_cost_deduction_accepts_zero_and_positive() {
 }
 
 #[test]
-fn test_to_cost_deduction_combines_variable_and_fixed() {
+fn test_cost_deduction_accepts_value_at_sane_cap() {
+    // 上限ちょうどは許容（境界 inclusive）。
+    assert_eq!(
+        CostDeduction::new(COST_DEDUCTION_SANE_MAX).map(CostDeduction::as_f64),
+        Some(COST_DEDUCTION_SANE_MAX)
+    );
+}
+
+#[test]
+fn test_cost_deduction_rejects_above_sane_cap() {
+    // typed config bypass / hostile RPC 経由の巨大 finite ratio を遮断。
+    let above = COST_DEDUCTION_SANE_MAX * 1.0001;
+    assert!(CostDeduction::new(above).is_none());
+    // 1e+270 のような subnormal target_w 経由の値も同様に弾かれる。
+    assert!(CostDeduction::new(1.0e+270).is_none());
+}
+
+#[test]
+fn test_to_cost_deduction_with_basis_excessive_ratio_signal() {
+    // `held_size = 1e-9 NEAR` 級で variable_ratio + fixed が `held` を桁で
+    // 超えるシナリオ: `target_w = 1e-9 × total_value` のような subnormal 経路の
+    // モデルテスト。`is_finite()` を満たすが SANE_MAX を超える ratio が
+    // ExcessiveRatio として上位に伝わることを pin。
+    let breakdown = TradeCostBreakdown {
+        variable_ratio: 0.005,
+        // 1 NEAR の固定費（gas + storage で発生し得る現実的オーダー）
+        fixed_cost: YoctoValue::from_yocto_u128(ONE_NEAR_YOCTO),
+    };
+    let trade = YoctoValue::from_yocto_u128(ONE_NEAR_YOCTO / 1_000);
+    // held = 0.0001 NEAR -> ratio ≈ (0.005 × 0.001 + 1.0) / 0.0001 ≈ 10005 >> 10
+    let held = YoctoValue::from_yocto_u128(ONE_NEAR_YOCTO / 10_000);
+    match breakdown.to_cost_deduction_with_basis(&trade, &held) {
+        Err(CostError::ExcessiveRatio { value, cap }) => {
+            assert!(value > cap, "ExcessiveRatio must carry value > cap");
+            assert_eq!(cap, COST_DEDUCTION_SANE_MAX);
+        }
+        other => panic!("expected ExcessiveRatio, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_to_cost_deduction_with_basis_combines_variable_and_fixed() {
+    // trade == held (entry-from-cash 等価) のとき、ratio = variable + fixed/held
     let breakdown = TradeCostBreakdown {
         variable_ratio: 0.01,
         // 固定費 0.001 NEAR
         fixed_cost: YoctoValue::from_yocto_u128(1_000_000_000_000_000_000_000),
     };
-    // assumed = 1 NEAR → fixed_ratio = 0.001 / 1.0 = 0.001
     let assumed = YoctoValue::from_yocto_u128(ONE_NEAR_YOCTO);
     let deduction = breakdown
-        .to_cost_deduction(&assumed)
-        .expect("zero position is the only failure path here")
+        .to_cost_deduction_with_basis(&assumed, &assumed)
+        .expect("non-zero held")
         .as_f64();
     assert!(
         (deduction - 0.011).abs() < 1e-6,
@@ -88,7 +175,9 @@ fn test_to_cost_deduction_combines_variable_and_fixed() {
 }
 
 #[test]
-fn test_to_cost_deduction_larger_position_reduces_fixed_ratio() {
+fn test_to_cost_deduction_with_basis_larger_held_reduces_fixed_ratio() {
+    // trade と held を同じスケールで増やすと fixed_cost 部分が希釈されて
+    // deduction が小さくなる（variable_ratio は held に対する比例で残る）。
     let breakdown = TradeCostBreakdown {
         variable_ratio: 0.005,
         fixed_cost: YoctoValue::from_yocto_u128(1_000_000_000_000_000_000_000),
@@ -96,29 +185,30 @@ fn test_to_cost_deduction_larger_position_reduces_fixed_ratio() {
     let small = YoctoValue::from_yocto_u128(ONE_NEAR_YOCTO);
     let large = YoctoValue::from_yocto_u128(100 * ONE_NEAR_YOCTO);
     let small_d = breakdown
-        .to_cost_deduction(&small)
-        .expect("non-zero position")
+        .to_cost_deduction_with_basis(&small, &small)
+        .expect("non-zero held")
         .as_f64();
     let large_d = breakdown
-        .to_cost_deduction(&large)
-        .expect("non-zero position")
+        .to_cost_deduction_with_basis(&large, &large)
+        .expect("non-zero held")
         .as_f64();
     assert!(
         large_d < small_d,
-        "larger position should yield smaller deduction"
+        "larger held should reduce fixed-cost share: small={small_d}, large={large_d}"
     );
 }
 
 #[test]
-fn test_to_cost_deduction_only_variable_when_fixed_zero() {
+fn test_to_cost_deduction_with_basis_only_variable_when_fixed_zero() {
+    // fixed_cost = 0 で trade == held のとき deduction == variable_ratio
     let breakdown = TradeCostBreakdown {
         variable_ratio: 0.01,
         fixed_cost: YoctoValue::zero(),
     };
     let assumed = YoctoValue::from_yocto_u128(ONE_NEAR_YOCTO);
     let deduction = breakdown
-        .to_cost_deduction(&assumed)
-        .expect("non-zero position")
+        .to_cost_deduction_with_basis(&assumed, &assumed)
+        .expect("non-zero held")
         .as_f64();
     assert!(
         (deduction - 0.01).abs() < 1e-9,

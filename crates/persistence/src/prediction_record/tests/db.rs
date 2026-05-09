@@ -55,7 +55,7 @@ async fn test_sort_order_by_target_time_desc() -> Result<()> {
     // r1 (oldest target) → evaluated_at = base + 10h (newest)
     // r2 (middle target) → evaluated_at = base + 5h (middle)
     // r3 (newest target) → evaluated_at = base + 3h (oldest)
-    let conn = connection_pool::get().await?;
+    let conn = connection_pool::get_test_only().await?;
     let r1_id = r1.id;
     let r2_id = r2.id;
     let r3_id = r3.id;
@@ -760,7 +760,7 @@ async fn test_layer3_check_rejects_created_at_before_data_cutoff() -> Result<()>
         created_at,
     );
 
-    let conn = connection_pool::get().await?;
+    let conn = connection_pool::get_test_only().await?;
     let result = conn
         .interact(move |conn| {
             diesel::insert_into(prediction_records::table)
@@ -773,10 +773,142 @@ async fn test_layer3_check_rejects_created_at_before_data_cutoff() -> Result<()>
     let err = result.expect_err("Layer 3 CHECK must reject created_at < data_cutoff_time");
     let msg = err.to_string();
     assert!(
-        msg.contains("created_at_geq_data_cutoff") || msg.contains("check"),
-        "expected CHECK violation referencing created_at_geq_data_cutoff, got: {msg}"
+        msg.contains(CREATED_AT_GEQ_DATA_CUTOFF_CONSTRAINT) || msg.contains("check"),
+        "expected CHECK violation referencing {CREATED_AT_GEQ_DATA_CUTOFF_CONSTRAINT}, got: {msg}"
     );
 
+    Ok(())
+}
+
+// ── Layer 4: read-time SQL filter `created_at >= data_cutoff_time` ──
+
+/// Layer 4 直接検証: CHECK 制約 (Layer 3) が剥がれた状態で違反行が DB に存在しても、
+/// `get_latest_fresh_predictions` が Layer 4 SQL filter で除外することを確認する。
+///
+/// 運用シナリオ: `down.sql` rollback 期間、`NOT VALID` + `VALIDATE` 二段移行の
+/// 移行期間、DBA 直接 INSERT / raw SQL bypass、migration 前レガシーデータ。
+/// `insert_data_leakage_violator` で CHECK を一時的に外して違反行を持ち込み、
+/// Layer 4 filter (`prediction_records::created_at.ge(prediction_records::data_cutoff_time)`)
+/// が optimizer に「データ取得時刻より古い予測」を fresh と誤認させない経路を pin する。
+#[tokio::test]
+#[serial]
+async fn test_layer4_get_latest_fresh_excludes_violator_row() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let token = "token_layer4.near";
+    let quote = "wrap.near";
+
+    // 違反行: created_at < data_cutoff_time (data leakage / look-ahead bias)
+    // target_time / created_at は as_of より過去だと get_latest_fresh の
+    // target_time > as_of 不変条件で他フィルタに当たって除外され、Layer 4 が
+    // 効いているのか他フィルタが効いているのか切り分けられない。そのため
+    // target_time は as_of より未来、created_at は as_of 以前に置き、
+    // 「Layer 4 を取り除けば成立する fresh prediction」を構築する。
+    let violator_data_cutoff = base + chrono::TimeDelta::hours(2); // 未来
+    let violator_target = base + chrono::TimeDelta::hours(48);
+    let violator_created = base - chrono::TimeDelta::hours(1); // < data_cutoff_time
+    insert_data_leakage_violator(
+        token,
+        quote,
+        999,
+        violator_data_cutoff,
+        violator_target,
+        violator_created,
+    )
+    .await?;
+
+    // 正常行: 同一 token に対して有効な予測。Layer 4 filter が違反行のみを
+    // 除外することを確認するためのアンカー (両方除外なら filter が広すぎる
+    // 可能性、両方残るなら Layer 4 が効いていない)。
+    let valid_data_cutoff = base - chrono::TimeDelta::hours(2);
+    let valid_target = base + chrono::TimeDelta::hours(36);
+    let valid_created = base - chrono::TimeDelta::hours(1);
+    insert_unevaluated_record_at(
+        token,
+        quote,
+        100,
+        valid_data_cutoff,
+        valid_target,
+        valid_created,
+    )
+    .await?;
+
+    let as_of = base;
+    let results = PredictionRecord::get_latest_fresh_predictions(&[tok(token)], as_of).await?;
+
+    assert_eq!(
+        results.len(),
+        1,
+        "violator row (created_at < data_cutoff_time) must be filtered by Layer 4 read-time SQL"
+    );
+    assert_eq!(
+        results[0].predicted_price,
+        BigDecimal::from(100),
+        "must return the valid (non-violator) prediction"
+    );
+
+    clean_table().await?;
+    restore_layer3_check_validity().await?;
+    Ok(())
+}
+
+/// Layer 4 直接検証: `earliest_fresh_visible_in` も同じ filter で違反行を除外する。
+///
+/// 違反行の `created_at` を区間内に置きつつ data_cutoff_time をその後に置くことで、
+/// Layer 4 filter が無ければ MIN(created_at) として違反行が選ばれてしまう状況を
+/// 再現する。
+#[tokio::test]
+#[serial]
+async fn test_layer4_earliest_fresh_visible_excludes_violator_row() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let token = "token_layer4_earliest.near";
+    let quote = "wrap.near";
+    let day_end = base + chrono::TimeDelta::days(1);
+
+    // 違反行: 区間内の早い created_at + target_time も fresh だが
+    // created_at < data_cutoff_time という data leakage パターン。
+    // Layer 4 filter が無ければ MIN(created_at) で先に出現する。
+    let violator_data_cutoff = base + chrono::TimeDelta::hours(3);
+    let violator_target = base + chrono::TimeDelta::hours(48);
+    let violator_created = base + chrono::TimeDelta::minutes(5);
+    insert_data_leakage_violator(
+        token,
+        quote,
+        999,
+        violator_data_cutoff,
+        violator_target,
+        violator_created,
+    )
+    .await?;
+
+    // 正常行: 違反行より遅い created_at で fresh。Layer 4 が効いていれば
+    // こちらが earliest として選ばれる。
+    let valid_data_cutoff = base + chrono::TimeDelta::minutes(10);
+    let valid_target = base + chrono::TimeDelta::hours(36);
+    let valid_created = base + chrono::TimeDelta::minutes(30);
+    insert_unevaluated_record_at(
+        token,
+        quote,
+        100,
+        valid_data_cutoff,
+        valid_target,
+        valid_created,
+    )
+    .await?;
+
+    let result = PredictionRecord::earliest_fresh_visible_in(base, day_end).await?;
+
+    assert_eq!(
+        result,
+        Some(valid_created),
+        "Layer 4 must skip violator and pick the next-earliest valid created_at"
+    );
+
+    clean_table().await?;
+    restore_layer3_check_validity().await?;
     Ok(())
 }
 

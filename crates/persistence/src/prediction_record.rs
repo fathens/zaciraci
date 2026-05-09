@@ -7,6 +7,23 @@ use common::types::{TokenAccount, TokenOutAccount};
 use diesel::prelude::*;
 use logging::*;
 
+/// Layer 3 CHECK 制約名の Single Source of Truth。
+///
+/// `migrations/2026-05-07-000000_add_prediction_invariant_check/{up,down}.sql`
+/// で `prediction_records` に追加される CHECK 制約 `created_at >= data_cutoff_time`
+/// の名前。Rust 側 (test helpers / 違反検証 assertion) が SQL を組み立てるとき、
+/// および制約名でエラーメッセージを assert するときの参照点。
+///
+/// migration 側の SQL リテラルとは厳密に同一でなければならない。乖離した場合、
+/// `ALTER TABLE ... DROP CONSTRAINT IF EXISTS` の `IF EXISTS` 句により silently
+/// 別名制約が残置され、Layer 3 防御が偽の状態で通過する。新規 callers は
+/// 必ずこの定数経由で参照すること。
+///
+/// production binary はこの定数を参照しない (CHECK 制約名を埋め込む経路は
+/// `#[cfg(test)]` の helpers と直接検証テストのみ) ため `#[cfg(test)]` で囲む。
+#[cfg(test)]
+pub(crate) const CREATED_AT_GEQ_DATA_CUTOFF_CONSTRAINT: &str = "created_at_geq_data_cutoff";
+
 #[derive(Debug, Clone, Queryable, Selectable)]
 #[diesel(table_name = prediction_records)]
 #[diesel(check_for_backend(diesel::pg::Pg))]

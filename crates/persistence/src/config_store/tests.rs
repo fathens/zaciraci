@@ -93,7 +93,7 @@ async fn test_upsert_insert_then_update() {
     assert_eq!(val, Some("updated".to_string()));
 
     // 履歴が記録されていることを確認
-    let conn = connection_pool::get().await.unwrap();
+    let conn = connection_pool::get_test_only().await.unwrap();
     let history_count: i64 = conn
         .interact(|conn| {
             use diesel::dsl::count;
@@ -124,7 +124,7 @@ async fn test_delete_records_history() {
     assert_eq!(val, None);
 
     // 履歴に "(deleted)" が記録されていることを確認
-    let conn = connection_pool::get().await.unwrap();
+    let conn = connection_pool::get_test_only().await.unwrap();
     let last_history: Option<String> = conn
         .interact(|conn| {
             config_store_history::table
@@ -147,7 +147,7 @@ async fn test_cleanup_old_history() {
 
     // 古い履歴レコードを直接 INSERT
     {
-        let conn = connection_pool::get().await.unwrap();
+        let conn = connection_pool::get_test_only().await.unwrap();
         let old_time = chrono::Utc::now().naive_utc() - chrono::TimeDelta::days(400);
         conn.interact(move |conn| {
             diesel::sql_query(
@@ -171,7 +171,7 @@ async fn test_cleanup_old_history() {
 
     // 400日前のレコードが消えていることを確認
     {
-        let conn = connection_pool::get().await.unwrap();
+        let conn = connection_pool::get_test_only().await.unwrap();
         let count: i64 = conn
             .interact(|conn| {
                 use diesel::dsl::count;
@@ -194,7 +194,7 @@ async fn test_cleanup_old_history_zero_days_skips() {
 
     // 古い履歴レコードを作成
     {
-        let conn = connection_pool::get().await.unwrap();
+        let conn = connection_pool::get_test_only().await.unwrap();
         let old_time = chrono::Utc::now().naive_utc() - chrono::TimeDelta::days(400);
         let test_key_owned = "TEST_CLEANUP_ZERO_DAYS_KEY".to_string();
         conn.interact(move |conn| {
@@ -220,7 +220,7 @@ async fn test_cleanup_old_history_zero_days_skips() {
 
     // レコードが残っていることを確認
     {
-        let conn = connection_pool::get().await.unwrap();
+        let conn = connection_pool::get_test_only().await.unwrap();
         let count: i64 = conn
             .interact(|conn| {
                 use diesel::dsl::count;
@@ -237,7 +237,7 @@ async fn test_cleanup_old_history_zero_days_skips() {
 
     // クリーンアップ
     {
-        let conn = connection_pool::get().await.unwrap();
+        let conn = connection_pool::get_test_only().await.unwrap();
         conn.interact(|conn| {
             diesel::delete(
                 config_store_history::table

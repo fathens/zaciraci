@@ -19,7 +19,7 @@ use diesel::sql_types::Text;
 pub async fn raw_upsert(raw_email: &str, role: &str) -> Result<()> {
     let raw_email = raw_email.to_string();
     let role = role.to_string();
-    let conn = connection_pool::get().await?;
+    let conn = connection_pool::get_test_only().await?;
     conn.interact(move |conn| {
         sql_query(
             "INSERT INTO authorized_users (email, role) VALUES ($1, $2) \
@@ -37,7 +37,7 @@ pub async fn raw_upsert(raw_email: &str, role: &str) -> Result<()> {
 /// Delete a single row by case-insensitive email match.
 pub async fn raw_delete(raw_email: &str) -> Result<()> {
     let raw_email = raw_email.to_string();
-    let conn = connection_pool::get().await?;
+    let conn = connection_pool::get_test_only().await?;
     conn.interact(move |conn| {
         sql_query("DELETE FROM authorized_users WHERE lower(email) = lower($1)")
             .bind::<Text, _>(raw_email)
@@ -53,7 +53,7 @@ pub async fn raw_delete(raw_email: &str) -> Result<()> {
 /// test.
 pub async fn wipe_by_email_like(pattern: &str) -> Result<()> {
     let pattern = pattern.to_string();
-    let conn = connection_pool::get().await?;
+    let conn = connection_pool::get_test_only().await?;
     conn.interact(move |conn| {
         sql_query("DELETE FROM authorized_users WHERE email LIKE $1")
             .bind::<Text, _>(pattern)

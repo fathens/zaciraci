@@ -20,11 +20,19 @@ use super::types::*;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PredErrDiagonalMode {
-    /// `cov[i,i] + k × pred_err_var`（独立ノイズ加算、金融工学的に標準）
+    /// `cov[i,i] + k × pred_err_var`（独立ノイズ加算、金融工学的に標準）。
+    /// 対角のみを inflate し off-diagonal は据え置くため、Markowitz の
+    /// implied correlation が圧縮され diversification benefit が失われる
+    /// 既知の挙動がある（詳細は `apply_prediction_error_diagonal` docstring）。
     #[default]
     Additive,
-    /// `max(cov[i,i], k × pred_err_var)`（pred_err が price_var を超えた時のみ採用）
+    /// `max(cov[i,i], k × pred_err_var)`（pred_err が price_var を超えた時のみ採用）。
+    /// 同様に対角のみを書き換える。
     Max,
+    /// Additive で対角を inflate したあと `D · cov · D` で off-diagonal も
+    /// 同比でリスケールし、implied correlation を保持する。
+    /// `Additive` の diversification 圧縮を解消するための Phase 2 モード。
+    Rescale,
 }
 
 impl PredErrDiagonalMode {
@@ -33,6 +41,7 @@ impl PredErrDiagonalMode {
         match self {
             Self::Additive => "additive",
             Self::Max => "max",
+            Self::Rescale => "rescale",
         }
     }
 
@@ -40,7 +49,7 @@ impl PredErrDiagonalMode {
     /// 「期待値の列挙」を表現する箇所はすべてこの SSoT を参照すること
     /// (`as_str` / `validate_string` / panic message での文字列 drift を防ぐ)。
     pub const fn variants_doc() -> &'static str {
-        "\"additive\", \"max\""
+        "\"additive\", \"max\", \"rescale\""
     }
 }
 
@@ -68,6 +77,7 @@ impl std::str::FromStr for PredErrDiagonalMode {
         match s.trim().to_ascii_lowercase().as_str() {
             "additive" => Ok(Self::Additive),
             "max" => Ok(Self::Max),
+            "rescale" => Ok(Self::Rescale),
             _ => Err(ParsePredErrDiagonalModeError),
         }
     }
@@ -518,6 +528,9 @@ pub fn damp_and_diff(
 ///
 /// - `Additive`: `cov[i,i] + k * pred_err_var_i`（独立ノイズ加算、金融工学的に標準）
 /// - `Max`: `max(cov[i,i], k * pred_err_var_i)`（pred_err が price_var を超えた時のみ採用）
+/// - `Rescale`: Additive で対角を inflate したあと `new_cov = D · old_cov · D`
+///   (`D = diag(sqrt(new_diag/old_diag))`) で off-diagonal も同比でリスケール。
+///   implied correlation を保持しつつ全体のリスクを引き上げる。
 ///
 /// `tokens` の順序は `cov` の行/列インデックスと一致している必要がある。
 /// `pred_err_var` にエントリがない銘柄は対角を据え置く。
@@ -525,19 +538,19 @@ pub fn damp_and_diff(
 ///
 /// # 数学的契約（重要）
 ///
-/// **本関数は対角 (`cov[i,i]`) のみを inflate し、off-diagonal
-/// (`cov[i,j]` for `i != j`) には触れない**。これは意図的な近似だが
-/// 副作用として「implied correlation `cov[i,j]/sqrt(cov[i,i]*cov[j,j])`
-/// が圧縮され、Markowitz の diversification benefit が削がれる」。
+/// `Additive` / `Max` は対角 (`cov[i,i]`) のみを inflate し off-diagonal
+/// (`cov[i,j]` for `i != j`) には触れない**意図的な近似**で、副作用として
+/// 「implied correlation `cov[i,j]/sqrt(cov[i,i]*cov[j,j])` が圧縮され、
+/// Markowitz の diversification benefit が削がれる」。
 ///
 /// `k * pred_err_var` が元の `cov[i,i]` と同オーダー以上になる設定
 /// (例: `k=1.0`, `mape=20%` → `pev=0.04` ≫ daily price var ~10⁻⁴)
-/// では銘柄間相関が事実上無視される。本 PR の default は
-/// `Additive` + `k=0.1` だが、これでも `0.1 × 0.04 = 4×10⁻³` の
-/// 加算は daily price var ~10⁻⁴ に対して **実効 ~40× の対角インフレ**
-/// に相当し、`cov[i,j]/sqrt(cov[i,i]*cov[j,j])` で見た implied
-/// correlation は事実上 0 まで圧縮される。すなわち現行 default 下では
-/// Markowitz の diversification benefit はほぼ失われていると解釈すべき。
+/// では銘柄間相関が事実上無視される。`Additive` + `k=0.1` でも
+/// `0.1 × 0.04 = 4×10⁻³` の加算は daily price var ~10⁻⁴ に対して
+/// **実効 ~40× の対角インフレ** に相当し、`cov[i,j]/sqrt(cov[i,i]*cov[j,j])`
+/// で見た implied correlation は事実上 0 まで圧縮される。すなわち
+/// `Additive` / `Max` 単独では Markowitz の diversification benefit は
+/// ほぼ失われていると解釈すべき。
 ///
 /// 上記の試算は `daily price var ~10⁻⁴`（年率 30% 相当、`HIGH_VOLATILITY_THRESHOLD`
 /// 付近）を仮定したもの。altcoin など高 volatility 銘柄（年率 80-150%）
@@ -545,14 +558,17 @@ pub fn damp_and_diff(
 /// に緩和される。すなわち実効インフレ倍率は対象銘柄の volatility に強く
 /// 依存し、低 volatility 銘柄ほど相関破壊が激しい。
 ///
-/// この影響を緩和するには (a) `k` をさらに下げて daily price var の
-/// オーダーまで揃える、または (b) 下記の correlation-preserving
-/// rescaling を実装する、のいずれかが必要。**default 変更も rescaling
-/// 実装も本 PR のスコープ外**で、別 PR にて対応する。
+/// `Rescale` モードは上記の相関破壊を解消するために導入されたもの。
+/// 数学的には `Additive` で更新された対角 `new_diag[i] = old_diag[i] + k × pev_i`
+/// を保ったまま、`D = diag(sqrt(new_diag/old_diag))` を作って
+/// `new_cov[i,j] = D[i] × old_cov[i,j] × D[j]` で全要素を再正規化する。
+/// 結果として:
+/// - `new_cov[i,i] = D[i]² × old_cov[i,i] = new_diag[i]`（Additive と同じ対角）
+/// - `new_corr[i,j] = old_corr[i,j]`（off-diagonal も比例 scale で相関保存）
 ///
-/// 相関構造を保ったまま inflate したい場合は、別途
-/// `D = diag(sqrt(new_diag/old_diag))` を構築して
-/// `new_cov = D · old_cov · D` で再正規化する必要がある（Phase 2、別 PR）。
+/// `pev` が欠損または非有限/負値の銘柄は `D[i] = 1.0` として扱い、その行/列は
+/// rescale の対象外（`Additive` と同じく据え置き）。`old_diag[i] = 0` のような
+/// 退化ケースも `D[i] = 1.0` に落として ZeroDivision を回避する。
 pub(crate) fn apply_prediction_error_diagonal(
     mut cov: Array2<f64>,
     tokens: &[TokenOutAccount],
@@ -565,6 +581,13 @@ pub(crate) fn apply_prediction_error_diagonal(
         tokens.len(),
         "covariance matrix size must match tokens length"
     );
+
+    // `Rescale` モードでは off-diagonal の更新に元の対角値が必要なため、
+    // 対角更新前のスナップショットを取る。`Additive` / `Max` はこの値を
+    // 使わない（無駄になる小さな allocation だが、分岐より読みやすさを優先）。
+    let n = cov.nrows();
+    let old_diag: Vec<f64> = (0..n).map(|i| cov[[i, i]]).collect();
+
     for (i, token) in tokens.iter().enumerate() {
         let Some(&pev) = pred_err_var.get(token) else {
             continue;
@@ -579,10 +602,35 @@ pub(crate) fn apply_prediction_error_diagonal(
         let scaled = k * pev;
         let current = cov[[i, i]];
         cov[[i, i]] = match mode {
-            PredErrDiagonalMode::Additive => current + scaled,
+            PredErrDiagonalMode::Additive | PredErrDiagonalMode::Rescale => current + scaled,
             PredErrDiagonalMode::Max => current.max(scaled),
         };
     }
+
+    if mode == PredErrDiagonalMode::Rescale {
+        // D[i] = sqrt(new_diag[i] / old_diag[i])。pev 欠損や non-finite で
+        // 対角が変わっていない行は ratio = 1 → D[i] = 1 で off-diagonal も据え置き。
+        // 退化ケース (old_diag = 0、new = ±∞ 等) は安全側として 1.0 にフォールバック。
+        let scale: Vec<f64> = (0..n)
+            .map(|i| {
+                let old = old_diag[i];
+                let new = cov[[i, i]];
+                if old > 0.0 && old.is_finite() && new.is_finite() && new >= 0.0 {
+                    (new / old).sqrt()
+                } else {
+                    1.0
+                }
+            })
+            .collect();
+        for i in 0..n {
+            for j in 0..n {
+                if i != j {
+                    cov[[i, j]] *= scale[i] * scale[j];
+                }
+            }
+        }
+    }
+
     ensure_positive_semi_definite(&mut cov);
     cov
 }
@@ -2071,7 +2119,7 @@ pub async fn execute_portfolio_optimization(
 
 /// 現在の重みを計算
 /// 型安全: holdingsはTokenAmount（smallest_units + decimals）、total_valueはNearValue（NEAR単位）
-fn calculate_current_weights(tokens: &[TokenInfo], wallet: &WalletInfo) -> Vec<f64> {
+pub fn calculate_current_weights(tokens: &[TokenInfo], wallet: &WalletInfo) -> Vec<f64> {
     let mut weights = vec![0.0; tokens.len()];
     let total_value = &wallet.total_value;
 
@@ -2085,32 +2133,6 @@ fn calculate_current_weights(tokens: &[TokenInfo], wallet: &WalletInfo) -> Vec<f
             if !total_value.is_zero() {
                 let weight = &value_near / total_value;
                 weights[i] = weight.to_f64().unwrap_or(0.0);
-            }
-
-            // デバッグ用ログ (テスト時のみ)
-            #[cfg(test)]
-            {
-                println!(
-                    "Token {}: rate={}, holding={}, value_near={}, weight={:.6}%",
-                    token.symbol,
-                    token.current_rate,
-                    holding,
-                    value_near,
-                    weights[i] * 100.0
-                );
-
-                let value_near_f64 = value_near.as_bigdecimal().to_f64().unwrap_or(0.0);
-                if value_near_f64 > 100.0 {
-                    // 100 NEAR以上の場合は警告
-                    println!(
-                        "WARNING: Token {} has unusually high value: {:.6} NEAR",
-                        token.symbol, value_near_f64
-                    );
-                    println!("  Rate: {}", token.current_rate);
-                    println!("  Holdings: {}", holding);
-                    println!("  Value (NEAR): {}", value_near);
-                    println!("  Weight: {:.6}%", weights[i] * 100.0);
-                }
             }
         }
     }

@@ -1841,7 +1841,11 @@ fn pred_err_diagonal_mode_from_str_rejects_typos() {
 fn pred_err_diagonal_mode_as_str_round_trips() {
     use std::str::FromStr;
 
-    for mode in [PredErrDiagonalMode::Additive, PredErrDiagonalMode::Max] {
+    for mode in [
+        PredErrDiagonalMode::Additive,
+        PredErrDiagonalMode::Max,
+        PredErrDiagonalMode::Rescale,
+    ] {
         let s = mode.as_str();
         assert_eq!(PredErrDiagonalMode::from_str(s).unwrap(), mode);
     }
@@ -1854,7 +1858,11 @@ fn pred_err_diagonal_mode_string_round_trips_three_ways() {
     // 認識が食い違い debug が困難になる。
     use std::str::FromStr;
 
-    for mode in [PredErrDiagonalMode::Additive, PredErrDiagonalMode::Max] {
+    for mode in [
+        PredErrDiagonalMode::Additive,
+        PredErrDiagonalMode::Max,
+        PredErrDiagonalMode::Rescale,
+    ] {
         let s = mode.as_str();
         // FromStr が as_str() の出力を受理する
         assert_eq!(PredErrDiagonalMode::from_str(s).unwrap(), mode);
@@ -1865,6 +1873,25 @@ fn pred_err_diagonal_mode_string_round_trips_three_ways() {
         // serde シリアライズが as_str() と一致する
         let serialized = serde_json::to_string(&mode).unwrap();
         assert_eq!(serialized, json);
+    }
+}
+
+#[test]
+fn pred_err_diagonal_mode_variants_doc_lists_all_variants() {
+    // variants_doc は `as_str` の SSoT を含む quoted リスト。新規 variant が
+    // 追加された際に variants_doc 更新を強制するため、各 variant の
+    // `as_str()` が含まれることを確認する。
+    let doc = PredErrDiagonalMode::variants_doc();
+    for mode in [
+        PredErrDiagonalMode::Additive,
+        PredErrDiagonalMode::Max,
+        PredErrDiagonalMode::Rescale,
+    ] {
+        let token = format!("\"{}\"", mode.as_str());
+        assert!(
+            doc.contains(&token),
+            "variants_doc must list `{token}`, got: {doc}"
+        );
     }
 }
 

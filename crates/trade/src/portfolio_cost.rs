@@ -15,14 +15,34 @@
 //!   （F002 の NaN cascade をクローズ）。
 //! - `PortfolioData::retain_excluding` で「除外集合」を直接渡せるため、
 //!   反転 HashSet を作るヘルパは不要（fin-1 提案、F012）。
+//!
+//! ## コストモデル: Δw ベース (Phase 2)
+//!
+//! `compute_cost_deductions` は target weight と current weight (wallet 由来)
+//! の差分 `|Δw| × total_value` を実 trade size、`target_w × total_value` を
+//! held size として分離して扱う。partial entry (target_w > current_w > 0)
+//! では、Phase 1 の Entry-from-cash モデルが「`target_w × total_value` を
+//! まるごと買うコスト」として過大評価していた非対称誤差を、`|Δw| × total_value`
+//! を取引サイズとして使うことで解消する。詳細は `compute_cost_deductions`
+//! の docstring 参照。
+//!
+//! ### Phase 2 で残る制約 (Phase 3 follow-up)
+//!
+//! `target_w == 0.0` (full exit) の経路では deduction を 0 で素通しする。
+//! Markowitz の objective `weight × (r - deduction)` が `target_w = 0` の場合
+//! 構造的に 0 になるため当該銘柄選好には影響しないが、SELL の transition cost
+//! は per-period return の objective に反映されない。Phase 3 で
+//! regularized Markowitz `argmax_w μᵀw - λ wᵀΣw - C(|Δw|)` として objective
+//! 内に直接 transition cost を入れる際に解消予定。
 
 use crate::Result;
-use crate::cost::{CostDeduction, estimate_trade_cost};
+use crate::cost::estimate_trade_cost;
 use bigdecimal::{BigDecimal, FromPrimitive, ToPrimitive};
 use blockchain::jsonrpc::{GasInfo, ViewContract};
 use blockchain::types::gas_price::GasPrice;
 use common::algorithm::portfolio::{
-    PortfolioData, PortfolioExecutionReport, damp_and_diff, execute_portfolio_optimization,
+    PortfolioData, PortfolioExecutionReport, calculate_current_weights, damp_and_diff,
+    execute_portfolio_optimization,
 };
 use common::algorithm::types::{TokenData, WalletInfo};
 use common::types::{ExchangeRate, TokenAccount, TokenInAccount, TokenOutAccount, YoctoValue};
@@ -35,6 +55,22 @@ use std::sync::Arc;
 /// 収束判定の重み変化量しきい値（max |Δw| < 1e-3 で収束扱い）
 const CONVERGENCE_TOLERANCE: f64 = 1e-3;
 
+/// damping に応じた反復上限スケーリングの hard cap。
+///
+/// `damping` の防御下限 (`PORTFOLIO_COST_ITERATION_DAMPING_LOWER = 0.1`) に
+/// 対応する `⌈1/0.1⌉ = 10` を hard-cap として固定し、typed config の clamp
+/// が bypass された経路（cfg(test) 直接構築・将来の API 変更）でも
+/// `f64 as usize` saturating cast による DoS surface
+/// （例: `damping = 1e-300` で `1.0/damping = 1e300 as usize → usize::MAX`、
+/// `usize::MAX × 10` 反復 ≈ 無限ループ等価で cron tick 完全停止）を
+/// 構造的に塞ぐ。
+const MAX_DAMPING_SCALE: u32 = 10;
+
+/// `max_iter * scale` の合計上限。production typed config (max_iter ≤ 10、
+/// damping ≥ 0.1) では `10 × 10 = 100` で頭打ち、bypass 経路でも本上限で
+/// 反復回数を構造的に制限する。
+const MAX_TOTAL_ITERATIONS: usize = 100;
+
 /// `max_iter` を `damping` に応じてスケールし、反復上限を有効収束範囲に揃える。
 ///
 /// `damp_and_diff` は `next = (1 - α) × prev + α × candidate` 型の指数収束で、
@@ -45,15 +81,30 @@ const CONVERGENCE_TOLERANCE: f64 = 1e-3;
 /// 防御下限の damping (`PORTFOLIO_COST_ITERATION_DAMPING_LOWER = 0.1`) でも
 /// CONVERGENCE_TOLERANCE まで届く headroom を確保する。
 ///
-/// damping は `[0.1, 1.0]` に clamp 済みのため、効果倍率は最大 10×。
-/// `max_iter` 上限 10 と合わせても合計 ≤ 100 反復で抑えられる。
+/// damping は production typed config で `[0.1, 1.0]` に clamp 済みのため
+/// 倍率は最大 10×、`max_iter` 上限 10 と合わせても合計 ≤ 100 反復。clamp
+/// が bypass された経路でも `MAX_DAMPING_SCALE` / `MAX_TOTAL_ITERATIONS`
+/// で hard-cap し、`f64 as usize` saturating cast の platform-dependent DoS
+/// surface を構造的に塞ぐ（fail-loud cap）。
 fn scale_max_iter_by_damping(max_iter: usize, damping: f64) -> usize {
     let scale = if damping > 0.0 {
-        (1.0 / damping).ceil() as usize
+        // f64 を MAX_DAMPING_SCALE (10) に clamp してから usize cast すること
+        // で、`damping = 1e-300` 等の clamp 漏れ経路でも cast 結果が確定上限
+        // 以下に収まる。`.min()` は片側 NaN なら NaN を返すが damping > 0.0
+        // ガードで NaN は排除済み、Infinity も `.min(10.0) = 10.0` で吸収。
+        let raw_scale = (1.0 / damping).ceil().min(MAX_DAMPING_SCALE as f64);
+        if raw_scale.is_finite() && raw_scale >= 1.0 {
+            raw_scale as usize
+        } else {
+            1
+        }
     } else {
         1
     };
-    max_iter.max(1).saturating_mul(scale.max(1))
+    max_iter
+        .max(1)
+        .saturating_mul(scale.max(1))
+        .min(MAX_TOTAL_ITERATIONS)
 }
 
 /// 取引コスト見積もりに必要な静的入力
@@ -160,41 +211,53 @@ where
     })
 }
 
-/// 重みから銘柄ごとの cost_deduction 比率を計算する。
+/// 重みから銘柄ごとの cost_deduction 比率を計算する（Δw ベース）。
 ///
-/// `total_value_yocto` は wallet 全体の価値（yoctoNEAR 単位）、
-/// `assumed_in[i] = total_value_yocto × weights[i]` で銘柄ごとの取引額を概算。
+/// `total_value_yocto` は wallet 全体の価値（yoctoNEAR 単位）。
+/// `target_weights[i]` と `current_weights[i]` から取引差分
+/// `Δw[i] = target_w - current_w` を求め、以下を別々に扱う:
+///
+/// - **trade_size** = `|Δw[i]| × total_value_yocto`
+///   `estimate_trade_cost` の price impact 計算に渡す「実際のスワップ量」。
+/// - **held_size** = `target_w[i] × total_value_yocto`
+///   結果コストを正規化する基準（`r - deduction` の単位を揃えるため
+///   target weight 下の保有量で割る）。
 ///
 /// `CostDeduction::new` の不変条件 (`is_finite() && >= 0.0`) を満たさない値は
 /// `estimation_failures` 経路に合流し、Markowitz には渡らない（NaN cascade 防止）。
 /// NaN な weight も入口で 0.0 にクランプして混入を排除する。
 ///
-/// # コストモデル: Entry-from-cash
+/// # 退化ケースの扱い
 ///
-/// 取引額として **`target_w` 全体**（`total_value_yocto × weights[i]`）を
-/// 用いる。これは「現在 100% cash で保有しており、これから target portfolio を
-/// 一括構築する」という Entry-from-cash モデルに相当する。実運用では既に保有
-/// 中の銘柄について差分 `Δw = target_w - current_w` 分しか swap しないため、
-/// 本関数は in-place rebalance 時には実コストを過大評価する。
+/// - `|Δw| ≈ 0`（取引なし） → `deductions[i] = 0`（コスト無し）。
+///   typed config の `PORTFOLIO_COST_DELTA_W_THRESHOLD` 相当の閾値は
+///   現状ハードコードで `1e-9`。`f64` 量子化誤差を吸収する目的で、
+///   実運用での Δw はほぼ常に 1e-9 を上回る。
+/// - `target_w ≈ 0`（全 exit） → `deductions[i] = 0`。Markowitz は
+///   `weight × (r - deduction) = 0` で当該銘柄を選好しない構造のため、
+///   exit cost は portfolio 比較の観点で見えない（Markowitz の構造的限界）。
+///   実コストは `estimate_trade_cost(|Δw|, ...)` 自体は計算済みで、運用の
+///   debug ログに記録される。Phase 3 で transition cost を直接 objective に
+///   足す regularized Markowitz が必要な場合の follow-up。
 ///
-/// バイアスの方向は経路ごとに異なる:
-/// - **entry / increase 経路** (`current_w < target_w`): 実 entry 量は
-///   `Δw < target_w` だが本関数は `target_w` で計算するため、コストを
-///   過大評価する（保守的方向）。
-/// - **exit / decrease 経路** (`current_w > target_w`、特に全 exit で
-///   `target_w = 0`): `assumed_in = total_value × target_w = 0` となり
-///   SELL コストが一切計上されない経路がある。こちらは実コストを
-///   **過小評価**する（非保守的方向）。
+/// # Phase 1 との対比（Entry-from-cash）
 ///
-/// したがって entry 経路では「回らない取引を打ってしまう」リスクは
-/// 抑えられているが、exit 経路ではその保証がない。Δw ベース再構成で
-/// 両方向のコストを正確に扱うのは別 PR の対象。
+/// 旧形式は `assumed_in = target_w × total_value` を **trade と held の両方** に
+/// 使う Entry-from-cash モデルだった。partial entry では target_w に対して
+/// 過大評価（trade size が実 Δw より大きい）、全 exit では SELL コスト消失
+/// （trade size = held size = 0）という非対称な誤差があった。本実装は
+/// trade と held を分離して両方向で正しく扱う。
 fn compute_cost_deductions(
-    weights: &[f64],
+    target_weights: &[f64],
+    current_weights: &[f64],
     tokens: &[TokenData],
     inputs: &PortfolioCostInputs,
     total_value_yocto: &BigDecimal,
 ) -> CostDeductionResult {
+    /// `|Δw|` がこの値より小さい場合は「取引なし」として deduction = 0。
+    /// f64 量子化誤差の吸収用で、典型的な Δw はこれより 6 桁以上大きい。
+    const DELTA_W_NOOP_THRESHOLD: f64 = 1e-9;
+
     let mut deductions = BTreeMap::new();
     let mut estimation_failures = Vec::new();
     // `zip` で対応付けることで `weights[i]` のインデックスアクセスを排除し、
@@ -205,53 +268,79 @@ fn compute_cost_deductions(
     // 不一致を渡される可能性に備え bail! で fail-soft する設計）。
     debug_assert_eq!(
         tokens.len(),
-        weights.len(),
-        "tokens and weights must have the same length"
+        target_weights.len(),
+        "tokens and target_weights must have the same length"
     );
-    for (t, &raw_w) in tokens.iter().zip(weights.iter()) {
-        // NaN weight は入口で 0.0 にクランプ（CostDeduction::new の
-        // is_finite 不変条件と整合）。.max(0.0) は f64::NaN.max(0.0) = 0.0
-        // なので兼ねるが、明示的に is_finite チェックして意図を表す。
-        let w = if raw_w.is_finite() {
-            raw_w.max(0.0)
+    debug_assert_eq!(
+        tokens.len(),
+        current_weights.len(),
+        "tokens and current_weights must have the same length"
+    );
+    for ((t, &raw_target), &raw_current) in tokens
+        .iter()
+        .zip(target_weights.iter())
+        .zip(current_weights.iter())
+    {
+        // NaN/Inf/負値 target_w は upstream のロジック異常シグナル。silent に
+        // 0 へクランプすると optimizer が当該銘柄を「コストなし」で扱って
+        // 誤った選好を返す経路になるため、estimation_failures に倒して
+        // retain_excluding で portfolio から除外する（Phase 1 と同じ安全性）。
+        if !raw_target.is_finite() || raw_target < 0.0 {
+            estimation_failures.push(t.symbol.clone());
+            continue;
+        }
+        // current_w は wallet 由来で計算上 finite-non-negative になるはずだが、
+        // calculate_current_weights が `unwrap_or(0.0)` で fallback する経路を
+        // 持つため、ここでも防御的に 0 へクランプする（fail-soft）。
+        let target_w = raw_target;
+        let current_w = if raw_current.is_finite() {
+            raw_current.max(0.0)
         } else {
             0.0
         };
-        // 直前の `is_finite() && w >= 0.0` ガードにより `BigDecimal::from_f64`
+        let delta_w = (target_w - current_w).abs();
+
+        // target_w = 0 (full exit): Markowitz の `weight × (r - deduction)` は
+        // 構造的に 0 なので、ここで deduction を 0 として返しても optimizer の
+        // 当該銘柄選好には影響しない。SELL コスト自体は estimate_trade_cost が
+        // 計算しており debug ログにも残せるが、portfolio 比較に流す経路が
+        // ないため deduction = 0 で素通しする。
+        if target_w == 0.0 {
+            deductions.insert(t.symbol.clone(), 0.0);
+            if delta_w > DELTA_W_NOOP_THRESHOLD {
+                let log = DEFAULT.new(o!("function" => "compute_cost_deductions"));
+                debug!(
+                    log,
+                    "delta-w cost: full-exit cost not propagated to Markowitz (target_w=0)";
+                    "token" => %t.symbol,
+                    "delta_w" => format!("{delta_w:.6}"),
+                );
+            }
+            continue;
+        }
+
+        // |Δw| ≈ 0 → 取引なし、deduction = 0。typed config bypass で current_w
+        // が NaN/負値だった場合も上の正規化で 0 になっており、ここに来る Δw は
+        // 純粋な丸め誤差レベル。
+        if delta_w < DELTA_W_NOOP_THRESHOLD {
+            deductions.insert(t.symbol.clone(), 0.0);
+            continue;
+        }
+
+        // 直前の `is_finite() && >= 0.0` ガードにより `BigDecimal::from_f64`
         // は仕様上 None を返さないが、bigdecimal の future minor version で
-        // 挙動が変わる可能性に備えて fail-soft skip する。`damp_and_diff` の
-        // `bail!` 化と同様、cron tick での persistent crash loop DoS を防ぐ
-        // ため release panic は使わない。caller (`run_one_iteration`) は
-        // `estimation_failures` を `retain_excluding` で処理する経路を持つ。
-        let Some(w_bd) = BigDecimal::from_f64(w) else {
-            let log = DEFAULT.new(o!("function" => "compute_cost_deductions"));
-            warn!(
-                log,
-                "BigDecimal::from_f64 returned None despite finite-non-negative guard; excluding token";
-                "token" => %t.symbol,
-                "weight" => w,
-            );
+        // 挙動が変わる可能性に備えて fail-soft skip する（cron tick crash 防止）。
+        let Some(target_w_bd) = BigDecimal::from_f64(target_w) else {
             estimation_failures.push(t.symbol.clone());
             continue;
         };
-        let assumed_in_bd = total_value_yocto * w_bd;
-        let assumed_in = YoctoValue::from_yocto(assumed_in_bd);
+        let Some(delta_w_bd) = BigDecimal::from_f64(delta_w) else {
+            estimation_failures.push(t.symbol.clone());
+            continue;
+        };
 
-        // Entry-from-cash モデルの limitation observability:
-        // `target_w = 0` で全 exit する経路では `assumed_in = 0` となり SELL コスト
-        // が一切計上されない（estimate_trade_cost は ZeroPosition 経由で skip され、
-        // 結果として cost_deductions[token] が空 → optimizer はコストなしで全 exit
-        // を打つ判断になる）。Δw ベース再構成で正確に扱うのは別 PR スコープだが、
-        // 過小評価が発生したことを debug ログで残し、運用での発火頻度を観測できる
-        // ようにする。production の noise を増やさないよう warn ではなく debug。
-        if w == 0.0 {
-            let log = DEFAULT.new(o!("function" => "compute_cost_deductions"));
-            debug!(
-                log,
-                "entry-from-cash: assumed_in = 0 for target_w = 0; SELL cost omitted (Phase 2)";
-                "token" => %t.symbol,
-            );
-        }
+        let trade_size = YoctoValue::from_yocto(total_value_yocto * delta_w_bd);
+        let held_size = YoctoValue::from_yocto(total_value_yocto * target_w_bd);
 
         let token_account: TokenAccount = t.symbol.clone().into();
         let new_token_count = if inputs.existing_deposits.contains(&token_account) {
@@ -272,17 +361,19 @@ fn compute_cost_deductions(
         // anyhow::Error に橋渡しし、二重 nested match を平坦化する。
         let result = estimate_trade_cost(
             path,
-            &assumed_in,
+            &trade_size,
             rate,
             inputs.gas_price,
             &inputs.storage_min,
             new_token_count,
         )
-        .and_then(|b| b.to_cost_deduction(&assumed_in).map_err(Into::into));
+        .and_then(|b| {
+            b.to_cost_deduction_with_basis(&trade_size, &held_size)
+                .map_err(Into::into)
+        });
         match result {
             Ok(deduction) => {
-                let cd: CostDeduction = deduction;
-                deductions.insert(t.symbol.clone(), cd.as_f64());
+                deductions.insert(t.symbol.clone(), deduction.as_f64());
             }
             Err(_) => {
                 estimation_failures.push(t.symbol.clone());
@@ -324,8 +415,13 @@ async fn run_one_iteration(
         if portfolio_data.tokens.is_empty() {
             return Ok(None);
         }
+        // 現在の保有重みを wallet から計算する（Δw ベースの cost 推定で必要）。
+        // 反復ごとに portfolio_data.tokens が retain_excluding で減るため、
+        // tokens に揃えて再計算する（順序も同期）。
+        let current_weights = calculate_current_weights(&portfolio_data.tokens, wallet_info);
         let cost_result = compute_cost_deductions(
             &weights,
+            &current_weights,
             &portfolio_data.tokens,
             cost_inputs,
             total_value_yocto,

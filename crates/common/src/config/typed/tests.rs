@@ -879,6 +879,38 @@ fn test_validate_db_configs_handles_all_known_enum_keys() {
 }
 
 #[test]
+fn test_validate_db_configs_reason_redacts_attacker_controlled_value() {
+    // Property: 各既知 enum 型 typed config に対して攻撃者制御 canary 値を
+    // 流し込んだとき、`validate_db_configs` が返す reason 文字列に canary
+    // 値そのものが含まれてはならない (log forwarding 経由漏洩防御)。
+    //
+    // 現状 `PredErrDiagonalMode::validate_string` は固定文字列のみを返すため
+    // 安全だが、新規 enum 型 typed config を追加する開発者が
+    // `format!("invalid: {}", s)` のようなナイーブ実装を書いた場合に
+    // CI で検出するためのカナリアテスト。
+    //
+    // canary は以下を満たす:
+    //   - 期待バリアント名 ("additive" / "max" 等) と部分一致しない
+    //   - reason 中に出現する一般的な英単語 ("expected", "one of") と一致しない
+    //   - 視認しやすい unique sentinel
+    const PROBE: &str = "__attacker_controlled_canary_42__";
+    for key in KNOWN_ENUM_CONFIG_KEYS {
+        let mut configs = std::collections::HashMap::new();
+        configs.insert(key.to_string(), PROBE.to_string());
+        let invalid = crate::config::validate_db_configs(&mut configs);
+        let entry = invalid
+            .iter()
+            .find(|(k, _)| k == key)
+            .unwrap_or_else(|| panic!("validate_db_configs must reject {key} = {PROBE}"));
+        assert!(
+            !entry.1.contains(PROBE),
+            "reason for {key} leaked attacker-controlled value `{PROBE}`: {}",
+            entry.1
+        );
+    }
+}
+
+#[test]
 fn test_validate_db_configs_accepts_valid_pred_err_diagonal_mode() {
     let mut configs = std::collections::HashMap::new();
     configs.insert(
