@@ -57,20 +57,38 @@ const MAX_NEW_TOKEN_COUNT: usize = 16;
 /// クランプし、運用ノイズを増やさない。
 const LOSS_RATIO_NEGATIVE_WARN_THRESHOLD: f64 = 1e-3;
 
+/// `CostDeduction` の上限（return スケール）
+///
+/// 経済的に意味のある「コスト控除比率 = (variable × trade + fixed) / held」の
+/// 上限値。`1.0` (= 100%) は legitimate な小規模ポートフォリオで fixed_cost が
+/// dominant な rebalance ケース（held_size が gas 数 NEAR と同等オーダー）を
+/// 不正拒否してしまうため厳しすぎる。`1e6` 以上は防御として弱く、実害は出ない
+/// が typed config bypass DoS surface への遮断線にならない。
+///
+/// `10.0` (= 1000%) は経済的に意味のある deduction 範囲（小規模 rebalance の
+/// fixed-dominant ケースまで許容）と「`target_w = 1e-300` 経路で `held_size`
+/// 経由の巨大 finite ratio が `is_finite()` ガードを通過する」DoS surface 遮断
+/// を両立する。
+const COST_DEDUCTION_SANE_MAX: f64 = 10.0;
+
 /// Markowitz に渡せる「正常値」を保証するコスト控除比率（return スケール）
 ///
-/// `CostDeduction::new` で `is_finite() && >= 0.0` 不変条件を満たした値のみ構築可能。
-/// 上限は業務判定（optimizer 側）に委ねるため設けない。
+/// `CostDeduction::new` で `is_finite() && 0.0 <= value <= COST_DEDUCTION_SANE_MAX`
+/// 不変条件を満たした値のみ構築可能。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct CostDeduction(f64);
 
 impl CostDeduction {
-    /// `is_finite() && value >= 0.0` を満たす場合のみ `Some` を返す。
+    /// `is_finite() && 0.0 <= value <= COST_DEDUCTION_SANE_MAX` を満たす場合のみ
+    /// `Some` を返す。
     ///
-    /// NaN / Infinity / 負値は `None`。これにより `CostDeduction` が
-    /// optimizer に渡る時点で NaN cascade の入口を型で塞ぐ。
+    /// NaN / Infinity / 負値 / 上限超過は `None`。これにより `CostDeduction` が
+    /// optimizer に渡る時点で NaN cascade と numerical instability の入口を型で
+    /// 塞ぐ。`held_size` が `target_w = 1e-300` のような subnormal positive 経由で
+    /// 巨大 finite (1e+270 等) になり Markowitz Cholesky 後段で数値破綻する経路
+    /// (typed config bypass / hostile RPC) も同じ不変条件で遮断する。
     pub(crate) fn new(value: f64) -> Option<Self> {
-        if value.is_finite() && value >= 0.0 {
+        if value.is_finite() && (0.0..=COST_DEDUCTION_SANE_MAX).contains(&value) {
             Some(Self(value))
         } else {
             None
@@ -94,7 +112,7 @@ impl From<CostDeduction> for f64 {
 /// 失敗した token は呼び出し側で `estimation_failures` 経路に合流させ、
 /// `retain_tokens` で portfolio から除外することを期待する。
 /// `f64::INFINITY` を返して silent に Markowitz に流入させてはならない。
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub(crate) enum CostError {
     /// `held_size` が 0 — コスト比率を保有額で割れず計算不能（target_w = 0 の full exit 等）。
     #[error("cost deduction is undefined when held_size is 0")]
@@ -102,6 +120,11 @@ pub(crate) enum CostError {
     /// derive した比率が `f64::INFINITY` または `f64::NAN`（BigDecimal→f64 変換異常）
     #[error("derived cost ratio is non-finite (NaN/Infinity)")]
     NonFiniteRatio,
+    /// derive した比率が `COST_DEDUCTION_SANE_MAX` を超過。
+    /// typed config bypass / hostile RPC 経由で `held_size = 1e-300 × total_value`
+    /// のような subnormal positive 経路から finite な巨大 ratio が出てきた場合に発火。
+    #[error("derived cost ratio {value} exceeds sane upper cap {cap}")]
+    ExcessiveRatio { value: f64, cap: f64 },
 }
 
 /// 取引コストの内訳
@@ -175,7 +198,17 @@ impl TradeCostBreakdown {
         let total_cost_near = var_cost_near + fixed_near.as_bigdecimal();
         let ratio_bd = total_cost_near / held_near.as_bigdecimal();
         let ratio = ratio_bd.to_f64().ok_or(CostError::NonFiniteRatio)?;
-        CostDeduction::new(ratio).ok_or(CostError::NonFiniteRatio)
+        // `> COST_DEDUCTION_SANE_MAX` の場合と NaN/Infinity/負値の場合を区別して
+        // 上位に通知する。前者は hostile RPC や typed config bypass で `held_size`
+        // が subnormal 経由の巨大 finite に跳ねる経路の signal で、後者は
+        // BigDecimal -> f64 変換の数値病理ケース。
+        if !ratio.is_finite() || ratio < 0.0 {
+            return Err(CostError::NonFiniteRatio);
+        }
+        CostDeduction::new(ratio).ok_or(CostError::ExcessiveRatio {
+            value: ratio,
+            cap: COST_DEDUCTION_SANE_MAX,
+        })
     }
 }
 

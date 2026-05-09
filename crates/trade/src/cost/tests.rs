@@ -115,6 +115,47 @@ fn test_cost_deduction_accepts_zero_and_positive() {
 }
 
 #[test]
+fn test_cost_deduction_accepts_value_at_sane_cap() {
+    // 上限ちょうどは許容（境界 inclusive）。
+    assert_eq!(
+        CostDeduction::new(COST_DEDUCTION_SANE_MAX).map(CostDeduction::as_f64),
+        Some(COST_DEDUCTION_SANE_MAX)
+    );
+}
+
+#[test]
+fn test_cost_deduction_rejects_above_sane_cap() {
+    // typed config bypass / hostile RPC 経由の巨大 finite ratio を遮断。
+    let above = COST_DEDUCTION_SANE_MAX * 1.0001;
+    assert!(CostDeduction::new(above).is_none());
+    // 1e+270 のような subnormal target_w 経由の値も同様に弾かれる。
+    assert!(CostDeduction::new(1.0e+270).is_none());
+}
+
+#[test]
+fn test_to_cost_deduction_with_basis_excessive_ratio_signal() {
+    // `held_size = 1e-9 NEAR` 級で variable_ratio + fixed が `held` を桁で
+    // 超えるシナリオ: `target_w = 1e-9 × total_value` のような subnormal 経路の
+    // モデルテスト。`is_finite()` を満たすが SANE_MAX を超える ratio が
+    // ExcessiveRatio として上位に伝わることを pin。
+    let breakdown = TradeCostBreakdown {
+        variable_ratio: 0.005,
+        // 1 NEAR の固定費（gas + storage で発生し得る現実的オーダー）
+        fixed_cost: YoctoValue::from_yocto_u128(ONE_NEAR_YOCTO),
+    };
+    let trade = YoctoValue::from_yocto_u128(ONE_NEAR_YOCTO / 1_000);
+    // held = 0.0001 NEAR -> ratio ≈ (0.005 × 0.001 + 1.0) / 0.0001 ≈ 10005 >> 10
+    let held = YoctoValue::from_yocto_u128(ONE_NEAR_YOCTO / 10_000);
+    match breakdown.to_cost_deduction_with_basis(&trade, &held) {
+        Err(CostError::ExcessiveRatio { value, cap }) => {
+            assert!(value > cap, "ExcessiveRatio must carry value > cap");
+            assert_eq!(cap, COST_DEDUCTION_SANE_MAX);
+        }
+        other => panic!("expected ExcessiveRatio, got {other:?}"),
+    }
+}
+
+#[test]
 fn test_to_cost_deduction_with_basis_combines_variable_and_fixed() {
     // trade == held (entry-from-cash 等価) のとき、ratio = variable + fixed/held
     let breakdown = TradeCostBreakdown {
