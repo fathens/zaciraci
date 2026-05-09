@@ -153,7 +153,6 @@ fn estimate_swap_via_pools(
 ///
 /// Returns `None` under the same conditions as `estimate_swap_via_pools`,
 /// plus when an in/out reserve is zero (no marginal rate exists).
-#[cfg(test)]
 fn estimate_no_impact_swap_via_pools(
     pools: &dex::PoolInfoList,
     swap_actions: &[SwapAction],
@@ -190,20 +189,25 @@ fn estimate_no_impact_swap_via_pools(
 }
 
 impl SimulationClient {
-    /// Calculate swap output by walking SwapAction hops through pool estimate_return.
-    /// Falls back to DB rate conversion if pool data is unavailable.
-    async fn calculate_swap_output_via_pools(
+    /// Calculate the actual and no-impact swap outputs from a single sim_day
+    /// pool snapshot. Returns `None` if pool data is unavailable or the actual
+    /// output cannot be computed; the no-impact reference is best-effort and
+    /// surfaces as `Option<u128>` in the second slot.
+    async fn calculate_swap_outputs_via_pools(
         &self,
         swap_actions: &[SwapAction],
         amount_in: u128,
         sim_day: DateTime<Utc>,
-    ) -> Option<u128> {
-        let log = DEFAULT.new(o!("function" => "calculate_swap_output_via_pools"));
+    ) -> Option<(u128, Option<u128>)> {
+        let log = DEFAULT.new(o!("function" => "calculate_swap_outputs_via_pools"));
         let pools = persistence::pool_info::read_from_db(Some(sim_day.naive_utc()))
             .await
             .inspect_err(|e| warn!(log, "failed to read pool data from DB"; "error" => %e))
             .ok()?;
-        estimate_swap_via_pools(&pools, swap_actions, amount_in)
+        let actual = estimate_swap_via_pools(&pools, swap_actions, amount_in)?;
+        let no_impact =
+            estimate_no_impact_swap_via_pools(&pools, swap_actions, amount_in).filter(|&n| n > 0);
+        Some((actual, no_impact))
     }
 
     /// Fallback: calculate swap output using DB rates (no fee/slippage).
@@ -286,12 +290,19 @@ impl SimulationClient {
             return Ok(0);
         }
 
-        // Try pool-based estimate_return first (fee + slippage aware)
-        let (amount_out, swap_method) = match self
-            .calculate_swap_output_via_pools(&swap_actions, amount_in, sim_day)
+        // Try pool-based estimate_return first (fee + slippage aware). The
+        // same sim_day pool snapshot also feeds the no-impact reference used
+        // for `price_impact_ratio`; the DbRate fallback skips it because
+        // mixing DB rates with pool reserves would muddle the ratio's
+        // semantics.
+        let (amount_out, swap_method, price_impact_ratio) = match self
+            .calculate_swap_outputs_via_pools(&swap_actions, amount_in, sim_day)
             .await
         {
-            Some(out) => (out, SwapMethod::PoolBased),
+            Some((out, no_impact)) => {
+                let ratio = no_impact.map(|n| 1.0 - (out as f64) / (n as f64));
+                (out, SwapMethod::PoolBased, ratio)
+            }
             None => {
                 // Fallback to DB rate conversion (no fee/slippage)
                 warn!(log, "pool data unavailable, falling back to DB rate";
@@ -305,7 +316,7 @@ impl SimulationClient {
                         sim_day,
                     )
                     .await;
-                (out, SwapMethod::DbRate)
+                (out, SwapMethod::DbRate, None)
             }
         };
 
@@ -354,6 +365,7 @@ impl SimulationClient {
             ),
             swap_method,
             pool_ids: swap_actions.iter().map(|a| a.pool_id).collect(),
+            price_impact_ratio,
         });
 
         trace!(log, "simulated swap";
