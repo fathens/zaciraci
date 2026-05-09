@@ -115,24 +115,6 @@ pub(crate) struct TradeCostBreakdown {
 }
 
 impl TradeCostBreakdown {
-    /// 期待リターン ratio から差し引く net deduction を計算する。
-    ///
-    /// `assumed_position`: スワップする入力金額の見積もり（yoctoNEAR）
-    ///
-    /// # 不変条件
-    ///
-    /// - 戻り値の `CostDeduction` は `is_finite() && >= 0.0` を必ず満たす。
-    /// - `assumed_position` が 0 の場合は `Err(CostError::ZeroPosition)`。
-    /// - BigDecimal→f64 変換が NaN/Infinity になった場合は
-    ///   `Err(CostError::NonFiniteRatio)`。
-    ///
-    /// # 設計上の注意
-    ///
-    /// `f64::INFINITY` を返して silent に Markowitz `box_maximize_sharpe` に
-    /// 流入させてはならない。Cholesky 後段で `0 × INFINITY = NaN` 連鎖が生じ、
-    /// `sum_p.abs() < 1e-15` 等のガード（`common::algorithm::portfolio.rs:739`）
-    /// が NaN 比較で防御失効する。失敗 token は `retain_tokens` 経由で
-    /// portfolio から除外されるべき。
     /// Δw ベースのコスト deduction を計算する（Phase 2 形式）。
     ///
     /// - `trade_size`: 実際にスワップする量（`|Δw| × total_value`、yoctoNEAR）。
@@ -149,15 +131,12 @@ impl TradeCostBreakdown {
     ///   deduction          = total_cost_in_near / held_size_near
     /// ```
     ///
-    /// 旧 `to_cost_deduction(assumed_position)` は `trade_size == held_size` を
-    /// 前提とした Entry-from-cash モデルのため、`target_w = 0`（全 exit）で
-    /// SELL コストが消失する制約がある。本メソッドは trade_size と held_size を
-    /// 分離して扱うことで、partial exit / entry の両方向で正しい cost ratio を
-    /// 与える。`held_size = 0`（full exit）は依然として `ZeroPosition` で
-    /// 上位に通知し、呼び出し側で 0 deduction として扱う設計を採る。これは
-    /// Markowitz が target_w=0 の銘柄を `r - deduction` の符号で選好しない
-    /// （weight × return = 0 で contribution ゼロ）構造的限界に由来し、
-    /// 本メソッドの責務外。
+    /// `held_size = 0`（full exit）は `ZeroPosition` で上位に通知し、呼び出し
+    /// 側で 0 deduction として扱う設計を採る。これは Markowitz が target_w=0
+    /// の銘柄を `r - deduction` の符号で選好しない（weight × return = 0 で
+    /// contribution ゼロ）構造的限界に由来し、本メソッドの責務外。Phase 3 で
+    /// regularized Markowitz により target_w=0 の exit cost を
+    /// `-C(|Δw|)` として objective に組み込む follow-up を予定。
     ///
     /// # 不変条件
     ///
@@ -165,6 +144,14 @@ impl TradeCostBreakdown {
     /// - `held_size = 0` → `Err(CostError::ZeroPosition)`。
     /// - BigDecimal→f64 変換失敗 → `Err(CostError::NonFiniteRatio)`。
     /// - `variable_ratio` が non-finite → `Err(CostError::NonFiniteRatio)`。
+    ///
+    /// # 設計上の注意
+    ///
+    /// `f64::INFINITY` を返して silent に Markowitz `box_maximize_sharpe` に
+    /// 流入させてはならない。Cholesky 後段で `0 × INFINITY = NaN` 連鎖が生じ、
+    /// `sum_p.abs() < 1e-15` 等のガード（`common::algorithm::portfolio.rs:739`）
+    /// が NaN 比較で防御失効する。失敗 token は `retain_tokens` 経由で
+    /// portfolio から除外されるべき。
     pub(crate) fn to_cost_deduction_with_basis(
         &self,
         trade_size: &YoctoValue,
