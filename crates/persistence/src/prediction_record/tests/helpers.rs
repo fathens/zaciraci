@@ -165,16 +165,24 @@ pub async fn insert_invariant_violating_record(
 /// - 将来テーブル成長で `NOT VALID` + `VALIDATE` 二段移行を採用した場合の移行期間
 /// - DBA 直接 INSERT / raw SQL bypass / migration 前レガシーデータ
 ///
-/// 動作:
+/// 動作 (`conn.transaction` 内で atomic に実行):
 /// 1. `ALTER TABLE ... DROP CONSTRAINT created_at_geq_data_cutoff` で CHECK 剥がし
 /// 2. `new_unchecked` で違反行を INSERT
 /// 3. `ALTER TABLE ... ADD CONSTRAINT ... CHECK (...) NOT VALID` で再度 attach
-///    (`NOT VALID` は既存違反行を許容しつつ以後の INSERT/UPDATE には CHECK を
-///    効かせるため、以降のテストでも fail-loud な防御線が維持される)
 ///
-/// 後始末は `clean_table()` で違反行を消したあとで残った CHECK が
-/// `VALIDATE CONSTRAINT` 不要のまま自然に維持される (NOT VALID でも
-/// PostgreSQL は新規 INSERT に対してチェックする)。
+/// # 不変条件
+///
+/// - **トランザクション必須**: 3 statement を `conn.transaction` で wrap し、
+///   INSERT が型不一致 / FK / NOT NULL 違反等で失敗した場合に Layer 3 の CHECK が
+///   永続消失して後続テストが Layer 4 pin を偽通過する経路を塞ぐ。
+/// - **呼び出し元 `#[serial]` 必須**: 本ヘルパは ALTER TABLE で DB スキーマを
+///   一時操作するため、並列テストで他テストの INSERT/UPDATE と race するのを
+///   `serial_test::serial` で抑止する前提。
+/// - **`clean_table()` での違反行消去前提**: 本ヘルパで挿入した違反行を残したまま
+///   後続テストを実行すると、CHECK は `NOT VALID` 状態 (既存違反行は許容、
+///   新規 INSERT/UPDATE には enforce) で動作する。テスト DB の制約状態が
+///   migration 直後の `VALID` から `NOT VALID` にダウングレードされるため、
+///   完全な Layer 3 防御を必要とする後続テストを混在させないこと。
 pub async fn insert_data_leakage_violator(
     token: &str,
     quote_token: &str,
@@ -194,20 +202,23 @@ pub async fn insert_data_leakage_violator(
 
     let conn = connection_pool::get().await?;
     conn.interact(move |conn| {
-        diesel::sql_query(
-            "ALTER TABLE prediction_records DROP CONSTRAINT IF EXISTS created_at_geq_data_cutoff",
-        )
-        .execute(conn)?;
-        diesel::insert_into(prediction_records::table)
-            .values(&new_record)
+        conn.transaction(|conn| {
+            diesel::sql_query(
+                "ALTER TABLE prediction_records \
+                 DROP CONSTRAINT IF EXISTS created_at_geq_data_cutoff",
+            )
             .execute(conn)?;
-        diesel::sql_query(
-            "ALTER TABLE prediction_records \
-             ADD CONSTRAINT created_at_geq_data_cutoff \
-             CHECK (created_at >= data_cutoff_time) NOT VALID",
-        )
-        .execute(conn)?;
-        Ok::<_, diesel::result::Error>(())
+            diesel::insert_into(prediction_records::table)
+                .values(&new_record)
+                .execute(conn)?;
+            diesel::sql_query(
+                "ALTER TABLE prediction_records \
+                 ADD CONSTRAINT created_at_geq_data_cutoff \
+                 CHECK (created_at >= data_cutoff_time) NOT VALID",
+            )
+            .execute(conn)?;
+            Ok::<_, diesel::result::Error>(())
+        })
     })
     .await
     .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
