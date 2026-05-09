@@ -77,6 +77,7 @@ fn make_inputs(
             t.clone(),
             TokenSwapBundle {
                 buy_path: empty_path(),
+                sell_path: empty_path(),
                 rate: ExchangeRate::wnear(),
             },
         );

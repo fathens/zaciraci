@@ -212,22 +212,33 @@ impl TradeCostBreakdown {
     }
 }
 
-/// 与えられたパスでの取引コスト見積もり
+/// 往復（BUY + SELL）コストの見積もり
 ///
-/// - **variable_ratio**: `assumed_in × spot_rate - path.calc_value(assumed_in)`
-///   から AMM fee + price impact 一括計算 + `EXPECTED_SLIPPAGE_DEDUCTION` 加算
-/// - **fixed_cost**: `estimate_swap_gas_cost_yocto(gas_price, depth)` + `storage_min × new_token_count`
+/// - **variable_ratio**: BUY 側 (wnear → token) と SELL 側 (token → wnear) を
+///   独立に AMM fee + price impact 計算し、それぞれ `EXPECTED_SLIPPAGE_DEDUCTION`
+///   を加算した上で合算。BUY のみ計上していた旧実装は `path = wnear → token`
+///   前提で書かれていたが、`portfolio_cost` の呼び出し側はラウンドトリップ
+///   path (wnear → token → wnear) を渡しており、24 decimals 以外の token では
+///   `output_smallest` の単位が桁ズレして `compute_loss_ratio` の負値クランプ
+///   で実質 `EXPECTED_SLIPPAGE_DEDUCTION` のみに潰れていた（plan §3 CRITICAL #1
+///   参照）。今は方向ごとに helper を分けて単位を揃える。
+/// - **fixed_cost**: `estimate_swap_gas_cost_yocto(gas_price, buy_depth + sell_depth)`
+///   `+ storage_min × new_token_count`。gas は両 swap 実行ぶん、storage は
+///   トークン登録の一回限り。
 ///
-/// `assumed_in` が 0 の場合は price impact が計測できないため、variable_ratio は
-/// `EXPECTED_SLIPPAGE_DEDUCTION` のみ。
+/// `trade_size` は wallet 視点での取引額（NEAR yocto 換算）。BUY 側はそのまま
+/// 入力、SELL 側は `spot_rate` で token smallest_units に換算してから path に
+/// 通す。`trade_size` が 0 の場合は price impact が計測できないため、
+/// variable_ratio は両方向ぶんの `EXPECTED_SLIPPAGE_DEDUCTION` のみ。
 ///
 /// `storage_min_per_token` は `STORAGE_MIN_SANE_CAP`（1 NEAR）で min クランプ
 /// するため、RPC が異常に巨大な値（例: `u128::MAX`）を返しても overflow による
 /// DoS 経路にならない。gas yocto 値が `u128` に収まらない場合は `Err` で
 /// fail-fast する。
 pub(crate) fn estimate_trade_cost(
-    path: &TokenPath,
-    assumed_in: &YoctoValue,
+    buy_path: &TokenPath,
+    sell_path: &TokenPath,
+    trade_size: &YoctoValue,
     spot_rate: &ExchangeRate,
     gas_price: GasPrice,
     storage_min_per_token: &YoctoValue,
@@ -243,10 +254,11 @@ pub(crate) fn estimate_trade_cost(
         );
     }
 
-    let depth = path.len();
+    let buy_variable = compute_buy_variable_ratio(buy_path, trade_size, spot_rate)?;
+    let sell_variable = compute_sell_variable_ratio(sell_path, trade_size, spot_rate)?;
+    let variable_ratio = buy_variable + sell_variable;
 
-    let variable_ratio = compute_variable_ratio(path, assumed_in, spot_rate)?;
-
+    let depth = buy_path.len() + sell_path.len();
     let gas_yocto = estimate_swap_gas_cost_yocto(gas_price, depth);
     let storage_count = u128::try_from(new_token_count)
         .map_err(|_| anyhow::anyhow!("new_token_count {new_token_count} exceeds u128"))?;
@@ -293,36 +305,79 @@ fn clamp_storage_min(storage_min_per_token: &YoctoValue) -> u128 {
     raw.min(STORAGE_MIN_SANE_CAP)
 }
 
-/// `assumed_in` を path に通したときの実効的な loss ratio
+/// BUY 方向 (wnear → token) の variable_ratio
 ///
-/// `(input_NEAR - output_NEAR_via_spot_rate) / input_NEAR` で AMM fee と price
-/// impact を一括計算し、`EXPECTED_SLIPPAGE_DEDUCTION` を加算して返す。
-///
-/// # モデル上の仮定
-///
-/// **Entry 片道のみを計上**する。rebalance で生じる exit 側の swap コストは
-/// この値には含まれない。これは「rebalance 周期 >> 予測 horizon」を仮定
-/// した近似であり、保有期間中に予測リターンで exit コストを十分回収できる
-/// 前提に立つ。短期回転の戦略では往復コストへの拡張が必要だが、現行の
-/// trade ループはこの前提下で運用されている。
-fn compute_variable_ratio(
-    path: &TokenPath,
-    assumed_in: &YoctoValue,
+/// `trade_size` は NEAR yocto 入力、`buy_path` は wnear を入口とするマルチ
+/// ホップ列。`path.calc_value(trade_size_yocto)` の出力は target token の
+/// smallest_units、それを `spot_rate` で割って NEAR 換算し
+/// `(input - output) / input` を計算する。`EXPECTED_SLIPPAGE_DEDUCTION` を
+/// 加えて返す。0 入力は impact 不可測のため `EXPECTED_SLIPPAGE_DEDUCTION` のみ。
+fn compute_buy_variable_ratio(
+    buy_path: &TokenPath,
+    trade_size: &YoctoValue,
     spot_rate: &ExchangeRate,
 ) -> Result<f64> {
-    let assumed_in_yocto = assumed_in
+    let input_yocto = trade_size
         .as_bigdecimal()
         .to_u128()
-        .ok_or_else(|| anyhow::anyhow!("assumed_in too large to convert to u128"))?;
-    if assumed_in_yocto == 0 {
+        .ok_or_else(|| anyhow::anyhow!("trade_size too large to convert to u128"))?;
+    if input_yocto == 0 {
         return Ok(EXPECTED_SLIPPAGE_DEDUCTION);
     }
 
-    let output_smallest = path.calc_value(assumed_in_yocto)?;
-    let output_amount =
-        TokenAmount::from_smallest_units(BigDecimal::from(output_smallest), spot_rate.decimals());
+    let output_token_smallest = buy_path.calc_value(input_yocto)?;
+    let output_amount = TokenAmount::from_smallest_units(
+        BigDecimal::from(output_token_smallest),
+        spot_rate.decimals(),
+    );
     let output_near = (&output_amount) / spot_rate;
-    let input_near = assumed_in.to_near();
+    let input_near = trade_size.to_near();
+
+    let amm_loss = compute_loss_ratio(&input_near, &output_near)?;
+    Ok(amm_loss + EXPECTED_SLIPPAGE_DEDUCTION)
+}
+
+/// SELL 方向 (token → wnear) の variable_ratio
+///
+/// `trade_size` は NEAR yocto で表した取引額。BUY と単位を揃えるため、ここで
+/// `spot_rate` を使って token smallest_units に換算してから `sell_path` に
+/// 通す。出力は wnear 側 (= NEAR yocto) なのでそのまま NEAR に戻す。
+/// `EXPECTED_SLIPPAGE_DEDUCTION` を加えて返す。
+///
+/// `trade_size` が 0、または spot_rate 換算後に 0 smallest_units になる
+/// （極端に高価値・低 decimals なトークンの極小取引）場合は impact 不可測
+/// として `EXPECTED_SLIPPAGE_DEDUCTION` のみ返す。
+fn compute_sell_variable_ratio(
+    sell_path: &TokenPath,
+    trade_size: &YoctoValue,
+    spot_rate: &ExchangeRate,
+) -> Result<f64> {
+    let input_yocto = trade_size
+        .as_bigdecimal()
+        .to_u128()
+        .ok_or_else(|| anyhow::anyhow!("trade_size too large to convert to u128"))?;
+    if input_yocto == 0 {
+        return Ok(EXPECTED_SLIPPAGE_DEDUCTION);
+    }
+    if spot_rate.is_effectively_zero() {
+        // raw_rate < 1 は 1 NEAR で 1 smallest_unit 未満 = 取引不能 token。
+        // SELL impact は計算不能なので buffer のみ。
+        return Ok(EXPECTED_SLIPPAGE_DEDUCTION);
+    }
+
+    // token_smallest = trade_size_NEAR × spot_rate.raw_rate
+    let input_near_bd = trade_size.to_near().as_bigdecimal().clone();
+    let input_token_bd = &input_near_bd * spot_rate.raw_rate();
+    let Some(input_token_smallest) = input_token_bd.to_u128() else {
+        anyhow::bail!("sell input token smallest_units does not fit in u128");
+    };
+    if input_token_smallest == 0 {
+        return Ok(EXPECTED_SLIPPAGE_DEDUCTION);
+    }
+
+    let output_yocto = sell_path.calc_value(input_token_smallest)?;
+    let output_near = YoctoValue::from_yocto_u128(output_yocto).to_near();
+    let input_near = trade_size.to_near();
 
     let amm_loss = compute_loss_ratio(&input_near, &output_near)?;
     Ok(amm_loss + EXPECTED_SLIPPAGE_DEDUCTION)

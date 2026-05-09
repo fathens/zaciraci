@@ -114,9 +114,16 @@ fn scale_max_iter_by_damping(max_iter: usize, damping: f64) -> usize {
 /// `collect_cost_inputs` が両者を同じキーで一緒に挿入するため、データ的には
 /// 常に 1:1 で揃う。両者を 1 構造体にまとめ「片方だけ欠ける」状態を型レベル
 /// で排除する。
+///
+/// `buy_path` と `sell_path` は対称コスト推定 (BUY + SELL の variable_ratio
+/// 合算) のために両方向ぶん保持する。`graph.update_graph(wnear)` が両端の
+/// dijkstra キャッシュを populate するため、追加の traversal なしで両方向を
+/// `graph.get_path` で取得できる。
 pub(crate) struct TokenSwapBundle {
-    /// wnear → token の経路（BUY 方向）。SELL 方向は後続コミットで追加。
+    /// wnear → token の経路（BUY 方向）
     pub(crate) buy_path: TokenPath,
+    /// token → wnear の経路（SELL 方向）
+    pub(crate) sell_path: TokenPath,
     /// 当該 token の現行 spot rate。`estimate_trade_cost` の `output_near`
     /// 換算で使う。
     pub(crate) rate: ExchangeRate,
@@ -193,25 +200,42 @@ where
     // その場合は呼び出し側で Hold に倒す。
     graph.update_graph(&wnear_in)?;
 
+    let wnear_out: TokenOutAccount = wnear_in.as_out();
     let mut bundles = BTreeMap::new();
     let mut failed_tokens = Vec::new();
     for t in tokens {
-        match blockchain::ref_finance::path::swap_path(&graph, &wnear_in, &t.symbol).await {
-            Ok(buy_path) => {
-                bundles.insert(
-                    t.symbol.clone(),
-                    TokenSwapBundle {
-                        buy_path,
-                        rate: t.current_rate.clone(),
-                    },
-                );
-            }
+        // BUY (wnear → token) と SELL (token → wnear) は両方ともこの段階で
+        // graph キャッシュ上に乗っている。`update_graph(wnear)` が dijkstra を
+        // wnear 起点で展開した上で、各 goal token を起点とした逆方向の
+        // `update_path` も同時に呼んでいるためで、ここでの `get_path` は
+        // 純粋にキャッシュ参照（追加 traversal なし）。
+        let buy_path = match graph.get_path(&wnear_in, &t.symbol) {
+            Ok(p) => p,
             Err(e) => {
-                debug!(log, "swap path unavailable for token";
+                debug!(log, "buy swap path unavailable for token";
                     "token" => %t.symbol, "error" => %e);
                 failed_tokens.push(t.symbol.clone());
+                continue;
             }
-        }
+        };
+        let sell_start = t.symbol.as_in();
+        let sell_path = match graph.get_path(&sell_start, &wnear_out) {
+            Ok(p) => p,
+            Err(e) => {
+                debug!(log, "sell swap path unavailable for token";
+                    "token" => %t.symbol, "error" => %e);
+                failed_tokens.push(t.symbol.clone());
+                continue;
+            }
+        };
+        bundles.insert(
+            t.symbol.clone(),
+            TokenSwapBundle {
+                buy_path,
+                sell_path,
+                rate: t.current_rate.clone(),
+            },
+        );
     }
     if !failed_tokens.is_empty() {
         warn!(log, "tokens excluded from cost estimation: no swap path";
@@ -376,6 +400,7 @@ fn compute_cost_deductions(
         // anyhow::Error に橋渡しし、二重 nested match を平坦化する。
         let result = estimate_trade_cost(
             &bundle.buy_path,
+            &bundle.sell_path,
             &trade_size,
             &bundle.rate,
             inputs.gas_price,
