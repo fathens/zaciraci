@@ -2134,32 +2134,6 @@ pub fn calculate_current_weights(tokens: &[TokenInfo], wallet: &WalletInfo) -> V
                 let weight = &value_near / total_value;
                 weights[i] = weight.to_f64().unwrap_or(0.0);
             }
-
-            // デバッグ用ログ (テスト時のみ)
-            #[cfg(test)]
-            {
-                println!(
-                    "Token {}: rate={}, holding={}, value_near={}, weight={:.6}%",
-                    token.symbol,
-                    token.current_rate,
-                    holding,
-                    value_near,
-                    weights[i] * 100.0
-                );
-
-                let value_near_f64 = value_near.as_bigdecimal().to_f64().unwrap_or(0.0);
-                if value_near_f64 > 100.0 {
-                    // 100 NEAR以上の場合は警告
-                    println!(
-                        "WARNING: Token {} has unusually high value: {:.6} NEAR",
-                        token.symbol, value_near_f64
-                    );
-                    println!("  Rate: {}", token.current_rate);
-                    println!("  Holdings: {}", holding);
-                    println!("  Value (NEAR): {}", value_near);
-                    println!("  Weight: {:.6}%", weights[i] * 100.0);
-                }
-            }
         }
     }
 
