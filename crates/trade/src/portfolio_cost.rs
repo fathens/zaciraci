@@ -107,6 +107,21 @@ fn scale_max_iter_by_damping(max_iter: usize, damping: f64) -> usize {
         .min(MAX_TOTAL_ITERATIONS)
 }
 
+/// 1 銘柄分の path + rate のペア。
+///
+/// `compute_cost_deductions` で path と rate を別々の BTreeMap から引いてきて
+/// 「両方そろっていなければスキップ」と二重 let-else でガードしていたが、
+/// `collect_cost_inputs` が両者を同じキーで一緒に挿入するため、データ的には
+/// 常に 1:1 で揃う。両者を 1 構造体にまとめ「片方だけ欠ける」状態を型レベル
+/// で排除する。
+pub(crate) struct TokenSwapBundle {
+    /// wnear → token の経路（BUY 方向）。SELL 方向は後続コミットで追加。
+    pub(crate) buy_path: TokenPath,
+    /// 当該 token の現行 spot rate。`estimate_trade_cost` の `output_near`
+    /// 換算で使う。
+    pub(crate) rate: ExchangeRate,
+}
+
 /// 取引コスト見積もりに必要な静的入力
 ///
 /// 反復最適化の各反復で path / spot_rate は変わらないため、ループ前に 1 回だけ
@@ -118,8 +133,7 @@ pub(crate) struct PortfolioCostInputs {
     pub(crate) gas_price: GasPrice,
     pub(crate) storage_min: YoctoValue,
     pub(crate) existing_deposits: HashSet<TokenAccount>,
-    pub(crate) paths: BTreeMap<TokenOutAccount, TokenPath>,
-    pub(crate) rates: BTreeMap<TokenOutAccount, ExchangeRate>,
+    pub(crate) bundles: BTreeMap<TokenOutAccount, TokenSwapBundle>,
     /// `swap_path` が失敗した token（呼び出し側で `retain_excluding` 経由で除外）
     pub(crate) failed_tokens: Vec<TokenOutAccount>,
 }
@@ -179,14 +193,18 @@ where
     // その場合は呼び出し側で Hold に倒す。
     graph.update_graph(&wnear_in)?;
 
-    let mut paths = BTreeMap::new();
-    let mut rates = BTreeMap::new();
+    let mut bundles = BTreeMap::new();
     let mut failed_tokens = Vec::new();
     for t in tokens {
         match blockchain::ref_finance::path::swap_path(&graph, &wnear_in, &t.symbol).await {
-            Ok(path) => {
-                paths.insert(t.symbol.clone(), path);
-                rates.insert(t.symbol.clone(), t.current_rate.clone());
+            Ok(buy_path) => {
+                bundles.insert(
+                    t.symbol.clone(),
+                    TokenSwapBundle {
+                        buy_path,
+                        rate: t.current_rate.clone(),
+                    },
+                );
             }
             Err(e) => {
                 debug!(log, "swap path unavailable for token";
@@ -205,8 +223,7 @@ where
         gas_price,
         storage_min,
         existing_deposits,
-        paths,
-        rates,
+        bundles,
         failed_tokens,
     })
 }
@@ -348,21 +365,19 @@ fn compute_cost_deductions(
         } else {
             1
         };
-        // path / rate は collect_cost_inputs 段階で同じキーで insert されているため、
-        // ここで揃って欠けるのは「retain_excluding 後に残った token」のみ
-        // = 想定外。揃わない場合は当該 token をスキップ（防御）。
-        let Some(path) = inputs.paths.get(&t.symbol) else {
-            continue;
-        };
-        let Some(rate) = inputs.rates.get(&t.symbol) else {
+        // collect_cost_inputs 段階で path / rate は TokenSwapBundle として
+        // 同時に挿入されるため「片方だけ欠ける」経路は構造的に閉じている。
+        // 残るのは retain_excluding 後に bundle ごと消えたケースのみで、
+        // ここでは防御的にスキップする。
+        let Some(bundle) = inputs.bundles.get(&t.symbol) else {
             continue;
         };
         // CostError は `std::error::Error` 実装済みなので Into 経由で
         // anyhow::Error に橋渡しし、二重 nested match を平坦化する。
         let result = estimate_trade_cost(
-            path,
+            &bundle.buy_path,
             &trade_size,
-            rate,
+            &bundle.rate,
             inputs.gas_price,
             &inputs.storage_min,
             new_token_count,

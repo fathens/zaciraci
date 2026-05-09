@@ -15,7 +15,7 @@
 //! - `target_w == current_w` で Δw ≈ 0 → deductions[i] = 0 (取引なし)
 //! - 部分 exit (current=1.0 → target=0.6) は full entry (current=0 → target=0.6)
 //!   より低い deduction（trade size がより小さいため variable_cost が縮む）
-//! - `inputs.paths` / `inputs.rates` の片方欠損は防御的にスキップ
+//! - `inputs.bundles` 欠損は防御的にスキップ
 //! - `existing_deposits` ヒットで storage 固定費が抑制される
 
 use super::*;
@@ -71,19 +71,22 @@ fn make_inputs(
     tokens: &[TokenOutAccount],
     existing_deposits: HashSet<TokenAccount>,
 ) -> PortfolioCostInputs {
-    let mut paths = BTreeMap::new();
-    let mut rates = BTreeMap::new();
+    let mut bundles = BTreeMap::new();
     for t in tokens {
-        paths.insert(t.clone(), empty_path());
-        rates.insert(t.clone(), ExchangeRate::wnear());
+        bundles.insert(
+            t.clone(),
+            TokenSwapBundle {
+                buy_path: empty_path(),
+                rate: ExchangeRate::wnear(),
+            },
+        );
     }
     PortfolioCostInputs {
         gas_price: gas_price(),
         // 0.1 NEAR — 実運用相当
         storage_min: YoctoValue::from_yocto_u128(100_000_000_000_000_000_000_000),
         existing_deposits,
-        paths,
-        rates,
+        bundles,
         failed_tokens: vec![],
     }
 }
@@ -347,14 +350,14 @@ fn test_compute_cost_deductions_empty_tokens_returns_empty_result() {
 }
 
 #[test]
-fn test_compute_cost_deductions_missing_path_silently_skips_token() {
-    // path が `inputs.paths` にない token は estimation_failures にも入らず
-    // silent に skip される（defense-in-depth: retain_excluding 後の残留異常
-    // に備えた防御的 continue）。
+fn test_compute_cost_deductions_missing_bundle_silently_skips_token() {
+    // bundle (path + rate) が `inputs.bundles` にない token は
+    // estimation_failures にも入らず silent に skip される
+    // （defense-in-depth: retain_excluding 後の残留異常に備えた防御的 continue）。
     let present = token("present");
     let missing = token("missing");
     let tokens = vec![token_data(present.clone()), token_data(missing.clone())];
-    // make_inputs に渡すのは present だけ → missing.path は欠損
+    // make_inputs に渡すのは present だけ → missing は bundle ごと欠損
     let inputs = make_inputs(std::slice::from_ref(&present), HashSet::new());
     let total = BigDecimal::from(ONE_NEAR_YOCTO);
     let result = compute_cost_deductions(&[0.5, 0.5], &[0.0, 0.0], &tokens, &inputs, &total);
@@ -362,32 +365,11 @@ fn test_compute_cost_deductions_missing_path_silently_skips_token() {
     let total_referenced = result.deductions.len() + result.estimation_failures.len();
     assert_eq!(
         total_referenced, 1,
-        "missing-path token must not appear in either map (silent skip)"
+        "missing-bundle token must not appear in either map (silent skip)"
     );
     assert!(
         !result.deductions.contains_key(&missing) && !result.estimation_failures.contains(&missing),
         "missing token must not appear anywhere"
-    );
-}
-
-#[test]
-fn test_compute_cost_deductions_missing_rate_silently_skips_token() {
-    // rate のみ欠損ケース（path はあるが rate が retain_excluding ですり抜けた
-    // 異常状態のシミュレート）。同様に silent skip する。
-    let present = token("present");
-    let missing_rate = token("missing_rate");
-    let tokens = vec![
-        token_data(present.clone()),
-        token_data(missing_rate.clone()),
-    ];
-    let mut inputs = make_inputs(&[present.clone(), missing_rate.clone()], HashSet::new());
-    inputs.rates.remove(&missing_rate);
-    let total = BigDecimal::from(ONE_NEAR_YOCTO);
-    let result = compute_cost_deductions(&[0.5, 0.5], &[0.0, 0.0], &tokens, &inputs, &total);
-    assert!(
-        !result.deductions.contains_key(&missing_rate)
-            && !result.estimation_failures.contains(&missing_rate),
-        "rate-missing token must be silently skipped"
     );
 }
 
