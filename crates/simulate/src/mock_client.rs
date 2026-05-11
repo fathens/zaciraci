@@ -300,7 +300,15 @@ impl SimulationClient {
             .await
         {
             Some((out, no_impact)) => {
-                let ratio = no_impact.map(|n| 1.0 - (out as f64) / (n as f64));
+                // Compute the ratio as (n - out) / n via i128 subtraction so the
+                // small AMM impact survives f64 quantization. Doing `1.0 - out/n`
+                // directly cancels at most-significant digits — for u128 inputs
+                // near 1e24 yocto, the relative precision drops to ~10^-8 when
+                // the true ratio is near zero. Promoting to i128 keeps the
+                // subtraction exact; the final f64 division then preserves the
+                // sign (negative noise just below zero remains visible to
+                // consumers, per SwapEvent::price_impact_ratio docs).
+                let ratio = no_impact.map(|n| (n as i128 - out as i128) as f64 / n as f64);
                 (out, SwapMethod::PoolBased, ratio)
             }
             None => {
