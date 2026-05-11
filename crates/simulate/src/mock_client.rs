@@ -306,7 +306,18 @@ impl SimulationClient {
                 // subtraction exact; the final f64 division then preserves the
                 // sign (negative noise just below zero remains visible to
                 // consumers, per SwapEvent::price_impact_ratio docs).
-                let ratio = no_impact.map(|n| (n as i128 - out as i128) as f64 / n as f64);
+                //
+                // u128 → i128 is `try_from` rather than `as`: pool reserves above
+                // i128::MAX (~1.7e38) are off-spec — would require e.g. a
+                // 24-decimals × 100T-supply token fully concentrated in one
+                // pool — and `as` would silently wrap to a negative i128,
+                // producing a bogus positive ratio. fail-closed to `None` so
+                // hostile sim snapshots cannot quietly skew observation stats.
+                let ratio = no_impact.and_then(|n| {
+                    let n_i128 = i128::try_from(n).ok()?;
+                    let out_i128 = i128::try_from(out).ok()?;
+                    Some((n_i128 - out_i128) as f64 / n as f64)
+                });
                 (out, SwapMethod::PoolBased, ratio)
             }
             None => {
