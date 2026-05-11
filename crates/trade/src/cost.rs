@@ -317,10 +317,12 @@ fn compute_buy_variable_ratio(
     trade_size: &YoctoValue,
     spot_rate: &ExchangeRate,
 ) -> Result<f64> {
-    let input_yocto = trade_size
-        .as_bigdecimal()
-        .to_u128()
-        .ok_or_else(|| anyhow::anyhow!("trade_size too large to convert to u128"))?;
+    let input_yocto = trade_size.as_bigdecimal().to_u128().ok_or_else(|| {
+        anyhow::anyhow!(
+            "buy trade_size too large to convert to u128: trade_yocto={:.6e}",
+            trade_size.as_bigdecimal().to_f64().unwrap_or(f64::NAN)
+        )
+    })?;
     if input_yocto == 0 {
         return Ok(EXPECTED_SLIPPAGE_DEDUCTION);
     }
@@ -352,10 +354,12 @@ fn compute_sell_variable_ratio(
     trade_size: &YoctoValue,
     spot_rate: &ExchangeRate,
 ) -> Result<f64> {
-    let input_yocto = trade_size
-        .as_bigdecimal()
-        .to_u128()
-        .ok_or_else(|| anyhow::anyhow!("trade_size too large to convert to u128"))?;
+    let input_yocto = trade_size.as_bigdecimal().to_u128().ok_or_else(|| {
+        anyhow::anyhow!(
+            "sell trade_size too large to convert to u128: trade_yocto={:.6e}",
+            trade_size.as_bigdecimal().to_f64().unwrap_or(f64::NAN)
+        )
+    })?;
     if input_yocto == 0 {
         return Ok(EXPECTED_SLIPPAGE_DEDUCTION);
     }
@@ -369,7 +373,16 @@ fn compute_sell_variable_ratio(
     let input_near_bd = trade_size.to_near().as_bigdecimal().clone();
     let input_token_bd = &input_near_bd * spot_rate.raw_rate();
     let Some(input_token_smallest) = input_token_bd.to_u128() else {
-        anyhow::bail!("sell input token smallest_units does not fit in u128");
+        // BigDecimal の Display は重いため、f64 round-trip でログ flood を防ぐ。
+        // 値を埋めることで「raw_rate × trade_size が u128 を溢れる token」が
+        // ログ・診断で識別可能になる（高 decimals memecoin、敵対 RPC の異常
+        // pool 等）。
+        anyhow::bail!(
+            "sell input token smallest_units does not fit in u128: \
+             input_near={:.6e}, raw_rate={:.6e}",
+            input_near_bd.to_f64().unwrap_or(f64::NAN),
+            spot_rate.raw_rate().to_f64().unwrap_or(f64::NAN),
+        );
     };
     if input_token_smallest == 0 {
         return Ok(EXPECTED_SLIPPAGE_DEDUCTION);
