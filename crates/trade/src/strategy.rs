@@ -152,7 +152,15 @@ where
     // （F008 / F025）。同じスナップショットを `select_top_volatility_tokens`
     // と `execute_portfolio_strategy` に渡すことで、ボラティリティ判定と
     // コスト見積りが同一プール状態を観測することを保証する。
-    let pool_snapshot = persistence::pool_info::read_from_db(None).await?;
+    //
+    // `current_time` を渡すことで simulate でも当日のプール状態を読み、
+    // production も `Utc::now()` 同等の最新スナップショットを読む。
+    // 旧コードの `None` は production では「最新」を意味して問題なかったが、
+    // simulate では「最新」がテスト DB に流入した sim 期間外のデータを指して
+    // しまい、コスト推定と swap 実行（mock_client.rs::handle_swap で
+    // `Some(sim_day)` を使用）の時刻が乖離する原因になっていた。
+    let pool_snapshot =
+        persistence::pool_info::read_from_db(Some(current_time.naive_utc())).await?;
 
     // Step 4: トークン選定 (評価期間に応じて処理を分岐)
     let selected_tokens = if is_new_period {
@@ -936,6 +944,7 @@ where
             wallet.account_id(),
             &portfolio_data.tokens,
             params.pools,
+            cfg,
         )
         .await
         {

@@ -170,6 +170,17 @@ pub(crate) struct SwapEvent {
     pub(crate) amount_out: TokenAmount,
     pub(crate) swap_method: SwapMethod,
     pub(crate) pool_ids: Vec<u32>,
+    /// Observed price impact: `1 - actual_out / no_impact_out` where
+    /// `no_impact_out` walks the same path at the marginal (size→0) AMM
+    /// rate. Per-hop fees cancel between the two outputs, so the ratio
+    /// isolates the size-dependent reserve shift only.
+    ///
+    /// `None` when the swap fell back to DbRate (no pool data) or the
+    /// no-impact reference is zero/undefined. The value is sign-preserving
+    /// so f64-rounding noise just below zero is visible to consumers
+    /// rather than silently clamped.
+    #[serde(default)]
+    pub(crate) price_impact_ratio: Option<f64>,
 }
 
 pub struct PortfolioState {

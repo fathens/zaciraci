@@ -45,8 +45,9 @@ use common::algorithm::portfolio::{
     execute_portfolio_optimization,
 };
 use common::algorithm::types::{TokenData, WalletInfo};
+use common::config::ConfigAccess;
 use common::types::{ExchangeRate, TokenAccount, TokenInAccount, TokenOutAccount, YoctoValue};
-use dex::{PoolInfoList, TokenPath};
+use dex::{PoolInfoList, TokenPairLike, TokenPath};
 use logging::*;
 use near_sdk::AccountId;
 use std::collections::{BTreeMap, HashSet};
@@ -107,6 +108,28 @@ fn scale_max_iter_by_damping(max_iter: usize, damping: f64) -> usize {
         .min(MAX_TOTAL_ITERATIONS)
 }
 
+/// 1 銘柄分の path + rate のペア。
+///
+/// `compute_cost_deductions` で path と rate を別々の BTreeMap から引いてきて
+/// 「両方そろっていなければスキップ」と二重 let-else でガードしていたが、
+/// `collect_cost_inputs` が両者を同じキーで一緒に挿入するため、データ的には
+/// 常に 1:1 で揃う。両者を 1 構造体にまとめ「片方だけ欠ける」状態を型レベル
+/// で排除する。
+///
+/// `buy_path` と `sell_path` は対称コスト推定 (BUY + SELL の variable_ratio
+/// 合算) のために両方向ぶん保持する。`graph.update_graph(wnear)` が両端の
+/// dijkstra キャッシュを populate するため、追加の traversal なしで両方向を
+/// `graph.get_path` で取得できる。
+pub(crate) struct TokenSwapBundle {
+    /// wnear → token の経路（BUY 方向）
+    pub(crate) buy_path: TokenPath,
+    /// token → wnear の経路（SELL 方向）
+    pub(crate) sell_path: TokenPath,
+    /// 当該 token の現行 spot rate。`estimate_trade_cost` の `output_near`
+    /// 換算で使う。
+    pub(crate) rate: ExchangeRate,
+}
+
 /// 取引コスト見積もりに必要な静的入力
 ///
 /// 反復最適化の各反復で path / spot_rate は変わらないため、ループ前に 1 回だけ
@@ -118,8 +141,12 @@ pub(crate) struct PortfolioCostInputs {
     pub(crate) gas_price: GasPrice,
     pub(crate) storage_min: YoctoValue,
     pub(crate) existing_deposits: HashSet<TokenAccount>,
-    pub(crate) paths: BTreeMap<TokenOutAccount, TokenPath>,
-    pub(crate) rates: BTreeMap<TokenOutAccount, ExchangeRate>,
+    pub(crate) bundles: BTreeMap<TokenOutAccount, TokenSwapBundle>,
+    /// 取引サイズ ÷ 経路上の最薄プール TVL の許容上限（`(0.001, 0.5]`、典型 0.02）。
+    /// `compute_cost_deductions` でこの比率を超える銘柄を `estimation_failures`
+    /// 経路に倒し、流動性に対して大きすぎる position が optimizer に流入する
+    /// のを防ぐ。`ConfigAccess::trade_max_position_vs_pool_ratio` で取得。
+    pub(crate) max_position_vs_pool_ratio: f64,
     /// `swap_path` が失敗した token（呼び出し側で `retain_excluding` 経由で除外）
     pub(crate) failed_tokens: Vec<TokenOutAccount>,
 }
@@ -152,14 +179,16 @@ pub(crate) enum CostAwareOutcome {
 /// `pools` は呼び出し側 (`execute_portfolio_strategy`) で 1 サイクル中に
 /// 1 度だけ取得した snapshot を共有する。同一サイクル内で `pool_info` を
 /// 二重に読まない (TOCTOU 解消) ためにこの引数で注入する。
-pub(crate) async fn collect_cost_inputs<C>(
+pub(crate) async fn collect_cost_inputs<C, Cfg>(
     client: &C,
     account: &AccountId,
     tokens: &[TokenData],
     pools: &Arc<PoolInfoList>,
+    cfg: &Cfg,
 ) -> Result<PortfolioCostInputs>
 where
     C: ViewContract + GasInfo,
+    Cfg: ConfigAccess,
 {
     let log = DEFAULT.new(o!("function" => "collect_cost_inputs"));
 
@@ -179,21 +208,42 @@ where
     // その場合は呼び出し側で Hold に倒す。
     graph.update_graph(&wnear_in)?;
 
-    let mut paths = BTreeMap::new();
-    let mut rates = BTreeMap::new();
+    let wnear_out: TokenOutAccount = wnear_in.as_out();
+    let mut bundles = BTreeMap::new();
     let mut failed_tokens = Vec::new();
     for t in tokens {
-        match blockchain::ref_finance::path::swap_path(&graph, &wnear_in, &t.symbol).await {
-            Ok(path) => {
-                paths.insert(t.symbol.clone(), path);
-                rates.insert(t.symbol.clone(), t.current_rate.clone());
-            }
+        // BUY (wnear → token) と SELL (token → wnear) は両方ともこの段階で
+        // graph キャッシュ上に乗っている。`update_graph(wnear)` が dijkstra を
+        // wnear 起点で展開した上で、各 goal token を起点とした逆方向の
+        // `update_path` も同時に呼んでいるためで、ここでの `get_path` は
+        // 純粋にキャッシュ参照（追加 traversal なし）。
+        let buy_path = match graph.get_path(&wnear_in, &t.symbol) {
+            Ok(p) => p,
             Err(e) => {
-                debug!(log, "swap path unavailable for token";
+                debug!(log, "buy swap path unavailable for token";
                     "token" => %t.symbol, "error" => %e);
                 failed_tokens.push(t.symbol.clone());
+                continue;
             }
-        }
+        };
+        let sell_start = t.symbol.as_in();
+        let sell_path = match graph.get_path(&sell_start, &wnear_out) {
+            Ok(p) => p,
+            Err(e) => {
+                debug!(log, "sell swap path unavailable for token";
+                    "token" => %t.symbol, "error" => %e);
+                failed_tokens.push(t.symbol.clone());
+                continue;
+            }
+        };
+        bundles.insert(
+            t.symbol.clone(),
+            TokenSwapBundle {
+                buy_path,
+                sell_path,
+                rate: t.current_rate.clone(),
+            },
+        );
     }
     if !failed_tokens.is_empty() {
         warn!(log, "tokens excluded from cost estimation: no swap path";
@@ -205,10 +255,40 @@ where
         gas_price,
         storage_min,
         existing_deposits,
-        paths,
-        rates,
+        bundles,
+        max_position_vs_pool_ratio: cfg.trade_max_position_vs_pool_ratio(),
         failed_tokens,
     })
+}
+
+/// 経路上の wnear-side TVL の最小値（yoctoNEAR 単位）を fail-closed で評価する。
+///
+/// `buy_path` / `sell_path` の各 hop について wnear がいずれかのサイドに立つ
+/// プールだけを TVL 採取対象とする。**いずれかの hop が wnear-non-touching な
+/// 場合 (例: USDC → A → memecoin で A が wnear でない)** は、その経路を
+/// yoctoNEAR 単位で正規化なく評価する手段がないため `None` を返し、呼び出し
+/// 側で当該銘柄を `estimation_failures` に倒す（fail-closed; plan §3 P4 の
+/// 「memecoin に大ポジション」シナリオが中継 hop 経由で再現される構造的
+/// bypass を本 PR で塞ぐ）。空 path も同様に `None`（cap 評価対象なし →
+/// 除外側に振る）。
+///
+/// follow-up F1 で `path_min_input_tvl_yocto` (F4 `PoolInfo::spot_rate()` に
+/// 依存して全 hop を NEAR 単位正規化) に拡張する予定。
+fn path_min_wnear_tvl_yocto(bundle: &TokenSwapBundle) -> Option<u128> {
+    let wnear: &TokenAccount = &blockchain::ref_finance::token_account::WNEAR_TOKEN;
+    let mut min_tvl: Option<u128> = None;
+    for pair in bundle.buy_path.0.iter().chain(bundle.sell_path.0.iter()) {
+        let hop_tvl = if &pair.token_in_id().0 == wnear {
+            pair.amount_in().ok()?
+        } else if &pair.token_out_id().0 == wnear {
+            pair.amount_out().ok()?
+        } else {
+            // wnear-non-touching middle hop: cap 評価不能 → fail-closed
+            return None;
+        };
+        min_tvl = Some(min_tvl.map_or(hop_tvl, |m| m.min(hop_tvl)));
+    }
+    min_tvl
 }
 
 /// 重みから銘柄ごとの cost_deduction 比率を計算する（Δw ベース）。
@@ -260,6 +340,17 @@ fn compute_cost_deductions(
 
     let mut deductions = BTreeMap::new();
     let mut estimation_failures = Vec::new();
+    // typed config `TRADE_MAX_POSITION_VS_POOL_RATIO` の clamp で release は
+    // `[0.001, 0.5]` かつ finite に押し込まれているが、`PortfolioCostInputs`
+    // を test や future caller が直接構築する経路で bypass された場合に備え、
+    // debug ビルドで invariant を fail-loud に確認する（F6 で Newtype 化して
+    // 構築時に静的保証する follow-up あり）。
+    debug_assert!(
+        inputs.max_position_vs_pool_ratio.is_finite()
+            && (0.001..=0.5).contains(&inputs.max_position_vs_pool_ratio),
+        "max_position_vs_pool_ratio outside clamp range: {}",
+        inputs.max_position_vs_pool_ratio
+    );
     // `zip` で対応付けることで `weights[i]` のインデックスアクセスを排除し、
     // 長さ不一致時の panic 経路を型レベルで除去する。
     // ただし zip は silent truncation する性質があるため、長さ不一致は
@@ -348,21 +439,57 @@ fn compute_cost_deductions(
         } else {
             1
         };
-        // path / rate は collect_cost_inputs 段階で同じキーで insert されているため、
-        // ここで揃って欠けるのは「retain_excluding 後に残った token」のみ
-        // = 想定外。揃わない場合は当該 token をスキップ（防御）。
-        let Some(path) = inputs.paths.get(&t.symbol) else {
+        // collect_cost_inputs 段階で path / rate は TokenSwapBundle として
+        // 同時に挿入されるため「片方だけ欠ける」経路は構造的に閉じている。
+        // 残るのは retain_excluding 後に bundle ごと消えたケースのみで、
+        // ここでは防御的にスキップする。
+        let Some(bundle) = inputs.bundles.get(&t.symbol) else {
             continue;
         };
-        let Some(rate) = inputs.rates.get(&t.symbol) else {
+
+        // ポジション/プール比率制約（plan §3 P4）。trade_size が経路上で最も
+        // 薄い wnear-side TVL の `max_position_vs_pool_ratio` を超える銘柄は
+        // 流動性安全な rebalance 経路がないため候補から外す。AMM 上で実行時
+        // に price impact が指数的に増加するレジームを optimizer に持ち込まない。
+        //
+        // `path_min_wnear_tvl_yocto` が None を返した場合は cap 評価不能
+        // （wnear-non-touching 中継 hop ありの多 hop 経路、または空 path）。
+        // fail-closed で当該銘柄を `estimation_failures` に倒し、中継 hop 経由
+        // の bypass を構造的に排除する。F1 / F4 で全 hop NEAR 正規化に拡張予定。
+        let Some(path_min_tvl_yocto) = path_min_wnear_tvl_yocto(bundle) else {
+            let log = DEFAULT.new(o!("function" => "compute_cost_deductions"));
+            debug!(log, "excluding token: cap evaluation untrusted (non-wnear middle hop or empty path)";
+                "token" => %t.symbol);
+            estimation_failures.push(t.symbol.clone());
             continue;
         };
+        let trade_yocto_bd = trade_size.as_bigdecimal();
+        let Some(max_size_bd) = BigDecimal::from_f64(inputs.max_position_vs_pool_ratio) else {
+            // typed config の clamp で既に finite かつ [0.001, 0.5] に
+            // 押し込んでいるが、bigdecimal の future minor で None を
+            // 返す可能性に備え fail-soft skip（cron tick crash 防止）。
+            estimation_failures.push(t.symbol.clone());
+            continue;
+        };
+        let cap_yocto = BigDecimal::from(path_min_tvl_yocto) * max_size_bd;
+        if trade_yocto_bd > &cap_yocto {
+            let log = DEFAULT.new(o!("function" => "compute_cost_deductions"));
+            debug!(log, "excluding token: trade size exceeds pool TVL ratio";
+                "token" => %t.symbol,
+                "trade_yocto" => %trade_yocto_bd,
+                "path_min_tvl_yocto" => path_min_tvl_yocto,
+                "ratio_cap" => inputs.max_position_vs_pool_ratio);
+            estimation_failures.push(t.symbol.clone());
+            continue;
+        }
+
         // CostError は `std::error::Error` 実装済みなので Into 経由で
         // anyhow::Error に橋渡しし、二重 nested match を平坦化する。
         let result = estimate_trade_cost(
-            path,
+            &bundle.buy_path,
+            &bundle.sell_path,
             &trade_size,
-            rate,
+            &bundle.rate,
             inputs.gas_price,
             &inputs.storage_min,
             new_token_count,

@@ -131,8 +131,11 @@ pub async fn run_prediction_cycle(
     // 1. 全対象トークン取得（ボラティリティ＋流動性フィルタ）
     // 予測サイクル内では pool_info を 1 度だけ snapshot し、
     // ボラティリティ判定・流動性フィルタが同一プール状態を観測することを保証する。
+    // `as_of` を渡すことで simulate でも当日のプール状態を使い、production
+    // でも `Utc::now()` 同等の最新スナップショットを使う（旧 `None` は
+    // simulate で sim 期間外の最新行を取り込む経路があった）。
     let prediction_service = predict::PredictionService::new(cfg)?;
-    let pool_snapshot = persistence::pool_info::read_from_db(None).await?;
+    let pool_snapshot = persistence::pool_info::read_from_db(Some(as_of.naive_utc())).await?;
     let target_tokens =
         strategy::select_prediction_target_tokens(&prediction_service, as_of, cfg, &pool_snapshot)
             .await?;

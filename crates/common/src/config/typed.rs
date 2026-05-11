@@ -568,6 +568,45 @@ fn clamp_min_samples(v: usize) -> usize {
     v.max(PREDICTION_ACCURACY_MIN_SAMPLES_LOWER)
 }
 
+/// Lower bound for [`ConfigAccess::trade_max_position_vs_pool_ratio`].
+///
+/// 0.001 (= 0.1% of pool TVL) is the floor for any nontrivial position; a
+/// stricter cap effectively bans every realistic rebalance trade because the
+/// trade size on a typical pool always exceeds 1 BPS of TVL.
+const TRADE_MAX_POSITION_VS_POOL_RATIO_LOWER: f64 = 0.001;
+
+/// Upper bound for [`ConfigAccess::trade_max_position_vs_pool_ratio`].
+///
+/// 0.5 (= 50% of pool TVL) is the operational ceiling; beyond that the
+/// AMM round-trip price impact crosses the failure regime where deeper
+/// curves (e.g. half the reserves moving in one trade) make every retry
+/// worse than holding cash.
+const TRADE_MAX_POSITION_VS_POOL_RATIO_UPPER: f64 = 0.5;
+
+/// NaN fallback for [`ConfigAccess::trade_max_position_vs_pool_ratio`].
+///
+/// Mirrors the policy of [`clamp_portfolio_cost_iteration_damping`] — a
+/// poisoned config read does not propagate `NaN` into the optimizer; instead
+/// we return a conservative value that filters memecoin-sized positions but
+/// still allows the typical mainstream-pool rebalance trade.
+const TRADE_MAX_POSITION_VS_POOL_RATIO_NAN_FALLBACK: f64 = 0.02;
+
+/// Idempotent clamp applied to `trade_max_position_vs_pool_ratio` reads.
+///
+/// `f64::clamp` propagates `NaN`, so `NaN` is mapped to the conservative
+/// fallback instead of poisoning the cost-aware optimizer's pool-ratio
+/// guard. `±INFINITY` is handled correctly by `f64::clamp` itself.
+fn clamp_trade_max_position_vs_pool_ratio(v: f64) -> f64 {
+    if v.is_nan() {
+        TRADE_MAX_POSITION_VS_POOL_RATIO_NAN_FALLBACK
+    } else {
+        v.clamp(
+            TRADE_MAX_POSITION_VS_POOL_RATIO_LOWER,
+            TRADE_MAX_POSITION_VS_POOL_RATIO_UPPER,
+        )
+    }
+}
+
 define_typed_config! {
     // ── trade ──
 
@@ -664,6 +703,23 @@ define_typed_config! {
     fn trade_min_pool_liquidity() -> u32 {
         key: "TRADE_MIN_POOL_LIQUIDITY",
         default: 100
+    }
+
+    /// Maximum trade size as a fraction of the smallest pool TVL on the
+    /// candidate's swap path. Tokens whose required `|Δw| × total_value`
+    /// exceeds this fraction of the bottleneck pool are dropped from the
+    /// cost-aware optimizer's candidate set — they have no liquidity-safe
+    /// rebalance path at the requested weight, regardless of their
+    /// expected return.
+    ///
+    /// Default 0.02 (= 2%) matches the v3 simulation post-mortem: memecoin
+    /// pools at TRADE_MIN_POOL_LIQUIDITY (100 NEAR) had 16 NEAR positions
+    /// pushed in (16% of TVL), generating the catastrophic price impact
+    /// the cost model was supposed to prevent.
+    fn trade_max_position_vs_pool_ratio() -> f64 {
+        key: "TRADE_MAX_POSITION_VS_POOL_RATIO",
+        default: 0.02,
+        clamp: clamp_trade_max_position_vs_pool_ratio
     }
 
     /// Parallel token cache update tasks

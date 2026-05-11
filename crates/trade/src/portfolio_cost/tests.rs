@@ -15,7 +15,7 @@
 //! - `target_w == current_w` で Δw ≈ 0 → deductions[i] = 0 (取引なし)
 //! - 部分 exit (current=1.0 → target=0.6) は full entry (current=0 → target=0.6)
 //!   より低い deduction（trade size がより小さいため variable_cost が縮む）
-//! - `inputs.paths` / `inputs.rates` の片方欠損は防御的にスキップ
+//! - `inputs.bundles` 欠損は防御的にスキップ
 //! - `existing_deposits` ヒットで storage 固定費が抑制される
 
 use super::*;
@@ -56,13 +56,57 @@ fn gas_price() -> GasPrice {
     GasPrice::from_balance(NearToken::from_yoctonear(100_000_000))
 }
 
-/// 空の `TokenPath`。`calc_value(initial)` は `initial` をそのまま返すため、
-/// AMM 損失部分は 0 になり variable_ratio は `EXPECTED_SLIPPAGE_DEDUCTION` のみ。
-fn empty_path() -> TokenPath {
-    TokenPath(vec![])
+/// wnear ↔ token の単一プール `TokenSwapBundle` を構築するヘルパ。
+///
+/// `wnear_yocto` / `token_yocto` でプール残高（24 decimals 前提）を指定し、
+/// BUY (wnear → token) と SELL (token → wnear) の path を 1 hop ずつ作る。
+fn make_bundle_with_pool(
+    target: &TokenOutAccount,
+    wnear_yocto: u128,
+    token_yocto: u128,
+) -> TokenSwapBundle {
+    use dex::{PoolInfo, PoolInfoBared, TokenIn, TokenOut};
+    use near_sdk::json_types::U128;
+
+    let wnear_account: TokenAccount = blockchain::ref_finance::token_account::WNEAR_TOKEN.clone();
+    let pool = std::sync::Arc::new(PoolInfo::new(
+        0,
+        PoolInfoBared {
+            pool_kind: "SIMPLE_POOL".to_string(),
+            // index 0 = wnear, index 1 = target
+            token_account_ids: vec![wnear_account, target.0.clone()],
+            amounts: vec![U128(wnear_yocto), U128(token_yocto)],
+            total_fee: 30,
+            shares_total_supply: U128(0),
+            amp: 0,
+        },
+        Utc::now().naive_utc(),
+    ));
+    let buy_pair = pool
+        .get_pair(TokenIn::from(0), TokenOut::from(1))
+        .expect("buy pair (wnear -> token) is valid");
+    let sell_pair = pool
+        .get_pair(TokenIn::from(1), TokenOut::from(0))
+        .expect("sell pair (token -> wnear) is valid");
+    TokenSwapBundle {
+        buy_path: TokenPath(vec![buy_pair]),
+        sell_path: TokenPath(vec![sell_pair]),
+        rate: ExchangeRate::wnear(),
+    }
 }
 
-/// 全 token に空 path / wnear レートが用意された `PortfolioCostInputs`。
+/// 比率制約に引っかからない十分深い wnear-touching プールで bundle を構築する。
+/// `path_min_wnear_tvl_yocto` の fail-closed 化以降、empty_path() を使う test
+/// fixture は estimation_failures に倒れるため、cap が事実上発火しない深さ
+/// （wnear-side 1e9 NEAR）で bundle を用意して「比率制約と無関係な経路」テスト
+/// の前提を維持する。
+fn deep_wnear_pool_bundle(target: &TokenOutAccount) -> TokenSwapBundle {
+    const DEEP_TVL_YOCTO: u128 = 1_000_000_000 * ONE_NEAR_YOCTO;
+    make_bundle_with_pool(target, DEEP_TVL_YOCTO, DEEP_TVL_YOCTO)
+}
+
+/// 全 token に十分深い wnear-touching path / wnear レートが用意された
+/// `PortfolioCostInputs`。
 ///
 /// `compute_cost_deductions` の入力としては必要十分（estimate_trade_cost が
 /// 成功する経路）。`existing_deposits` を渡すと当該 token の storage 固定費が
@@ -71,19 +115,19 @@ fn make_inputs(
     tokens: &[TokenOutAccount],
     existing_deposits: HashSet<TokenAccount>,
 ) -> PortfolioCostInputs {
-    let mut paths = BTreeMap::new();
-    let mut rates = BTreeMap::new();
+    let mut bundles = BTreeMap::new();
     for t in tokens {
-        paths.insert(t.clone(), empty_path());
-        rates.insert(t.clone(), ExchangeRate::wnear());
+        bundles.insert(t.clone(), deep_wnear_pool_bundle(t));
     }
     PortfolioCostInputs {
         gas_price: gas_price(),
         // 0.1 NEAR — 実運用相当
         storage_min: YoctoValue::from_yocto_u128(100_000_000_000_000_000_000_000),
         existing_deposits,
-        paths,
-        rates,
+        bundles,
+        // ratio 自体は typed config 既定値 0.02。deep_wnear_pool_bundle と
+        // 組み合わせて cap = 1e9 × 0.02 = 2e7 NEAR で典型 trade_size を許容。
+        max_position_vs_pool_ratio: 0.02,
         failed_tokens: vec![],
     }
 }
@@ -156,6 +200,21 @@ fn test_compute_cost_deductions_length_mismatch_panics_in_debug() {
     let inputs = make_inputs(&[a, b], HashSet::new());
     let total = BigDecimal::from(ONE_NEAR_YOCTO);
     let _ = compute_cost_deductions(&[0.5], &[0.0, 0.0], &tokens, &inputs, &total);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "max_position_vs_pool_ratio outside clamp range")]
+fn test_compute_cost_deductions_invalid_pool_ratio_panics_in_debug() {
+    // typed config の clamp で release は [0.001, 0.5] に押し込まれているが、
+    // PortfolioCostInputs を test で直接構築する経路では bypass 可能。
+    // debug ビルドで fail-loud に検出する canary。
+    let sym = token("invalid_ratio");
+    let tokens = vec![token_data(sym.clone())];
+    let mut inputs = make_inputs(std::slice::from_ref(&sym), HashSet::new());
+    inputs.max_position_vs_pool_ratio = f64::NAN;
+    let total = BigDecimal::from(ONE_NEAR_YOCTO);
+    let _ = compute_cost_deductions(&[0.5], &[0.0], &tokens, &inputs, &total);
 }
 
 // ---------------------------------------------------------------------------
@@ -347,14 +406,14 @@ fn test_compute_cost_deductions_empty_tokens_returns_empty_result() {
 }
 
 #[test]
-fn test_compute_cost_deductions_missing_path_silently_skips_token() {
-    // path が `inputs.paths` にない token は estimation_failures にも入らず
-    // silent に skip される（defense-in-depth: retain_excluding 後の残留異常
-    // に備えた防御的 continue）。
+fn test_compute_cost_deductions_missing_bundle_silently_skips_token() {
+    // bundle (path + rate) が `inputs.bundles` にない token は
+    // estimation_failures にも入らず silent に skip される
+    // （defense-in-depth: retain_excluding 後の残留異常に備えた防御的 continue）。
     let present = token("present");
     let missing = token("missing");
     let tokens = vec![token_data(present.clone()), token_data(missing.clone())];
-    // make_inputs に渡すのは present だけ → missing.path は欠損
+    // make_inputs に渡すのは present だけ → missing は bundle ごと欠損
     let inputs = make_inputs(std::slice::from_ref(&present), HashSet::new());
     let total = BigDecimal::from(ONE_NEAR_YOCTO);
     let result = compute_cost_deductions(&[0.5, 0.5], &[0.0, 0.0], &tokens, &inputs, &total);
@@ -362,32 +421,11 @@ fn test_compute_cost_deductions_missing_path_silently_skips_token() {
     let total_referenced = result.deductions.len() + result.estimation_failures.len();
     assert_eq!(
         total_referenced, 1,
-        "missing-path token must not appear in either map (silent skip)"
+        "missing-bundle token must not appear in either map (silent skip)"
     );
     assert!(
         !result.deductions.contains_key(&missing) && !result.estimation_failures.contains(&missing),
         "missing token must not appear anywhere"
-    );
-}
-
-#[test]
-fn test_compute_cost_deductions_missing_rate_silently_skips_token() {
-    // rate のみ欠損ケース（path はあるが rate が retain_excluding ですり抜けた
-    // 異常状態のシミュレート）。同様に silent skip する。
-    let present = token("present");
-    let missing_rate = token("missing_rate");
-    let tokens = vec![
-        token_data(present.clone()),
-        token_data(missing_rate.clone()),
-    ];
-    let mut inputs = make_inputs(&[present.clone(), missing_rate.clone()], HashSet::new());
-    inputs.rates.remove(&missing_rate);
-    let total = BigDecimal::from(ONE_NEAR_YOCTO);
-    let result = compute_cost_deductions(&[0.5, 0.5], &[0.0, 0.0], &tokens, &inputs, &total);
-    assert!(
-        !result.deductions.contains_key(&missing_rate)
-            && !result.estimation_failures.contains(&missing_rate),
-        "rate-missing token must be silently skipped"
     );
 }
 
@@ -444,6 +482,184 @@ fn test_compute_cost_deductions_existing_deposit_lowers_fixed_cost() {
         "existing_deposits must reduce fixed cost: with_dep={v_with_dep} vs no_dep={v_no_dep}"
     );
     assert!(v_with_dep.is_finite() && v_with_dep >= 0.0);
+}
+
+// ---------------------------------------------------------------------------
+// (g.6) ポジション/プール比率制約（plan §3 P4）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_compute_cost_deductions_excludes_oversize_trade_vs_pool() {
+    // Pool TVL (wnear side) = 100 NEAR、ratio = 0.02 → cap = 2 NEAR。
+    // total_value = 100 NEAR、target_w = 0.5 → trade_size = 50 NEAR (>> 2 NEAR)
+    // で比率制約に引っかかり estimation_failures に倒れる。
+    let sym = token("memecoin");
+    let tokens = vec![token_data(sym.clone())];
+    let mut inputs = make_inputs(std::slice::from_ref(&sym), HashSet::new());
+    inputs.bundles.insert(
+        sym.clone(),
+        make_bundle_with_pool(
+            &sym,
+            100 * ONE_NEAR_YOCTO,   // 100 NEAR wnear side
+            1_000 * ONE_NEAR_YOCTO, // 1000 token side (24 decimals)
+        ),
+    );
+    inputs.max_position_vs_pool_ratio = 0.02;
+
+    let total = BigDecimal::from(100u128 * ONE_NEAR_YOCTO);
+    let result = compute_cost_deductions(&[0.5], &[0.0], &tokens, &inputs, &total);
+
+    assert!(
+        result.deductions.is_empty(),
+        "oversize trade vs pool must not produce a deduction"
+    );
+    assert_eq!(
+        result.estimation_failures,
+        vec![sym],
+        "oversize trade vs pool must surface in estimation_failures"
+    );
+}
+
+#[test]
+fn test_compute_cost_deductions_admits_safe_trade_vs_pool() {
+    // Pool TVL = 100 NEAR、ratio = 0.02 → cap = 2 NEAR。
+    // total_value = 100 NEAR、target_w = 0.01 → trade_size = 1 NEAR (< 2 NEAR)
+    // で比率制約を通過し正常経路へ進む。
+    let sym = token("safe");
+    let tokens = vec![token_data(sym.clone())];
+    let mut inputs = make_inputs(std::slice::from_ref(&sym), HashSet::new());
+    inputs.bundles.insert(
+        sym.clone(),
+        make_bundle_with_pool(&sym, 100 * ONE_NEAR_YOCTO, 1_000 * ONE_NEAR_YOCTO),
+    );
+    inputs.max_position_vs_pool_ratio = 0.02;
+
+    let total = BigDecimal::from(100u128 * ONE_NEAR_YOCTO);
+    let result = compute_cost_deductions(&[0.01], &[0.0], &tokens, &inputs, &total);
+
+    assert!(
+        !result.estimation_failures.contains(&sym),
+        "safe trade size must not be excluded by the ratio constraint"
+    );
+    let value = *result
+        .deductions
+        .get(&sym)
+        .expect("safe trade must produce a deduction");
+    assert!(value.is_finite() && value >= 0.0);
+}
+
+#[test]
+fn test_compute_cost_deductions_fail_closed_on_empty_path() {
+    // 空 path は cap 評価対象なし → `path_min_wnear_tvl_yocto` が None →
+    // fail-closed で estimation_failures に倒れることを pin する canary。
+    let sym = token("empty_path_token");
+    let tokens = vec![token_data(sym.clone())];
+    let mut inputs = make_inputs(std::slice::from_ref(&sym), HashSet::new());
+    inputs.bundles.insert(
+        sym.clone(),
+        TokenSwapBundle {
+            buy_path: TokenPath(vec![]),
+            sell_path: TokenPath(vec![]),
+            rate: ExchangeRate::wnear(),
+        },
+    );
+
+    let total = BigDecimal::from(100u128 * ONE_NEAR_YOCTO);
+    let result = compute_cost_deductions(&[1.0], &[0.0], &tokens, &inputs, &total);
+
+    assert!(
+        result.deductions.is_empty(),
+        "empty path must not produce a deduction (fail-closed)"
+    );
+    assert_eq!(
+        result.estimation_failures,
+        vec![sym],
+        "empty path must surface in estimation_failures (fail-closed)"
+    );
+}
+
+#[test]
+fn test_compute_cost_deductions_fail_closed_on_non_wnear_middle_hop() {
+    // 多 hop path (wnear → A → memecoin) で A が wnear でない場合、A → memecoin
+    // hop は yoctoNEAR 単位で正規化なく cap 評価できない。fail-closed で
+    // estimation_failures に倒し、中継 hop 経由の bypass を構造的に排除する。
+    use dex::{PoolInfo, PoolInfoBared, TokenIn, TokenOut};
+    use near_sdk::json_types::U128;
+
+    let memecoin = token("memecoin");
+    let intermediate: TokenAccount = "stable.test".parse().expect("valid account id");
+    let wnear_account: TokenAccount = blockchain::ref_finance::token_account::WNEAR_TOKEN.clone();
+
+    // hop1: wnear → stable（wnear-touching）
+    let pool1 = std::sync::Arc::new(PoolInfo::new(
+        0,
+        PoolInfoBared {
+            pool_kind: "SIMPLE_POOL".to_string(),
+            token_account_ids: vec![wnear_account.clone(), intermediate.clone()],
+            amounts: vec![
+                U128(1_000_000 * ONE_NEAR_YOCTO),
+                U128(1_000_000 * ONE_NEAR_YOCTO),
+            ],
+            total_fee: 30,
+            shares_total_supply: U128(0),
+            amp: 0,
+        },
+        Utc::now().naive_utc(),
+    ));
+    // hop2: stable → memecoin（wnear が両端にいない = fail-closed 対象）
+    let pool2 = std::sync::Arc::new(PoolInfo::new(
+        1,
+        PoolInfoBared {
+            pool_kind: "SIMPLE_POOL".to_string(),
+            token_account_ids: vec![intermediate.clone(), memecoin.0.clone()],
+            amounts: vec![
+                U128(100_000 * ONE_NEAR_YOCTO),
+                U128(100_000 * ONE_NEAR_YOCTO),
+            ],
+            total_fee: 30,
+            shares_total_supply: U128(0),
+            amp: 0,
+        },
+        Utc::now().naive_utc(),
+    ));
+    let buy_hop1 = pool1
+        .get_pair(TokenIn::from(0), TokenOut::from(1))
+        .expect("hop1 pair valid");
+    let buy_hop2 = pool2
+        .get_pair(TokenIn::from(0), TokenOut::from(1))
+        .expect("hop2 pair valid");
+    let sell_hop1 = pool2
+        .get_pair(TokenIn::from(1), TokenOut::from(0))
+        .expect("sell hop1 pair valid");
+    let sell_hop2 = pool1
+        .get_pair(TokenIn::from(1), TokenOut::from(0))
+        .expect("sell hop2 pair valid");
+
+    let tokens = vec![token_data(memecoin.clone())];
+    let mut inputs = make_inputs(std::slice::from_ref(&memecoin), HashSet::new());
+    inputs.bundles.insert(
+        memecoin.clone(),
+        TokenSwapBundle {
+            buy_path: TokenPath(vec![buy_hop1, buy_hop2]),
+            sell_path: TokenPath(vec![sell_hop1, sell_hop2]),
+            rate: ExchangeRate::wnear(),
+        },
+    );
+    // ratio を非常に緩く (0.5) しても、中継 hop が cap 評価不能で fail-closed。
+    inputs.max_position_vs_pool_ratio = 0.5;
+
+    let total = BigDecimal::from(100u128 * ONE_NEAR_YOCTO);
+    let result = compute_cost_deductions(&[0.01], &[0.0], &tokens, &inputs, &total);
+
+    assert!(
+        result.deductions.is_empty(),
+        "non-wnear middle hop must not produce a deduction (fail-closed)"
+    );
+    assert_eq!(
+        result.estimation_failures,
+        vec![memecoin],
+        "non-wnear middle hop must surface in estimation_failures (fail-closed)"
+    );
 }
 
 // ---------------------------------------------------------------------------

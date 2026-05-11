@@ -42,11 +42,15 @@ pub struct PerformanceMetrics {
     pub win_rate: f64,
     pub final_balance_near: f64,
     pub total_realized_pnl_near: f64,
-    pub trade_count: usize,
     pub liquidation_count: usize,
     #[serde(flatten)]
     pub swap_stats: SwapStats,
 }
+
+/// Threshold above which a single swap's `price_impact_ratio` counts as
+/// "high impact" in the aggregate stats. 100 BPS (1%) is the round number
+/// used as the operational alert line in the plan.
+const HIGH_IMPACT_THRESHOLD: f64 = 0.01;
 
 #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SwapStats {
@@ -54,6 +58,17 @@ pub struct SwapStats {
     pub pool_based_swaps: usize,
     pub fallback_swaps: usize,
     pub fallback_rate: f64,
+    /// Mean `price_impact_ratio` over swaps that produced one (DbRate
+    /// fallbacks are excluded). 0.0 when no observed swaps had a ratio.
+    #[serde(default)]
+    pub mean_price_impact: f64,
+    /// Maximum observed `price_impact_ratio`. 0.0 when no observation exists.
+    #[serde(default)]
+    pub max_price_impact: f64,
+    /// Number of observed swaps whose `price_impact_ratio` exceeded
+    /// `HIGH_IMPACT_THRESHOLD` (100 BPS).
+    #[serde(default)]
+    pub high_impact_swaps: usize,
 }
 
 impl SwapStats {
@@ -72,11 +87,32 @@ impl SwapStats {
         } else {
             0.0
         };
+
+        let impacts: Vec<f64> = events
+            .iter()
+            .filter_map(|e| e.price_impact_ratio)
+            .filter(|r| r.is_finite())
+            .collect();
+        let (mean_price_impact, max_price_impact) = if impacts.is_empty() {
+            (0.0, 0.0)
+        } else {
+            let sum: f64 = impacts.iter().sum();
+            let max = impacts.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            (sum / impacts.len() as f64, max)
+        };
+        let high_impact_swaps = impacts
+            .iter()
+            .filter(|&&r| r > HIGH_IMPACT_THRESHOLD)
+            .count();
+
         Self {
             total_swaps,
             pool_based_swaps,
             fallback_swaps,
             fallback_rate,
+            mean_price_impact,
+            max_price_impact,
+            high_impact_swaps,
         }
     }
 }
@@ -102,6 +138,11 @@ pub struct SwapEventEntry {
     pub amount_out_raw: u128,
     pub swap_method: SwapMethod,
     pub pool_ids: Vec<u32>,
+    /// Observed price impact for the swap; see `SwapEvent::price_impact_ratio`.
+    /// `#[serde(default)]` keeps backward-compatible decoding of older
+    /// simulation outputs that pre-date this field.
+    #[serde(default)]
+    pub price_impact_ratio: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -199,16 +240,12 @@ impl SimulationResult {
                 ),
                 swap_method: e.swap_method,
                 pool_ids: e.pool_ids.clone(),
+                price_impact_ratio: e.price_impact_ratio,
             })
             .collect();
 
         let swap_stats = SwapStats::from_events(&state.swap_events);
 
-        let trade_count = state
-            .trades
-            .iter()
-            .filter(|t| t.action != TradeAction::Liquidation)
-            .count();
         let liquidation_count = state
             .trades
             .iter()
@@ -219,7 +256,6 @@ impl SimulationResult {
             initial_capital: cli.initial_capital,
             snapshots: &state.snapshots,
             realized_pnl: state.realized_pnl,
-            trade_count,
             liquidation_count,
             rebalance_interval_days: cli.rebalance_interval_days,
             swap_stats,
@@ -245,7 +281,6 @@ struct PerformanceInput<'a> {
     initial_capital: f64,
     snapshots: &'a [crate::portfolio_state::PortfolioSnapshot],
     realized_pnl: i128,
-    trade_count: usize,
     liquidation_count: usize,
     rebalance_interval_days: i64,
     swap_stats: SwapStats,
@@ -256,7 +291,6 @@ fn calculate_performance(input: PerformanceInput<'_>) -> PerformanceMetrics {
         initial_capital,
         snapshots,
         realized_pnl,
-        trade_count,
         liquidation_count,
         rebalance_interval_days,
         swap_stats,
@@ -271,7 +305,6 @@ fn calculate_performance(input: PerformanceInput<'_>) -> PerformanceMetrics {
             win_rate: 0.0,
             final_balance_near: initial_capital,
             total_realized_pnl_near: pnl_to_near(realized_pnl),
-            trade_count,
             liquidation_count,
             swap_stats,
         };
@@ -319,7 +352,6 @@ fn calculate_performance(input: PerformanceInput<'_>) -> PerformanceMetrics {
         win_rate,
         final_balance_near: final_value,
         total_realized_pnl_near: pnl_to_near(realized_pnl),
-        trade_count,
         liquidation_count,
         swap_stats,
     }
