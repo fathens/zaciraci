@@ -261,33 +261,34 @@ where
     })
 }
 
-/// 経路上の wnear-side TVL の最小値（yoctoNEAR 単位）。
+/// 経路上の wnear-side TVL の最小値（yoctoNEAR 単位）を fail-closed で評価する。
 ///
-/// `buy_path` と `sell_path` の各 hop のうち、wnear がいずれかのサイドに
-/// 立っている pool だけを対象に、その wnear 側 reserve を採取する。
-/// 全 hop が wnear-non-touching な経路（中継のみで wnear が現れない多 hop
-/// 経路）では `None` を返し、呼び出し側で比率制約をスキップさせる。
+/// `buy_path` / `sell_path` の各 hop について wnear がいずれかのサイドに立つ
+/// プールだけを TVL 採取対象とする。**いずれかの hop が wnear-non-touching な
+/// 場合 (例: USDC → A → memecoin で A が wnear でない)** は、その経路を
+/// yoctoNEAR 単位で正規化なく評価する手段がないため `None` を返し、呼び出し
+/// 側で当該銘柄を `estimation_failures` に倒す（fail-closed; plan §3 P4 の
+/// 「memecoin に大ポジション」シナリオが中継 hop 経由で再現される構造的
+/// bypass を本 PR で塞ぐ）。空 path も同様に `None`（cap 評価対象なし →
+/// 除外側に振る）。
 ///
-/// 実運用 (REF Finance + WNEAR-anchored portfolio) では BUY 経路の最初か
-/// SELL 経路の最後で必ず wnear が現れるため、`None` は中継のみの病的
-/// ケース（実態として発生しない）に限られる。
+/// follow-up F1 で `path_min_input_tvl_yocto` (F4 `PoolInfo::spot_rate()` に
+/// 依存して全 hop を NEAR 単位正規化) に拡張する予定。
 fn path_min_wnear_tvl_yocto(bundle: &TokenSwapBundle) -> Option<u128> {
     let wnear: &TokenAccount = &blockchain::ref_finance::token_account::WNEAR_TOKEN;
-    bundle
-        .buy_path
-        .0
-        .iter()
-        .chain(bundle.sell_path.0.iter())
-        .filter_map(|pair| {
-            if &pair.token_in_id().0 == wnear {
-                pair.amount_in().ok()
-            } else if &pair.token_out_id().0 == wnear {
-                pair.amount_out().ok()
-            } else {
-                None
-            }
-        })
-        .min()
+    let mut min_tvl: Option<u128> = None;
+    for pair in bundle.buy_path.0.iter().chain(bundle.sell_path.0.iter()) {
+        let hop_tvl = if &pair.token_in_id().0 == wnear {
+            pair.amount_in().ok()?
+        } else if &pair.token_out_id().0 == wnear {
+            pair.amount_out().ok()?
+        } else {
+            // wnear-non-touching middle hop: cap 評価不能 → fail-closed
+            return None;
+        };
+        min_tvl = Some(min_tvl.map_or(hop_tvl, |m| m.min(hop_tvl)));
+    }
+    min_tvl
 }
 
 /// 重みから銘柄ごとの cost_deduction 比率を計算する（Δw ベース）。
@@ -439,26 +440,36 @@ fn compute_cost_deductions(
         // 薄い wnear-side TVL の `max_position_vs_pool_ratio` を超える銘柄は
         // 流動性安全な rebalance 経路がないため候補から外す。AMM 上で実行時
         // に price impact が指数的に増加するレジームを optimizer に持ち込まない。
-        if let Some(path_min_tvl_yocto) = path_min_wnear_tvl_yocto(bundle) {
-            let trade_yocto_bd = trade_size.as_bigdecimal();
-            let Some(max_size_bd) = BigDecimal::from_f64(inputs.max_position_vs_pool_ratio) else {
-                // typed config の clamp で既に finite かつ [0.001, 0.5] に
-                // 押し込んでいるが、bigdecimal の future minor で None を
-                // 返す可能性に備え fail-soft skip（cron tick crash 防止）。
-                estimation_failures.push(t.symbol.clone());
-                continue;
-            };
-            let cap_yocto = BigDecimal::from(path_min_tvl_yocto) * max_size_bd;
-            if trade_yocto_bd > &cap_yocto {
-                let log = DEFAULT.new(o!("function" => "compute_cost_deductions"));
-                debug!(log, "excluding token: trade size exceeds pool TVL ratio";
-                    "token" => %t.symbol,
-                    "trade_yocto" => %trade_yocto_bd,
-                    "path_min_tvl_yocto" => path_min_tvl_yocto,
-                    "ratio_cap" => inputs.max_position_vs_pool_ratio);
-                estimation_failures.push(t.symbol.clone());
-                continue;
-            }
+        //
+        // `path_min_wnear_tvl_yocto` が None を返した場合は cap 評価不能
+        // （wnear-non-touching 中継 hop ありの多 hop 経路、または空 path）。
+        // fail-closed で当該銘柄を `estimation_failures` に倒し、中継 hop 経由
+        // の bypass を構造的に排除する。F1 / F4 で全 hop NEAR 正規化に拡張予定。
+        let Some(path_min_tvl_yocto) = path_min_wnear_tvl_yocto(bundle) else {
+            let log = DEFAULT.new(o!("function" => "compute_cost_deductions"));
+            debug!(log, "excluding token: cap evaluation untrusted (non-wnear middle hop or empty path)";
+                "token" => %t.symbol);
+            estimation_failures.push(t.symbol.clone());
+            continue;
+        };
+        let trade_yocto_bd = trade_size.as_bigdecimal();
+        let Some(max_size_bd) = BigDecimal::from_f64(inputs.max_position_vs_pool_ratio) else {
+            // typed config の clamp で既に finite かつ [0.001, 0.5] に
+            // 押し込んでいるが、bigdecimal の future minor で None を
+            // 返す可能性に備え fail-soft skip（cron tick crash 防止）。
+            estimation_failures.push(t.symbol.clone());
+            continue;
+        };
+        let cap_yocto = BigDecimal::from(path_min_tvl_yocto) * max_size_bd;
+        if trade_yocto_bd > &cap_yocto {
+            let log = DEFAULT.new(o!("function" => "compute_cost_deductions"));
+            debug!(log, "excluding token: trade size exceeds pool TVL ratio";
+                "token" => %t.symbol,
+                "trade_yocto" => %trade_yocto_bd,
+                "path_min_tvl_yocto" => path_min_tvl_yocto,
+                "ratio_cap" => inputs.max_position_vs_pool_ratio);
+            estimation_failures.push(t.symbol.clone());
+            continue;
         }
 
         // CostError は `std::error::Error` 実装済みなので Into 経由で
