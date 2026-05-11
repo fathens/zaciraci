@@ -202,6 +202,21 @@ fn test_compute_cost_deductions_length_mismatch_panics_in_debug() {
     let _ = compute_cost_deductions(&[0.5], &[0.0, 0.0], &tokens, &inputs, &total);
 }
 
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "max_position_vs_pool_ratio outside clamp range")]
+fn test_compute_cost_deductions_invalid_pool_ratio_panics_in_debug() {
+    // typed config の clamp で release は [0.001, 0.5] に押し込まれているが、
+    // PortfolioCostInputs を test で直接構築する経路では bypass 可能。
+    // debug ビルドで fail-loud に検出する canary。
+    let sym = token("invalid_ratio");
+    let tokens = vec![token_data(sym.clone())];
+    let mut inputs = make_inputs(std::slice::from_ref(&sym), HashSet::new());
+    inputs.max_position_vs_pool_ratio = f64::NAN;
+    let total = BigDecimal::from(ONE_NEAR_YOCTO);
+    let _ = compute_cost_deductions(&[0.5], &[0.0], &tokens, &inputs, &total);
+}
+
 // ---------------------------------------------------------------------------
 // (c) total_value=0 / 全 weight=0 ケース
 // ---------------------------------------------------------------------------

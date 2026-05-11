@@ -340,6 +340,17 @@ fn compute_cost_deductions(
 
     let mut deductions = BTreeMap::new();
     let mut estimation_failures = Vec::new();
+    // typed config `TRADE_MAX_POSITION_VS_POOL_RATIO` の clamp で release は
+    // `[0.001, 0.5]` かつ finite に押し込まれているが、`PortfolioCostInputs`
+    // を test や future caller が直接構築する経路で bypass された場合に備え、
+    // debug ビルドで invariant を fail-loud に確認する（F6 で Newtype 化して
+    // 構築時に静的保証する follow-up あり）。
+    debug_assert!(
+        inputs.max_position_vs_pool_ratio.is_finite()
+            && (0.001..=0.5).contains(&inputs.max_position_vs_pool_ratio),
+        "max_position_vs_pool_ratio outside clamp range: {}",
+        inputs.max_position_vs_pool_ratio
+    );
     // `zip` で対応付けることで `weights[i]` のインデックスアクセスを排除し、
     // 長さ不一致時の panic 経路を型レベルで除去する。
     // ただし zip は silent truncation する性質があるため、長さ不一致は
