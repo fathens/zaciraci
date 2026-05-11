@@ -373,3 +373,50 @@ fail-safe の代わりに `(deduction[i] / weight[i])` の感度を反復ルー�
 - `crates/persistence/src/token_rate.rs:534-549`（`to_spot_rate_with_fallback`、AMM impact 補正）
 - `crates/blockchain/src/ref_finance/path/graph.rs:122`（`update_graph`、一方向トラバース）
 - `crates/simulate/src/engine.rs::apply_config`（simulate の設定上書き）
+
+---
+
+## 9. Follow-up（別 PR）
+
+本計画スコープ外として保留した拡張項目。コードコメント中の `follow-up F1`,
+`F4`, `F6` 参照はここで定義する識別子。
+
+### F1. `path_min_input_tvl_yocto` への汎化拡張
+
+- **現状**: `crates/trade/src/portfolio_cost.rs::path_min_wnear_tvl_yocto` は
+  wnear-side TVL のみ NEAR 単位で評価し、非 wnear 中継 hop を含む経路は
+  fail-closed で当該銘柄を除外する。
+- **拡張案**: `PoolInfo::spot_rate()`（F4）を使い全 hop を NEAR 単位に正規化
+  する `path_min_input_tvl_yocto(path, input)` を導入し、wnear を経由しない
+  legitimate な多 hop 経路を救済する。
+- **移設先**: `dex` は no I/O 責務制約があり WNEAR 依存を抱えられないため、
+  `blockchain::ref_finance::path` 配下の free function として実装する。
+
+### F4. `PoolInfo::spot_rate()` の導入
+
+- **用途**: 任意のトークンペアの marginal rate を提供する dex 層 API。F1 の
+  前提となる正規化計算で利用する。
+- **注意**: AMM curve 種別（constant product / stable swap）ごとに spot rate
+  の定義が異なるため、`PoolInfo` 内に多態的に実装する必要がある。
+
+### F6. `PoolRatioCap` Newtype 化
+
+- **現状**: `PortfolioCostInputs.max_position_vs_pool_ratio: f64` は typed
+  config の clamp `[0.001, 0.5]` + `compute_cost_deductions` の
+  `debug_assert!` で invariant を保護している。test が直接構築する経路を
+  release ビルドで bypass 可能。
+- **拡張案**: `pub struct PoolRatioCap(f64)` + smart constructor
+  `new(f64) -> Option<Self>` で構築時に validate し、型レベルで bypass を排除。
+  `ConfigAccess::trade_max_position_vs_pool_ratio()` の戻り値型も同時に
+  `PoolRatioCap` に切り替える。
+
+### F-RES. `dex::PoolInfo::new` constructor での reserve sanity cap
+
+- **動機**: `pair.amount_in()` / `amount_out()` が返す u128 値に sane upper
+  cap がなく、敵対 RPC / DB 行汚染で `u128::MAX` (≈3.4e38) が混入すると
+  `path_min_wnear_tvl_yocto` の cap 計算が事実上無限化して本 PR の防御目標
+  が bypass される。現実的攻撃経路（DB 直書き / parse バグ）の reachability
+  は低いが、defense-in-depth として境界層で塞ぐべき。
+- **拡張案**: `dex::PoolInfo::new` constructor で `STORAGE_MIN_SANE_CAP`
+  パターン同等の `RESERVE_SANE_CAP`（例: `1e15 NEAR = 1e39 yocto` を超える
+  reserves は信用しない）を実装。caller 全体で重複チェックを避ける DRY。
