@@ -1,6 +1,6 @@
 use super::*;
 use bigdecimal::BigDecimal;
-use chrono::{NaiveDate, TimeZone, Utc};
+use chrono::{TimeZone, Utc};
 use serial_test::serial;
 use std::collections::HashMap;
 
@@ -660,17 +660,19 @@ fn wnear_quote() -> common::types::TokenInAccount {
     blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in()
 }
 
-/// Seed timestamp within 24h of `integration_sim_day()`
+/// Seed timestamp within 24h of `integration_sim_day()`.
+///
+/// Anchored to "now" so that the row survives the background cleanup
+/// spawned by `TokenRate::batch_insert`, which deletes rows older than
+/// `MIN_RETENTION_DAYS` (7 days) regardless of the configured retention.
 fn seed_ts() -> chrono::NaiveDateTime {
-    NaiveDate::from_ymd_opt(2026, 2, 9)
-        .unwrap()
-        .and_hms_opt(6, 0, 0)
-        .unwrap()
+    (Utc::now() - chrono::TimeDelta::hours(1)).naive_utc()
 }
 
-/// Simulation timestamp used by integration tests
+/// Simulation timestamp used by integration tests; must be >= `seed_ts()`
+/// so the spot-rate query at `<=` finds the seeded row.
 fn integration_sim_day() -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2026, 2, 9, 12, 0, 0).unwrap()
+    Utc::now()
 }
 
 const INT_TOKEN_A: &str = "test-token-a.testnet";
