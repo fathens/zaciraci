@@ -175,3 +175,57 @@ fn empty_bounds() {
     assert!(bounds.is_empty());
     assert_eq!(bounds.len(), 0);
 }
+
+#[test]
+fn effective_uppers_returns_uppers_when_sum_ge_one() {
+    let bounds = BoxBounds::uniform(3, 0.6);
+    let eff = bounds.effective_uppers();
+    assert_eq!(eff, vec![0.6, 0.6, 0.6]);
+}
+
+#[test]
+fn effective_uppers_matches_legacy_uniform_max_position() {
+    // Uniform feasible bounds (n*m >= 1.0): legacy used max_position directly.
+    let n = 5;
+    let max_position = 0.4;
+    let bounds = BoxBounds::uniform(n, max_position);
+    let eff = bounds.effective_uppers();
+    let legacy = vec![max_position; n];
+    assert_eq!(eff.len(), legacy.len());
+    for (e, l) in eff.iter().zip(legacy.iter()) {
+        assert!((e - l).abs() < 1e-15);
+    }
+}
+
+#[test]
+fn effective_uppers_scales_to_one_over_n_when_sum_lt_one() {
+    // Uniform infeasible bounds (n*m < 1.0): legacy fell back to 1/n.
+    let n = 5;
+    let max_position = 0.1; // 5 * 0.1 = 0.5 < 1.0
+    let bounds = BoxBounds::uniform(n, max_position);
+    let eff = bounds.effective_uppers();
+    let expected = 1.0 / n as f64;
+    for e in eff.iter() {
+        assert!(
+            (e - expected).abs() < 1e-15,
+            "got {}, expected {}",
+            e,
+            expected
+        );
+    }
+}
+
+#[test]
+fn effective_uppers_non_uniform_scaling_sums_to_one() {
+    let bounds = BoxBounds {
+        lower: vec![0.0; 3],
+        upper: vec![0.2, 0.3, 0.4], // sum = 0.9 < 1.0
+    };
+    let eff = bounds.effective_uppers();
+    let sum: f64 = eff.iter().sum();
+    assert!((sum - 1.0).abs() < 1e-15);
+    // Proportional scaling: each scaled by 1/0.9
+    assert!((eff[0] - 0.2 / 0.9).abs() < 1e-15);
+    assert!((eff[1] - 0.3 / 0.9).abs() < 1e-15);
+    assert!((eff[2] - 0.4 / 0.9).abs() < 1e-15);
+}

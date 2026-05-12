@@ -88,6 +88,22 @@ impl BoxBounds {
         &self.upper
     }
 
+    /// Per-asset effective upper bounds for box-constrained optimization.
+    ///
+    /// When `sum(upper) < 1.0` the simplex constraint `sum(w) = 1` is
+    /// infeasible inside the box. In that case all uppers are scaled
+    /// proportionally so that they sum to 1.0. For uniform bounds
+    /// (`upper[i] = m`, `sum = n*m`) this yields `m / (n*m) = 1/n`, matching
+    /// the legacy `effective_max = if n*m < 1.0 { 1/n } else { m }` behavior.
+    pub fn effective_uppers(&self) -> Vec<f64> {
+        let sum_upper: f64 = self.upper.iter().sum();
+        if sum_upper > 0.0 && sum_upper < 1.0 {
+            self.upper.iter().map(|&u| u / sum_upper).collect()
+        } else {
+            self.upper.clone()
+        }
+    }
+
     pub fn validate(&self) -> Result<(), BoxBoundsError> {
         for (i, (&l, &u)) in self.lower.iter().zip(&self.upper).enumerate() {
             if !l.is_finite() || !u.is_finite() {

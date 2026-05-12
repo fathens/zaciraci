@@ -1272,9 +1272,22 @@ fn normalize_weights(weights: &mut [f64]) {
 }
 
 /// box clamp + 正規化（浮動小数点誤差対策）
+///
+/// per-asset 版 `clamp_and_normalize_per_asset` への薄いラッパー。
 fn clamp_and_normalize(weights: &mut [f64], max_position: f64) {
-    for w in weights.iter_mut() {
-        *w = w.clamp(0.0, max_position);
+    let uppers = vec![max_position; weights.len()];
+    clamp_and_normalize_per_asset(weights, &uppers);
+}
+
+/// per-asset box clamp + 正規化（浮動小数点誤差対策）
+fn clamp_and_normalize_per_asset(weights: &mut [f64], uppers: &[f64]) {
+    debug_assert_eq!(
+        weights.len(),
+        uppers.len(),
+        "weights and uppers must have the same length"
+    );
+    for (w, &u) in weights.iter_mut().zip(uppers.iter()) {
+        *w = w.clamp(0.0, u);
     }
     normalize_weights(weights);
 }
