@@ -216,6 +216,25 @@ fn effective_uppers_scales_to_one_over_n_when_sum_lt_one() {
 }
 
 #[test]
+fn subset_extracts_indexed_bounds() {
+    let bounds = BoxBounds::from_uppers(vec![0.2, 0.3, 0.4, 0.5]);
+    let sub = bounds.subset(&[0, 2]);
+    assert_eq!(sub.len(), 2);
+    assert_eq!(sub.upper(0), 0.2);
+    assert_eq!(sub.upper(1), 0.4);
+    assert_eq!(sub.lower(0), 0.0);
+    assert_eq!(sub.lower(1), 0.0);
+}
+
+#[test]
+fn subset_can_reorder() {
+    let bounds = BoxBounds::from_uppers(vec![0.1, 0.2, 0.3]);
+    let sub = bounds.subset(&[2, 0]);
+    assert_eq!(sub.upper(0), 0.3);
+    assert_eq!(sub.upper(1), 0.1);
+}
+
+#[test]
 fn effective_uppers_non_uniform_scaling_sums_to_one() {
     let bounds = BoxBounds {
         lower: vec![0.0; 3],

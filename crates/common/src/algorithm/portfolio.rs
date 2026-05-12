@@ -1320,10 +1320,11 @@ fn clamp_and_normalize_per_asset(weights: &mut [f64], uppers: &[f64]) {
 /// box_sharpe + box_rp → alpha ブレンド → 正規化 → フルサイズ展開
 ///
 /// サブセットの最適化結果を n_total サイズのベクトルに展開して返す。
+/// `sub_bounds` はサブセット (`subset_indices`) に対応するサイズの BoxBounds。
 fn blend_and_expand(
     sub_returns: &[f64],
     sub_cov: &Array2<f64>,
-    max_position: f64,
+    sub_bounds: &BoxBounds,
     alphas: &[f64],
     subset_indices: &[usize],
     n_total: usize,
@@ -1336,8 +1337,8 @@ fn blend_and_expand(
         subset_indices.iter().all(|&idx| idx < n_total),
         "subset_indices contains out-of-bounds index"
     );
-    let w_sharpe = box_maximize_sharpe(sub_returns, sub_cov, max_position);
-    let w_rp = box_risk_parity(sub_cov, max_position);
+    let w_sharpe = box_maximize_sharpe_bounded(sub_returns, sub_cov, sub_bounds);
+    let w_rp = box_risk_parity_bounded(sub_cov, sub_bounds);
 
     let mut blended: Vec<f64> = w_sharpe
         .iter()
@@ -1363,7 +1364,7 @@ fn blend_and_expand(
 struct SubsetOptParams<'a> {
     expected_returns: &'a [f64],
     covariance_matrix: &'a Array2<f64>,
-    max_position: f64,
+    bounds: &'a BoxBounds,
     alphas: &'a [f64],
 }
 
@@ -1384,10 +1385,11 @@ fn cached_blend_and_expand(
         params.covariance_matrix,
         subset_indices,
     );
+    let sub_bounds = params.bounds.subset(subset_indices);
     let weights = blend_and_expand(
         &sub_ret,
         &sub_cov,
-        params.max_position,
+        &sub_bounds,
         params.alphas,
         subset_indices,
         n_total,
@@ -1594,10 +1596,11 @@ fn exhaustive_optimize(
         return vec![0.0; n_total];
     }
 
+    let bounds = BoxBounds::uniform(n_total, max_position);
     let params = SubsetOptParams {
         expected_returns,
         covariance_matrix,
-        max_position,
+        bounds: &bounds,
         alphas,
     };
 

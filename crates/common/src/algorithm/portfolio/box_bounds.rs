@@ -96,6 +96,16 @@ impl BoxBounds {
         &self.upper
     }
 
+    /// 指定したインデックスのサブセットに対応する BoxBounds を抽出する。
+    ///
+    /// サブセット最適化（exhaustive 列挙等）で使用する。
+    pub fn subset(&self, indices: &[usize]) -> Self {
+        Self {
+            lower: indices.iter().map(|&i| self.lower[i]).collect(),
+            upper: indices.iter().map(|&i| self.upper[i]).collect(),
+        }
+    }
+
     /// Per-asset effective upper bounds for box-constrained optimization.
     ///
     /// When `sum(upper) < 1.0` the simplex constraint `sum(w) = 1` is
