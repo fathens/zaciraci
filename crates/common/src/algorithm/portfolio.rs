@@ -1112,10 +1112,12 @@ pub fn apply_risk_parity(weights: &mut [f64], covariance_matrix: &Array2<f64>) {
 
 /// ボックス制約付き Risk Parity（固定集合法）
 ///
-/// 各資産の重みが [0, max_position] に収まるよう制約しつつ、
-/// リスク寄与度の均等化を目指す。max_position に張り付いた資産を
-/// Pinned 集合として固定し、残りの Free 集合で RP を反復する。
-pub fn box_risk_parity(covariance_matrix: &Array2<f64>, max_position: f64) -> Vec<f64> {
+/// 各資産の重みが [0, bounds.upper[i]] に収まるよう制約しつつ、
+/// リスク寄与度の均等化を目指す。上限に張り付いた資産を Pinned 集合として
+/// 固定し、残りの Free 集合で RP を反復する。
+///
+/// 注: 現状は `bounds.lower[i] = 0.0` を前提とする。
+pub fn box_risk_parity_bounded(covariance_matrix: &Array2<f64>, bounds: &BoxBounds) -> Vec<f64> {
     let n = covariance_matrix.nrows();
     if n == 0 {
         return vec![];
@@ -1124,42 +1126,46 @@ pub fn box_risk_parity(covariance_matrix: &Array2<f64>, max_position: f64) -> Ve
         return vec![1.0];
     }
 
-    let effective_max = if n as f64 * max_position < 1.0 {
-        1.0 / n as f64
-    } else {
-        max_position
-    };
+    debug_assert_eq!(
+        bounds.len(),
+        n,
+        "bounds.len() must match covariance_matrix size"
+    );
 
-    // effective_max >= 1.0 なら制約なしのRP
-    if effective_max >= 1.0 {
+    let effective_uppers = bounds.effective_uppers();
+
+    // 全資産が無制約 (>= 1.0) なら制約なしの RP
+    if effective_uppers.iter().all(|&u| u >= 1.0) {
         let mut w = vec![1.0 / n as f64; n];
         apply_risk_parity(&mut w, covariance_matrix);
         return w;
     }
 
-    // pinned[i] = true なら w[i] = effective_max に固定
+    // pinned[i] = true なら w[i] = effective_uppers[i] に固定
     let mut pinned = vec![false; n];
     let mut weights = vec![1.0 / n as f64; n];
     let max_outer = 2 * n;
 
     for _ in 0..max_outer {
         let free: Vec<usize> = (0..n).filter(|&i| !pinned[i]).collect();
-        let pinned_count = n - free.len();
 
         if free.is_empty() {
-            // 全資産 pinned: 均等配分
-            let s = pinned_count as f64 * effective_max;
-            return vec![effective_max / s; n];
+            // 全資産 pinned: per-asset 上限を sum_pinned で正規化
+            let s: f64 = (0..n).map(|i| effective_uppers[i]).sum();
+            return (0..n).map(|i| effective_uppers[i] / s).collect();
         }
 
-        let budget_free = 1.0 - pinned_count as f64 * effective_max;
+        let sum_pinned: f64 = (0..n)
+            .filter(|&i| pinned[i])
+            .map(|i| effective_uppers[i])
+            .sum();
+        let budget_free = 1.0 - sum_pinned;
         if budget_free <= 0.0 {
             // pinned だけで budget 超過: pinned のみで正規化
-            let s = pinned_count as f64 * effective_max;
             let mut w = vec![0.0; n];
             for i in 0..n {
                 if pinned[i] {
-                    w[i] = effective_max / s;
+                    w[i] = effective_uppers[i] / sum_pinned;
                 }
             }
             return w;
@@ -1214,10 +1220,10 @@ pub fn box_risk_parity(covariance_matrix: &Array2<f64>, max_position: f64) -> Ve
             }
         }
 
-        // Free→Pinned: max_position 超過チェック
+        // Free→Pinned: effective_uppers[i] 超過チェック (per-asset)
         let mut any_change = false;
         for (fi, &f_idx) in free.iter().enumerate() {
-            if w_free[fi] > effective_max + 1e-10 {
+            if w_free[fi] > effective_uppers[f_idx] + 1e-10 {
                 pinned[f_idx] = true;
                 any_change = true;
             }
@@ -1233,7 +1239,7 @@ pub fn box_risk_parity(covariance_matrix: &Array2<f64>, max_position: f64) -> Ve
             }
             for i in 0..n {
                 if pinned[i] {
-                    current_w[i] = effective_max;
+                    current_w[i] = effective_uppers[i];
                 }
             }
             let cw = Array1::from(current_w.clone());
@@ -1262,12 +1268,12 @@ pub fn box_risk_parity(covariance_matrix: &Array2<f64>, max_position: f64) -> Ve
             }
             for i in 0..n {
                 if pinned[i] {
-                    weights[i] = effective_max;
+                    weights[i] = effective_uppers[i];
                 }
             }
 
             normalize_weights(&mut weights);
-            clamp_and_normalize(&mut weights, effective_max);
+            clamp_and_normalize_per_asset(&mut weights, &effective_uppers);
 
             return weights;
         }
@@ -1275,6 +1281,15 @@ pub fn box_risk_parity(covariance_matrix: &Array2<f64>, max_position: f64) -> Ve
 
     // 収束しなかった場合: 等配分
     vec![1.0 / n as f64; n]
+}
+
+/// 旧 API: 一様な上限 `max_position` で `box_risk_parity_bounded` を呼ぶ薄い wrapper。
+///
+/// 既存テストとの後方互換のため残置。新規呼び出し元は
+/// `box_risk_parity_bounded` を直接使うこと。
+pub fn box_risk_parity(covariance_matrix: &Array2<f64>, max_position: f64) -> Vec<f64> {
+    let bounds = BoxBounds::uniform(covariance_matrix.nrows(), max_position);
+    box_risk_parity_bounded(covariance_matrix, &bounds)
 }
 
 // ==================== 案 I ユーティリティ関数群 ====================
@@ -1287,14 +1302,6 @@ fn normalize_weights(weights: &mut [f64]) {
             *w /= sum;
         }
     }
-}
-
-/// box clamp + 正規化（浮動小数点誤差対策）
-///
-/// per-asset 版 `clamp_and_normalize_per_asset` への薄いラッパー。
-fn clamp_and_normalize(weights: &mut [f64], max_position: f64) {
-    let uppers = vec![max_position; weights.len()];
-    clamp_and_normalize_per_asset(weights, &uppers);
 }
 
 /// per-asset box clamp + 正規化（浮動小数点誤差対策）

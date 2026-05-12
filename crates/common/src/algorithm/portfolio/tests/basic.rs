@@ -1905,9 +1905,9 @@ fn pred_err_diagonal_mode_default_is_additive() {
 }
 
 #[test]
-fn clamp_and_normalize_per_asset_matches_legacy_for_uniform_uppers() {
-    // Uniform per-asset uppers must yield the same result as the legacy
-    // single-scalar version. 1e-15 precision parity.
+fn clamp_and_normalize_per_asset_uniform_uppers_matches_scalar_semantics() {
+    // 旧スカラー版の意味論を inline で再現し、per-asset 版が uniform 入力で
+    // 同等の結果を返すことを 1e-15 精度で確認する。
     let cases: Vec<(Vec<f64>, f64)> = vec![
         (vec![0.4, 0.3, 0.2, 0.1], 0.5),
         (vec![-0.1, 0.6, 0.7, 0.3], 0.5),
@@ -1915,18 +1915,24 @@ fn clamp_and_normalize_per_asset_matches_legacy_for_uniform_uppers() {
         (vec![1.0, 0.0, 0.0, 0.0], 0.6),
     ];
     for (weights, max_position) in cases {
-        let mut legacy = weights.clone();
-        clamp_and_normalize(&mut legacy, max_position);
+        // 旧スカラー版相当の inline 実装
+        let mut expected: Vec<f64> = weights.iter().map(|w| w.clamp(0.0, max_position)).collect();
+        let sum: f64 = expected.iter().sum();
+        if sum > 0.0 {
+            for w in expected.iter_mut() {
+                *w /= sum;
+            }
+        }
 
-        let mut per_asset = weights.clone();
+        let mut actual = weights.clone();
         let uppers = vec![max_position; weights.len()];
-        clamp_and_normalize_per_asset(&mut per_asset, &uppers);
+        clamp_and_normalize_per_asset(&mut actual, &uppers);
 
-        assert_eq!(legacy.len(), per_asset.len());
-        for (a, b) in legacy.iter().zip(per_asset.iter()) {
+        assert_eq!(expected.len(), actual.len());
+        for (e, a) in expected.iter().zip(actual.iter()) {
             assert!(
-                (a - b).abs() < 1e-15,
-                "legacy={a}, per_asset={b}, weights={weights:?}, max={max_position}"
+                (e - a).abs() < 1e-15,
+                "expected={e}, actual={a}, weights={weights:?}, max={max_position}"
             );
         }
     }

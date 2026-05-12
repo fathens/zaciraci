@@ -1153,6 +1153,34 @@ fn prop_test_uniform_bounds_equals_legacy_random() {
     }
 }
 
+/// `box_risk_parity_bounded` の uniform 入力が旧 API と完全一致することを
+/// ランダムシードで検証する。
+#[test]
+fn prop_test_box_rp_uniform_bounds_equals_legacy_random() {
+    let max_positions = [0.15, 0.25, 0.4, 0.6, 0.9];
+
+    for seed in 0..50_u64 {
+        let n = 3 + (seed % 6) as usize;
+        let t = 25 + (seed % 6) as usize;
+        let returns = generate_synthetic_returns(n, t, 20_000 + seed);
+        let cov = calculate_covariance_matrix(&returns);
+
+        for &max_position in &max_positions {
+            let legacy = box_risk_parity(&cov, max_position);
+            let bounds = BoxBounds::uniform(n, max_position);
+            let bounded = box_risk_parity_bounded(&cov, &bounds);
+
+            assert_eq!(legacy.len(), bounded.len());
+            for (i, (a, b)) in legacy.iter().zip(bounded.iter()).enumerate() {
+                assert!(
+                    (a - b).abs() < 1e-14,
+                    "seed={seed} max={max_position} i={i}: legacy={a}, bounded={b}"
+                );
+            }
+        }
+    }
+}
+
 /// Per-asset upper bounds が結果に正しく反映されることを確認する
 /// (個別資産の上限を厳しくすると、その資産の重みが上限以下になる)。
 #[test]
