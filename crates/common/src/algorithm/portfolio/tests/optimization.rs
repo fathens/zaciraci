@@ -1116,6 +1116,75 @@ async fn test_execute_portfolio_optimization_hold_on_empty_filter() {
     assert_eq!(report.expected_metrics.max_drawdown, 0.0);
 }
 
+// ==================== Ledoit-Wolf T-guard テスト ====================
+
+/// T < MIN_LEDOIT_WOLF_T (= 5) のとき、ledoit_wolf_shrink は対角のみの
+/// covariance を返す（off-diagonal は 0、LW の i.i.d. 漸近論を維持）。
+#[test]
+fn test_ledoit_wolf_diagonal_fallback_when_t_small() {
+    // T = 3, n = 3 で T < MIN_LEDOIT_WOLF_T
+    let returns = vec![
+        vec![0.01, 0.02, -0.01],
+        vec![-0.01, 0.03, 0.02],
+        vec![0.02, -0.01, 0.01],
+    ];
+
+    let result = ledoit_wolf_shrink(&returns);
+
+    // 対角は正、off-diagonal は厳密に 0
+    for i in 0..3 {
+        assert!(result[[i, i]] > 0.0, "diagonal must be positive");
+        for j in 0..3 {
+            if i != j {
+                assert_eq!(
+                    result[[i, j]],
+                    0.0,
+                    "off-diagonal must be 0 in fallback: [{i},{j}]={}",
+                    result[[i, j]]
+                );
+            }
+        }
+    }
+}
+
+/// T < MIN_LEDOIT_WOLF_T と T >= MIN_LEDOIT_WOLF_T の境界で結果が変わることを確認。
+/// 同じデータで T=4 (fallback) と T=5 (LW) を比較。
+#[test]
+fn test_ledoit_wolf_t_threshold_changes_behavior() {
+    // T=4: diagonal-only fallback
+    let returns_short = vec![
+        vec![0.01, 0.02, -0.01, 0.015],
+        vec![-0.01, 0.025, 0.02, 0.01],
+        vec![0.02, -0.01, 0.01, 0.018],
+    ];
+    let result_short = ledoit_wolf_shrink(&returns_short);
+    // off-diagonal は全て 0
+    for i in 0..3 {
+        for j in 0..3 {
+            if i != j {
+                assert_eq!(
+                    result_short[[i, j]],
+                    0.0,
+                    "T=4 fallback: off-diagonal [{i},{j}]={} must be 0",
+                    result_short[[i, j]]
+                );
+            }
+        }
+    }
+
+    // T=5: LW shrinkage 起動 (結果が fallback と異なる)
+    let returns_long = vec![
+        vec![0.01, 0.02, -0.01, 0.015, 0.005],
+        vec![-0.01, 0.025, 0.02, 0.01, -0.005],
+        vec![0.02, -0.01, 0.01, 0.018, 0.0],
+    ];
+    let result_long = ledoit_wolf_shrink(&returns_long);
+    // diagonal は正 (fallback でも LW でも保証)
+    for i in 0..3 {
+        assert!(result_long[[i, i]] > 0.0);
+    }
+}
+
 // ==================== box_maximize_sharpe_bounded 同等性テスト ====================
 
 /// Uniform 化された BoxBounds で `box_maximize_sharpe_bounded` を呼んだ結果が

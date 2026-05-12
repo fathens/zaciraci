@@ -234,6 +234,16 @@ pub const PREDICTION_ALPHA_FLOOR: f64 = 0.5;
 /// 規模) であり、現実的な最小保有を下回らない。
 const HELD_DUST_THRESHOLD: f64 = 1e-9;
 
+/// Ledoit-Wolf 縮小推定で要求する最小サンプル数 T。
+/// LW の i.i.d. 漸近論は十分な T でのみ有効。T < MIN_LEDOIT_WOLF_T のときは
+/// 縮小推定をスキップし、対角のみ（サンプル分散）の covariance を返す。
+const MIN_LEDOIT_WOLF_T: usize = 5;
+
+/// 分散の下限（数値安定性のため）。
+/// 0 または極小の分散は Cholesky 等で不安定になるため、対角値をこの値以上に
+/// クランプする。
+const MIN_VARIANCE_FLOOR: f64 = 1e-8;
+
 /// 内部 f64 weight を外部公開用 BigDecimal に変換する。
 /// 小数点以下10桁で丸める。
 fn weight_from_f64(value: f64) -> BigDecimal {
@@ -335,6 +345,21 @@ fn ledoit_wolf_shrink(daily_returns: &[Vec<f64>]) -> Array2<f64> {
     }
 
     let t = min_len;
+
+    // T が小さすぎると LW の漸近論が崩れるため、対角のみ（サンプル分散）で
+    // fallback する。i.i.d. 前提を壊さず、PSD も保証される。
+    if t < MIN_LEDOIT_WOLF_T {
+        let mut diag = Array2::zeros((n, n));
+        for i in 0..n {
+            let r = &daily_returns[i];
+            let start = r.len() - t;
+            let mean = r[start..].iter().sum::<f64>() / t as f64;
+            let var =
+                r[start..].iter().map(|&v| (v - mean).powi(2)).sum::<f64>() / (t as f64 - 1.0);
+            diag[[i, i]] = var.max(MIN_VARIANCE_FLOOR);
+        }
+        return diag;
+    }
 
     // 各トークンの平均リターン（T アライン済みデータ）
     let means: Vec<f64> = (0..n)
