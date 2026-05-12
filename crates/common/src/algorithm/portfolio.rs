@@ -1584,7 +1584,7 @@ fn exhaustive_optimize(
     active_indices: &[usize],
     expected_returns: &[f64],
     covariance_matrix: &Array2<f64>,
-    max_position: f64,
+    bounds: &BoxBounds,
     max_holdings: usize,
     min_position_size: f64,
     alphas: &[f64],
@@ -1596,11 +1596,10 @@ fn exhaustive_optimize(
         return vec![0.0; n_total];
     }
 
-    let bounds = BoxBounds::uniform(n_total, max_position);
     let params = SubsetOptParams {
         expected_returns,
         covariance_matrix,
-        bounds: &bounds,
+        bounds,
         alphas,
     };
 
@@ -1786,11 +1785,12 @@ fn unified_optimize(
     }
 
     // Phase 3: 全列挙による厳密解
+    let bounds = BoxBounds::uniform(n, max_position);
     let mut weights = exhaustive_optimize(
         &active_indices,
         &adj_returns,
         covariance_matrix,
-        max_position,
+        &bounds,
         max_holdings,
         min_position_size,
         alphas,

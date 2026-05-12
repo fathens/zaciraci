@@ -993,11 +993,12 @@ fn test_exhaustive_optimize_golden_output() {
     let active_indices: Vec<usize> = (0..8).collect();
     let alphas = vec![0.7; expected_returns.len()];
 
+    let bounds = BoxBounds::uniform(expected_returns.len(), 0.4);
     let weights = exhaustive_optimize(
         &active_indices,
         &expected_returns,
         &cov,
-        0.4,  // max_position
+        &bounds,
         3,    // max_holdings
         0.05, // min_position_size
         &alphas,
