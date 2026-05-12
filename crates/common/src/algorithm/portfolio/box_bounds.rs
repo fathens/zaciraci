@@ -37,6 +37,14 @@ impl BoxBounds {
         }
     }
 
+    /// 任意の per-asset 上限を持つ BoxBounds (lower は全て 0)。
+    pub fn from_uppers(upper: Vec<f64>) -> Self {
+        Self {
+            lower: vec![0.0; upper.len()],
+            upper,
+        }
+    }
+
     pub fn with_held_sell_only(
         tokens: &[TokenOutAccount],
         current_weights: &[f64],

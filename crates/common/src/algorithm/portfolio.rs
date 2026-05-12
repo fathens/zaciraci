@@ -792,14 +792,17 @@ enum BoundState {
 /// ボックス制約付き Sharpe 最大化（3集合 Active Set 法）
 ///
 /// 各資産の重みが [0, max_position] の範囲に収まるよう制約しつつ、
-/// Sharpe 比を最大化する。Free / Lower(=0) / Upper(=max_position) の
+/// Sharpe 比を最大化する。Free / Lower(=0) / Upper(=bounds.upper[i]) の
 /// 3 集合を管理し、KKT 条件に基づいて集合間を移動する。
 ///
-/// max_position >= 1.0 のとき既存 `maximize_sharpe_ratio()` と同一の解を返す。
-pub fn box_maximize_sharpe(
+/// 全 upper >= 1.0 のとき既存 `maximize_sharpe_ratio()` と同一の解を返す。
+///
+/// 注: 現状は `bounds.lower[i] = 0.0` を前提とする
+/// (`BoundState::Lower` は w=0 を意味する)。
+pub fn box_maximize_sharpe_bounded(
     expected_returns: &[f64],
     covariance_matrix: &Array2<f64>,
-    max_position: f64,
+    bounds: &BoxBounds,
 ) -> Vec<f64> {
     let n = expected_returns.len();
     if n == 0 {
@@ -809,17 +812,19 @@ pub fn box_maximize_sharpe(
         return vec![1.0];
     }
 
+    debug_assert_eq!(
+        bounds.len(),
+        n,
+        "bounds.len() must match expected_returns.len()"
+    );
+
     let default_weights = vec![1.0 / n as f64; n];
 
-    // max_position が非実用的に小さい場合は等配分
-    let effective_max = if n as f64 * max_position < 1.0 {
-        1.0 / n as f64
-    } else {
-        max_position
-    };
+    // per-asset 上限 (sum_upper < 1.0 のときは比例スケーリング)
+    let effective_uppers = bounds.effective_uppers();
 
-    // max_position >= 1.0 なら制約なしと同等
-    if effective_max >= 1.0 {
+    // 全資産が無制約 (>= 1.0) なら制約なしと同等
+    if effective_uppers.iter().all(|&u| u >= 1.0) {
         return maximize_sharpe_ratio(expected_returns, covariance_matrix);
     }
 
@@ -841,7 +846,7 @@ pub fn box_maximize_sharpe(
         .map(|&r| r - RISK_FREE_RATE)
         .collect();
 
-    // 3 集合: Free / Lower (w=0) / Upper (w=max_position)
+    // 3 集合: Free / Lower (w=0) / Upper (w=effective_uppers[i])
     let mut state = vec![BoundState::Free; n];
     let max_iter = 3 * n + 10;
 
@@ -861,7 +866,7 @@ pub fn box_maximize_sharpe(
             }
             let mut weights = vec![0.0; n];
             for &i in &upper {
-                weights[i] = effective_max;
+                weights[i] = effective_uppers[i];
             }
             normalize_weights(&mut weights);
             return weights;
@@ -869,16 +874,16 @@ pub fn box_maximize_sharpe(
 
         let m = free.len();
 
-        // Upper 集合の固定重みによる budget 消費
-        let budget_upper: f64 = upper.iter().map(|_| effective_max).sum();
+        // Upper 集合の固定重みによる budget 消費 (per-asset)
+        let budget_upper: f64 = upper.iter().map(|&i| effective_uppers[i]).sum();
         let budget_free = 1.0 - budget_upper;
 
         if budget_free <= 0.0 {
-            // Upper 集合だけで budget を超過
+            // Upper 集合だけで budget を超過 → 比例縮小
             let mut weights = vec![0.0; n];
-            let total = upper.len() as f64 * effective_max;
+            let total = budget_upper;
             for &i in &upper {
-                weights[i] = effective_max / total;
+                weights[i] = effective_uppers[i] / total;
             }
             return weights;
         }
@@ -927,7 +932,7 @@ pub fn box_maximize_sharpe(
             for (fi, &f_idx) in free.iter().enumerate() {
                 let mut sum = 0.0;
                 for &u_idx in &upper {
-                    sum += covariance_matrix[[f_idx, u_idx]] * effective_max;
+                    sum += covariance_matrix[[f_idx, u_idx]] * effective_uppers[u_idx];
                 }
                 cov_fu_wu[fi] = sum;
             }
@@ -965,9 +970,9 @@ pub fn box_maximize_sharpe(
             continue;
         }
 
-        // F→U: w > max_position
+        // F→U: w > effective_uppers[i] (per-asset)
         for (fi, &w) in w_free.iter().enumerate() {
-            if w > effective_max + 1e-10 {
+            if w > effective_uppers[free[fi]] + 1e-10 {
                 state[free[fi]] = BoundState::Upper;
                 moved = true;
                 break;
@@ -979,14 +984,14 @@ pub fn box_maximize_sharpe(
 
         // L→F / U→F: 勾配条件チェック
         // Lower (w=0): ∂L/∂w_i > 0 なら Free に移動すべき
-        // Upper (w=max): ∂L/∂w_i < 0 なら Free に移動すべき
+        // Upper (w=effective_uppers[i]): ∂L/∂w_i < 0 なら Free に移動すべき
         // 勾配 = excess_returns[i] - γ * Σ_i· · w
         let mut weights = vec![0.0; n];
         for (fi, &f_idx) in free.iter().enumerate() {
             weights[f_idx] = w_free[fi];
         }
         for &u_idx in &upper {
-            weights[u_idx] = effective_max;
+            weights[u_idx] = effective_uppers[u_idx];
         }
 
         for i in 0..n {
@@ -1026,13 +1031,26 @@ pub fn box_maximize_sharpe(
             return default_weights;
         }
         normalize_weights(&mut weights);
-        clamp_and_normalize(&mut weights, effective_max);
+        clamp_and_normalize_per_asset(&mut weights, &effective_uppers);
 
         return weights;
     }
 
     // 収束しなかった場合: 等配分にフォールバック
     default_weights
+}
+
+/// 旧 API: 一様な上限 `max_position` で `box_maximize_sharpe_bounded` を呼ぶ薄い wrapper。
+///
+/// 既存テストとの後方互換のため残置。新規呼び出し元は
+/// `box_maximize_sharpe_bounded` を直接使うこと。
+pub fn box_maximize_sharpe(
+    expected_returns: &[f64],
+    covariance_matrix: &Array2<f64>,
+    max_position: f64,
+) -> Vec<f64> {
+    let bounds = BoxBounds::uniform(expected_returns.len(), max_position);
+    box_maximize_sharpe_bounded(expected_returns, covariance_matrix, &bounds)
 }
 
 /// リスクパリティ調整（反復収束版）

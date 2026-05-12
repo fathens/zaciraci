@@ -1108,3 +1108,82 @@ async fn test_execute_portfolio_optimization_hold_on_empty_filter() {
     assert_eq!(report.expected_metrics.sortino_ratio, 0.0);
     assert_eq!(report.expected_metrics.max_drawdown, 0.0);
 }
+
+// ==================== box_maximize_sharpe_bounded 同等性テスト ====================
+
+/// Uniform 化された BoxBounds で `box_maximize_sharpe_bounded` を呼んだ結果が
+/// 旧 API `box_maximize_sharpe(returns, cov, max_position)` と完全一致することを
+/// ランダムシードで検証する (per-asset 化リファクタの数値同等性回帰テスト)。
+#[test]
+fn prop_test_uniform_bounds_equals_legacy_random() {
+    let max_positions = [0.15, 0.25, 0.4, 0.6, 0.9];
+
+    let mut state: u64 = 1;
+    let mut next_u64 = || {
+        // 簡易 xorshift64 (helpers.rs::generate_synthetic_returns と同等)
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    let mut next_uniform = || (next_u64() as f64) / (u64::MAX as f64);
+
+    for seed in 0..50_u64 {
+        let n = 3 + (seed % 6) as usize; // n ∈ [3, 8]
+        let t = 25 + (seed % 6) as usize; // t ∈ [25, 30]
+        let returns = generate_synthetic_returns(n, t, 10_000 + seed);
+        let cov = calculate_covariance_matrix(&returns);
+
+        // ランダムな期待リターン [-0.05, 0.10]
+        let expected_returns: Vec<f64> = (0..n).map(|_| next_uniform() * 0.15 - 0.05).collect();
+
+        for &max_position in &max_positions {
+            let legacy = box_maximize_sharpe(&expected_returns, &cov, max_position);
+            let bounds = BoxBounds::uniform(n, max_position);
+            let bounded = box_maximize_sharpe_bounded(&expected_returns, &cov, &bounds);
+
+            assert_eq!(legacy.len(), bounded.len());
+            for (i, (a, b)) in legacy.iter().zip(bounded.iter()).enumerate() {
+                assert!(
+                    (a - b).abs() < 1e-14,
+                    "seed={seed} max={max_position} i={i}: legacy={a}, bounded={b}"
+                );
+            }
+        }
+    }
+}
+
+/// Per-asset upper bounds が結果に正しく反映されることを確認する
+/// (個別資産の上限を厳しくすると、その資産の重みが上限以下になる)。
+#[test]
+fn box_maximize_sharpe_bounded_respects_per_asset_upper() {
+    let n = 5;
+    let returns = generate_synthetic_returns(n, 30, 20001);
+    let cov = calculate_covariance_matrix(&returns);
+    let expected_returns: Vec<f64> = vec![0.05, 0.10, 0.02, 0.08, 0.04];
+
+    // 全資産に 0.5 上限を設定したベースライン
+    let baseline = box_maximize_sharpe(&expected_returns, &cov, 0.5);
+
+    // 資産 1 (最高リターン) のみ 0.15 に厳格化
+    let mut tight_uppers = vec![0.5; n];
+    tight_uppers[1] = 0.15;
+    let tight_bounds = BoxBounds::from_uppers(tight_uppers);
+    let tight = box_maximize_sharpe_bounded(&expected_returns, &cov, &tight_bounds);
+
+    // ベースラインでは資産 1 が大きく配分されているはず
+    assert!(
+        baseline[1] > 0.15,
+        "baseline w[1] = {} should exceed 0.15",
+        baseline[1]
+    );
+    // 厳格化版では資産 1 が 0.15 以下に抑えられる (tol)
+    assert!(
+        tight[1] <= 0.15 + 1e-10,
+        "tight w[1] = {} should be <= 0.15",
+        tight[1]
+    );
+    // 合計は 1.0
+    let sum_tight: f64 = tight.iter().sum();
+    assert!((sum_tight - 1.0).abs() < 1e-10);
+}
