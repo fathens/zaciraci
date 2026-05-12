@@ -1188,6 +1188,81 @@ fn prop_test_box_rp_uniform_bounds_equals_legacy_random() {
     }
 }
 
+/// C1: 保有トークンには sell-only 制約が適用され、最適化結果が
+/// 現在保有比率を超えないことを確認する。
+#[tokio::test]
+async fn execute_portfolio_optimization_held_tokens_sell_only() {
+    use std::collections::BTreeMap;
+
+    let tokens = vec![
+        TokenInfo {
+            symbol: token_out("token-a"),
+            current_rate: rate_from_price(0.01),
+            historical_volatility: 0.2,
+            liquidity_score: Some(0.8),
+            market_cap: Some(cap(1000000)),
+        },
+        TokenInfo {
+            symbol: token_out("token-b"),
+            current_rate: rate_from_price(0.02),
+            historical_volatility: 0.3,
+            liquidity_score: Some(0.7),
+            market_cap: Some(cap(500000)),
+        },
+        TokenInfo {
+            symbol: token_out("token-c"),
+            current_rate: rate_from_price(0.005),
+            historical_volatility: 0.1,
+            liquidity_score: Some(0.9),
+            market_cap: Some(cap(2000000)),
+        },
+    ];
+
+    // token-a に大量のリターンを予測 (本来なら大きく買いたい銘柄)
+    let mut predictions = BTreeMap::new();
+    predictions.insert(token_out("token-a"), price(0.01 * 2.0)); // +100%
+    predictions.insert(token_out("token-b"), price(0.02 * 1.05));
+    predictions.insert(token_out("token-c"), price(0.005 * 1.05));
+
+    let historical_prices = create_sample_price_history();
+
+    // wallet: token-a 10%、token-b 0%、token-c 0%
+    // → token-a は sell-only で上限 0.10
+    // 残り resource は 0.9 だが token-b + token-c で吸収可能（max_position 0.4 を想定）
+    let mut holdings = BTreeMap::new();
+    // 10% holding of token-a (price=0.01, total=1000 NEAR, so 100 NEAR of token-a = 10000 tokens)
+    holdings.insert(
+        token_out("token-a"),
+        TokenAmount::from_smallest_units(BigDecimal::from_f64(10000.0 * 1e18).unwrap(), 18),
+    );
+    let wallet = WalletInfo {
+        holdings,
+        total_value: NearValue::from_near(BigDecimal::from(1000)),
+        cash_balance: NearValue::zero(),
+    };
+
+    let portfolio_data = PortfolioData {
+        tokens,
+        predictions,
+        historical_prices,
+        ..Default::default()
+    };
+
+    let report = execute_portfolio_optimization(&wallet, portfolio_data, 0.05)
+        .await
+        .unwrap();
+
+    // 保有 token-a (current=10%) の最適化結果が 10% を大きく超えない
+    // (sell-only 制約により上限が current_weight に固定される)
+    if let Some(w_a) = report.optimal_weights.weights.get(&token_out("token-a")) {
+        let w_a_f64 = w_a.to_f64().unwrap_or(0.0);
+        assert!(
+            w_a_f64 <= 0.10 + 1e-6,
+            "token-a (held=10%) must not exceed current weight under sell-only, got {w_a_f64}"
+        );
+    }
+}
+
 /// Per-asset upper bounds が結果に正しく反映されることを確認する
 /// (個別資産の上限を厳しくすると、その資産の重みが上限以下になる)。
 #[test]

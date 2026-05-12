@@ -228,6 +228,12 @@ const RISK_PARITY_CONVERGENCE_TOLERANCE: f64 = 1e-6;
 /// confidence=0.0 のとき alpha はこの値まで下がる（Sharpe/RP 等配分に近づく）
 pub const PREDICTION_ALPHA_FLOOR: f64 = 0.5;
 
+/// C1 (held sell-only) 制約で「保有」と判定する weight の下限。
+/// BigDecimal → f64 変換に伴う dust（例: 5e-23）を除外し、実質的にゼロな
+/// 保有を non-held として扱う。1e-9 は総資産の10億分の1 (1 NEAR @ 10億 NEAR
+/// 規模) であり、現実的な最小保有を下回らない。
+const HELD_DUST_THRESHOLD: f64 = 1e-9;
+
 /// 内部 f64 weight を外部公開用 BigDecimal に変換する。
 /// 小数点以下10桁で丸める。
 fn weight_from_f64(value: f64) -> BigDecimal {
@@ -860,7 +866,7 @@ pub fn box_maximize_sharpe_bounded(
         let upper: Vec<usize> = (0..n).filter(|&i| state[i] == BoundState::Upper).collect();
 
         if free.is_empty() {
-            // Free 集合が空: Upper に固定された資産のみで正規化
+            // Free 集合が空: Upper 固定の資産 + Lower 固定の資産で重みを構築
             if upper.is_empty() {
                 return default_weights;
             }
@@ -868,7 +874,34 @@ pub fn box_maximize_sharpe_bounded(
             for &i in &upper {
                 weights[i] = effective_uppers[i];
             }
-            normalize_weights(&mut weights);
+            let sum_upper_set: f64 = upper.iter().map(|&i| effective_uppers[i]).sum();
+
+            if sum_upper_set >= 1.0 - 1e-9 {
+                // Upper 集合だけで budget が満たされる（または超過）→ 比例縮小
+                // 各 weight[i] ≤ effective_uppers[i] が維持される
+                let scale = 1.0 / sum_upper_set;
+                for w in weights.iter_mut() {
+                    *w *= scale;
+                }
+                return weights;
+            }
+
+            // sum_upper_set < 1.0: 不足分を Lower 集合のトークンで埋める
+            // (Lower に固定された Sharpe の負トークンも budget を埋めるために必要)
+            // 各 Lower トークンの upper cap に比例して配分し、bounds 違反を防ぐ。
+            let deficit = 1.0 - sum_upper_set;
+            let lower_indices: Vec<usize> =
+                (0..n).filter(|&i| state[i] == BoundState::Lower).collect();
+            let sum_lower_caps: f64 = lower_indices.iter().map(|&i| effective_uppers[i]).sum();
+
+            if sum_lower_caps > 0.0 {
+                let scale = (deficit / sum_lower_caps).min(1.0);
+                for &i in &lower_indices {
+                    weights[i] = effective_uppers[i] * scale;
+                }
+            }
+            // sum_lower_caps == 0 や scale < 1.0 で sum < 1.0 のまま終わる場合あり。
+            // 呼び出し側で必要なら正規化されるが、bounds は破らない。
             return weights;
         }
 
@@ -1930,26 +1963,28 @@ pub async fn execute_portfolio_optimization(
     // ハードフィルタ: 流動性 + 時価総額の最低条件
     let filtered_tokens = hard_filter_tokens(&portfolio_data.tokens);
 
+    let hold_report = || PortfolioExecutionReport {
+        actions: vec![TradingAction::Hold],
+        optimal_weights: PortfolioWeights {
+            weights: BTreeMap::new(),
+            timestamp: Utc::now(),
+            expected_return: 0.0,
+            expected_volatility: 0.0,
+            sharpe_ratio: 0.0,
+        },
+        rebalance_needed: false,
+        expected_metrics: PortfolioMetrics {
+            sortino_ratio: 0.0,
+            max_drawdown: 0.0,
+            calmar_ratio: 0.0,
+            turnover_rate: 0.0,
+        },
+        timestamp: Utc::now(),
+    };
+
     // フィルタを通過するトークンがない場合は Hold で早期リターン
     if filtered_tokens.is_empty() {
-        return Ok(PortfolioExecutionReport {
-            actions: vec![TradingAction::Hold],
-            optimal_weights: PortfolioWeights {
-                weights: BTreeMap::new(),
-                timestamp: Utc::now(),
-                expected_return: 0.0,
-                expected_volatility: 0.0,
-                sharpe_ratio: 0.0,
-            },
-            rebalance_needed: false,
-            expected_metrics: PortfolioMetrics {
-                sortino_ratio: 0.0,
-                max_drawdown: 0.0,
-                calmar_ratio: 0.0,
-                turnover_rate: 0.0,
-            },
-            timestamp: Utc::now(),
-        });
+        return Ok(hold_report());
     }
 
     // historical_prices に存在するトークンのみに絞り込み
@@ -2055,8 +2090,36 @@ pub async fn execute_portfolio_optimization(
         .map(|t| t.liquidity_score.unwrap_or(0.0))
         .collect();
 
+    // 現在のポートフォリオ重みを計算（C1: 保有トークンの sell-only 制約に使用）
+    let current_weights = calculate_current_weights(&selected_tokens, wallet);
+
+    // 保有トークン集合（dust を除外: current_weight > HELD_DUST_THRESHOLD）
+    let held: std::collections::BTreeSet<TokenOutAccount> = selected_tokens
+        .iter()
+        .zip(current_weights.iter())
+        .filter(|&(_, &w)| w > HELD_DUST_THRESHOLD)
+        .map(|(t, _)| t.symbol.clone())
+        .collect();
+
+    // C1: 保有トークンに sell-only 制約を適用したボックス制約を構築
+    // sell_only_epsilon = 0.0 で厳密 sell-only。
+    // infeasible (sum_upper < 1.0 等) のときは fail-safe で Hold を返す。
+    let bounds = if held.is_empty() {
+        BoxBounds::uniform(selected_token_symbols.len(), max_position)
+    } else {
+        match BoxBounds::with_held_sell_only(
+            &selected_token_symbols,
+            &current_weights,
+            &held,
+            max_position,
+            0.0,
+        ) {
+            Ok(b) => b,
+            Err(_) => return Ok(hold_report()),
+        }
+    };
+
     // 統合最適化（案 I: 3 フェーズ）
-    let bounds = BoxBounds::uniform(expected_returns.len(), max_position);
     let optimal_weights = unified_optimize(
         &expected_returns,
         &covariance,
@@ -2066,9 +2129,6 @@ pub async fn execute_portfolio_optimization(
         MIN_POSITION_SIZE,
         &alphas,
     );
-
-    // 現在のポートフォリオ重みを計算
-    let current_weights = calculate_current_weights(&selected_tokens, wallet);
 
     // リバランスが必要かチェック
     let rebalance_needed =
