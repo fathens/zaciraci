@@ -9,6 +9,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::types::*;
 
+pub mod box_bounds;
+pub use box_bounds::{BoxBounds, BoxBoundsError};
+
 // ==================== ポートフォリオ固有の型定義 ====================
 
 /// 共分散対角の合成モード
