@@ -1717,7 +1717,7 @@ fn unified_optimize(
     expected_returns: &[f64],
     covariance_matrix: &Array2<f64>,
     liquidity_scores: &[f64],
-    max_position: f64,
+    bounds: &BoxBounds,
     max_holdings: usize,
     min_position_size: f64,
     alphas: &[f64],
@@ -1730,12 +1730,18 @@ fn unified_optimize(
         return vec![1.0];
     }
 
+    debug_assert_eq!(
+        bounds.len(),
+        n,
+        "bounds.len() must match expected_returns.len()"
+    );
+
     // 流動性調整リターン
     let adj_returns = adjust_returns_for_liquidity(expected_returns, liquidity_scores);
 
     // Phase 1: 全 n トークンで独立に最適化
-    let w_sharpe = box_maximize_sharpe(&adj_returns, covariance_matrix, max_position);
-    let w_rp = box_risk_parity(covariance_matrix, max_position);
+    let w_sharpe = box_maximize_sharpe_bounded(&adj_returns, covariance_matrix, bounds);
+    let w_rp = box_risk_parity_bounded(covariance_matrix, bounds);
 
     // Phase 2: 枝刈り — Sharpe 上位 ∪ RP 上位 の和集合
     let keep = PRUNE_KEEP_PER.min(n);
@@ -1785,12 +1791,11 @@ fn unified_optimize(
     }
 
     // Phase 3: 全列挙による厳密解
-    let bounds = BoxBounds::uniform(n, max_position);
     let mut weights = exhaustive_optimize(
         &active_indices,
         &adj_returns,
         covariance_matrix,
-        &bounds,
+        bounds,
         max_holdings,
         min_position_size,
         alphas,
@@ -2051,11 +2056,12 @@ pub async fn execute_portfolio_optimization(
         .collect();
 
     // 統合最適化（案 I: 3 フェーズ）
+    let bounds = BoxBounds::uniform(expected_returns.len(), max_position);
     let optimal_weights = unified_optimize(
         &expected_returns,
         &covariance,
         &liquidity_scores,
-        max_position,
+        &bounds,
         MAX_HOLDINGS,
         MIN_POSITION_SIZE,
         &alphas,

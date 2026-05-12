@@ -561,7 +561,7 @@ fn test_unified_small_n() {
     let liquidity = vec![0.8, 0.9, 0.7];
 
     let alphas = vec![0.8; expected_returns.len()];
-    let weights = unified_optimize(
+    let weights = unified_optimize_uniform(
         &expected_returns,
         &cov,
         &liquidity,
@@ -585,7 +585,8 @@ fn test_unified_medium_n() {
     let liquidity = vec![0.8; 10];
 
     let alphas = vec![0.8; expected_returns.len()];
-    let weights = unified_optimize(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, &alphas);
+    let weights =
+        unified_optimize_uniform(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, &alphas);
 
     assert_eq!(weights.len(), 10);
     let sum: f64 = weights.iter().sum();
@@ -610,7 +611,8 @@ fn test_unified_large_n() {
 
     let alphas = vec![0.8; expected_returns.len()];
     let start = std::time::Instant::now();
-    let weights = unified_optimize(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, &alphas);
+    let weights =
+        unified_optimize_uniform(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, &alphas);
     let elapsed = start.elapsed();
 
     assert_eq!(weights.len(), 50);
@@ -637,7 +639,7 @@ fn test_unified_all_constraints_satisfied() {
     let min_pos = 0.05;
 
     let alphas = vec![0.8; expected_returns.len()];
-    let weights = unified_optimize(
+    let weights = unified_optimize_uniform(
         &expected_returns,
         &cov,
         &liquidity,
@@ -698,7 +700,8 @@ fn test_pruning_union_preserves_top_tokens() {
     let liquidity = vec![0.8; 20];
 
     let alphas = vec![0.8; expected_returns.len()];
-    let weights = unified_optimize(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, &alphas);
+    let weights =
+        unified_optimize_uniform(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, &alphas);
 
     // 高リターンのトークン群に重みが集中すべき
     let top_weight: f64 = weights[15..20].iter().sum();
@@ -757,7 +760,8 @@ fn test_min_position_reoptimization() {
     let liquidity = vec![0.8; 12];
     let alphas = vec![0.9; expected_returns.len()];
 
-    let weights = unified_optimize(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, &alphas);
+    let weights =
+        unified_optimize_uniform(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, &alphas);
 
     let sum: f64 = weights.iter().sum();
     assert!((sum - 1.0).abs() < 1e-6, "Sum={}", sum);
@@ -779,7 +783,7 @@ fn test_composite_score_consistency() {
 
     // alpha=1.0: Sharpe のみ
     let alphas_sharpe = vec![1.0; expected_returns.len()];
-    let w_sharpe_only = unified_optimize(
+    let w_sharpe_only = unified_optimize_uniform(
         &expected_returns,
         &cov,
         &[0.8; 8],
@@ -791,7 +795,8 @@ fn test_composite_score_consistency() {
 
     // alpha=0.0: RP のみ
     let alphas_rp = vec![0.0; expected_returns.len()];
-    let w_rp_only = unified_optimize(&expected_returns, &cov, &[0.8; 8], 0.4, 6, 0.05, &alphas_rp);
+    let w_rp_only =
+        unified_optimize_uniform(&expected_returns, &cov, &[0.8; 8], 0.4, 6, 0.05, &alphas_rp);
 
     // 両方とも有効な重み
     let sum_s: f64 = w_sharpe_only.iter().sum();
@@ -973,7 +978,8 @@ fn test_unified_optimize_weights_sum_to_one() {
     let liquidity = vec![0.9, 0.7, 0.8, 0.6, 0.85, 0.75];
     let alphas = vec![0.7; expected_returns.len()];
 
-    let weights = unified_optimize(&expected_returns, &cov, &liquidity, 0.4, 4, 0.05, &alphas);
+    let weights =
+        unified_optimize_uniform(&expected_returns, &cov, &liquidity, 0.4, 4, 0.05, &alphas);
 
     let sum: f64 = weights.iter().sum();
     assert!(
