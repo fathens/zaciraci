@@ -228,6 +228,10 @@ pub(crate) fn apply_config(cli: &RunArgs) {
         "PORTFOLIO_COST_ITERATIONS_MAX",
         &cli.cost_iterations_max.to_string(),
     );
+    common::config::store::set(
+        "TRADE_ALL_PREDICTED_ENABLED",
+        &cli.all_predicted.to_string(),
+    );
 }
 
 #[cfg(test)]
@@ -254,6 +258,7 @@ mod tests {
             pred_err_diagonal_mode: PredErrDiagonalMode::Max,
             cost_aware_return: true,
             cost_iterations_max: 3,
+            all_predicted: false,
         }
     }
 
@@ -287,6 +292,7 @@ mod tests {
             pred_err_diagonal_mode: PredErrDiagonalMode::Max,
             cost_aware_return: true,
             cost_iterations_max: 5,
+            all_predicted: true,
         };
 
         apply_config(&cli);
@@ -331,6 +337,10 @@ mod tests {
         assert_eq!(
             common::config::store::get("PORTFOLIO_COST_ITERATIONS_MAX").unwrap(),
             "5"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_ALL_PREDICTED_ENABLED").unwrap(),
+            "true"
         );
     }
 }

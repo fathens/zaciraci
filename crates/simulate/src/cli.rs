@@ -93,6 +93,13 @@ pub struct RunArgs {
     /// Maximum iterations for cost-aware optimization (default 3)
     #[arg(long, default_value = "3")]
     pub cost_iterations_max: u32,
+
+    /// Use all-predicted-token + held-tokens union as the candidate set on
+    /// every cycle instead of locking in the top-N volatility tokens at
+    /// period start. Defaults to false (legacy fixed-set behavior); pass
+    /// `--all-predicted true` to compare against the legacy baseline.
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = false)]
+    pub all_predicted: bool,
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -163,6 +170,7 @@ mod tests {
             pred_err_diagonal_mode: PredErrDiagonalMode::Max,
             cost_aware_return: true,
             cost_iterations_max: 3,
+            all_predicted: false,
         }
     }
 

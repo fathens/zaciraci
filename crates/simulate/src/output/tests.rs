@@ -277,6 +277,7 @@ fn make_cli(start: &str, end: &str) -> RunArgs {
         pred_err_diagonal_mode: PredErrDiagonalMode::Max,
         cost_aware_return: true,
         cost_iterations_max: 3,
+        all_predicted: false,
     }
 }
 
@@ -364,6 +365,7 @@ fn from_state_config_reflects_cli_params() {
         pred_err_diagonal_mode: PredErrDiagonalMode::Max,
         cost_aware_return: true,
         cost_iterations_max: 3,
+        all_predicted: false,
     };
     let state = PortfolioState::new(yocto(200_000_000_000_000_000_000_000_000));
 
