@@ -768,6 +768,31 @@ define_typed_config! {
         default: false
     }
 
+    /// Use all-token candidate selection per cycle instead of locking in the
+    /// top-N volatility tokens at the start of each evaluation period.
+    ///
+    /// When `false` (default), the legacy behavior is preserved: at the start
+    /// of a new evaluation period, `select_top_volatility_tokens` picks the
+    /// top `TRADE_TOP_TOKENS` tokens, and those same tokens are used for the
+    /// entire period.
+    ///
+    /// When `true`, each cycle re-evaluates the full candidate set: every
+    /// token with a fresh prediction is unioned with the currently held
+    /// tokens (so sell-only liquidation paths are always available), and the
+    /// portfolio optimizer chooses among them. The set is *not* truncated to
+    /// `TRADE_TOP_TOKENS` — the optimizer applies its own bounds and cost
+    /// model. Held tokens remain in the candidate set even if their pool
+    /// liquidity has fallen below the entry threshold, so they can still be
+    /// exited.
+    ///
+    /// This is gated behind a feature flag so the legacy fixed-set behavior
+    /// can be A/B compared against the all-token policy via the `simulate`
+    /// crate before it ships as the production default.
+    fn trade_all_predicted_enabled() -> bool {
+        key: "TRADE_ALL_PREDICTED_ENABLED",
+        default: false
+    }
+
     // ── arbitrage ──
 
     /// Whether arbitrage engine is enabled

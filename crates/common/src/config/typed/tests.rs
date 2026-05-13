@@ -83,6 +83,24 @@ fn test_trade_cost_aware_return_enabled_default_false() {
     );
 }
 
+#[test]
+#[serial]
+fn test_trade_all_predicted_enabled_default_false() {
+    let _env = EnvGuard::remove("TRADE_ALL_PREDICTED_ENABLED");
+    crate::config::store::remove("TRADE_ALL_PREDICTED_ENABLED");
+    assert!(
+        !typed().trade_all_predicted_enabled(),
+        "TRADE_ALL_PREDICTED_ENABLED must default to false so production keeps the legacy fixed-set behavior until the simulate A/B sweep validates the all-token policy"
+    );
+}
+
+#[test]
+#[serial]
+fn test_trade_all_predicted_enabled_override_true() {
+    let _guard = ConfigGuard::new("TRADE_ALL_PREDICTED_ENABLED", "true");
+    assert!(typed().trade_all_predicted_enabled());
+}
+
 // ── u32 keys ──
 
 #[test]
@@ -604,7 +622,7 @@ fn test_value_type_result_string() {
 #[test]
 fn test_key_definitions_count() {
     // define_typed_config! に定義されたキーの数と一致すること
-    assert_eq!(KEY_DEFINITIONS.len(), 56);
+    assert_eq!(KEY_DEFINITIONS.len(), 57);
 }
 
 #[test]
