@@ -163,12 +163,16 @@ where
         persistence::pool_info::read_from_db(Some(current_time.naive_utc())).await?;
 
     // Step 4: トークン選定 (フラグでモード分岐)
+    //
+    // `held` は all-token モードの候補生成だけでなく、後段の storage `keep` リスト
+    // でも使われる。`fetch_held_tokens` は両モードで安全に動作する
+    // (`is_new_period=true` で empty、それ以外は DB snapshot → RPC fallback)。
     let all_predicted_enabled = cfg.trade_all_predicted_enabled();
+    let held =
+        fetch_held_tokens(client, wallet, &period_id, is_new_period, &existing_tokens).await?;
+
     let selected_tokens = if all_predicted_enabled {
         // All-token モード: 全予測トークン + 現在保有トークン union を毎サイクル算出
-        let held =
-            fetch_held_tokens(client, wallet, &period_id, is_new_period, &existing_tokens).await?;
-
         let candidates = select_all_predicted_candidates(
             &prediction_service,
             current_time,
@@ -223,7 +227,11 @@ where
         tokens
     } else {
         // Legacy モード (評価期間中): 期間最初に固定したトークンを継続使用
-        existing_tokens.into_iter().map(AccountId::from).collect()
+        existing_tokens
+            .iter()
+            .cloned()
+            .map(AccountId::from)
+            .collect()
     };
 
     debug!(log, "Selected tokens"; "count" => selected_tokens.len(), "is_new_period" => is_new_period);
@@ -233,42 +241,12 @@ where
         return Ok(());
     }
 
-    // Step 4.5: REF Finance のストレージセットアップを確認・実行
-    // トークンを TokenAccount に変換
-    let token_accounts: Vec<TokenAccount> = selected_tokens
-        .iter()
-        .filter_map(|t| t.as_str().parse().ok())
-        .collect();
-
-    debug!(log, "ensuring REF Finance storage setup"; "token_count" => token_accounts.len());
-    // keep: ポートフォリオ運用中のトークンは次サイクルで使う可能性があるため解除しない
-    let keep = blockchain::ref_finance::storage::keep_with_portfolio(&token_accounts);
-    let max_top_up = blockchain::ref_finance::storage::max_top_up_from_config(cfg);
-    blockchain::ref_finance::storage::ensure_ref_storage_setup(
-        client,
-        wallet,
-        &token_accounts,
-        &keep,
-        max_top_up,
-    )
-    .await?;
-    debug!(log, "REF Finance storage setup completed");
-
-    // Step 5: 投資額全額を REF Finance にデポジット (新規期間のみ)
-    if is_new_period {
-        debug!(log, "depositing initial investment to REF Finance"; "amount" => %available_funds);
-        blockchain::ref_finance::balances::deposit_wrap_near_to_ref(
-            client,
-            wallet,
-            NearToken::from_yoctonear(available_funds.to_u128()),
-            cfg,
-        )
-        .await?;
-        debug!(log, "initial investment deposited to REF Finance");
-    }
-
-    // Step 6: ポートフォリオ戦略決定と実行
-    // 新規期間も評価期間中も予測ベースの最適化を実行
+    // Step 5: ポートフォリオ最適化を先に実行する。
+    //
+    // 旧フローでは storage setup → deposit → 最適化 の順だったが、all-token モードで
+    // 候補が ~290 になると `MAX_REGISTER_PER_CYCLE = 100` を超えて storage setup が
+    // 全 cycle で失敗していた。最適化はオンチェーン状態を変更しない (deposit 読みのみ)
+    // ので、先に走らせて action に必要なトークンのみ register することで cap を回避する。
     debug!(log, "executing portfolio optimization";
         "is_new_period" => is_new_period,
         "token_count" => selected_tokens.len()
@@ -297,7 +275,53 @@ where
         "action_count" => actions.len()
     );
 
-    // 実際の取引実行
+    // Step 6: action から storage 登録に必要なトークン集合を導出する。
+    //
+    // - `needed_tokens`: action が触るトークン (register 対象)。WNEAR は
+    //   `keep_with_portfolio` で自動付与されるため明示しなくてよい。
+    // - `keep`: register 後に保持し続けたいトークン全体 (= needed ∪ held)。
+    //   不要な銘柄は planner が unregister 対象に回す。
+    let needed_tokens = extract_token_accounts_from_actions(&actions);
+    let mut keep_input = needed_tokens.clone();
+    for h in &held {
+        let acc = h.inner().clone();
+        if !keep_input.contains(&acc) {
+            keep_input.push(acc);
+        }
+    }
+    let keep = blockchain::ref_finance::storage::keep_with_portfolio(&keep_input);
+
+    debug!(log, "ensuring REF Finance storage setup";
+        "needed_count" => needed_tokens.len(),
+        "keep_count" => keep.len(),
+        "held_count" => held.len()
+    );
+    let max_top_up = blockchain::ref_finance::storage::max_top_up_from_config(cfg);
+    blockchain::ref_finance::storage::ensure_ref_storage_setup(
+        client,
+        wallet,
+        &needed_tokens,
+        &keep,
+        max_top_up,
+    )
+    .await?;
+    debug!(log, "REF Finance storage setup completed");
+
+    // Step 7: 投資額全額を REF Finance にデポジット (新規期間のみ)
+    // WNEAR は `keep` に必ず含まれるため、ここまでで register 済み。
+    if is_new_period {
+        debug!(log, "depositing initial investment to REF Finance"; "amount" => %available_funds);
+        blockchain::ref_finance::balances::deposit_wrap_near_to_ref(
+            client,
+            wallet,
+            NearToken::from_yoctonear(available_funds.to_u128()),
+            cfg,
+        )
+        .await?;
+        debug!(log, "initial investment deposited to REF Finance");
+    }
+
+    // Step 8: 実際の取引実行
     let executed_actions = execute_trading_actions(
         client,
         wallet,
@@ -309,15 +333,11 @@ where
     .await?;
     info!(log, "trades executed"; "success" => executed_actions.success_count, "failed" => executed_actions.failed_count);
 
-    // ポートフォリオ保有量を記録
-    if let Err(e) = super::snapshot::record_portfolio_holdings(
-        client,
-        wallet,
-        &period_id,
-        &token_accounts,
-        current_time,
-    )
-    .await
+    // ポートフォリオ保有量を記録。keep には needed ∪ held ∪ WNEAR が含まれるため
+    // 現サイクル末時点の保有可能集合を網羅する。
+    if let Err(e) =
+        super::snapshot::record_portfolio_holdings(client, wallet, &period_id, &keep, current_time)
+            .await
     {
         warn!(log, "failed to record portfolio holdings"; "error" => ?e);
     }
@@ -466,6 +486,46 @@ pub(crate) async fn select_all_predicted_candidates(
         &min_liquidity,
         held,
     )
+}
+
+/// `TradingAction` リストから storage 登録が必要な `TokenAccount` 集合を抽出する。
+///
+/// `start()` の post-opt フローで使用: 最適化が出力した action から実際に
+/// 触るトークンだけを取り出して `ensure_ref_storage_setup` の
+/// `needed_tokens` に渡すことで、`MAX_REGISTER_PER_CYCLE = 100` の cap を
+/// 候補集合のサイズ (all-token モードで ~290) と切り離す。
+///
+/// WNEAR は `keep_with_portfolio` 側で自動付与されるため、本関数では含めない。
+/// `Hold` variant は何も追加しない。`Rebalance::target_weights` のキー、
+/// `Sell::{token,target}`、`Switch::{from,to}`、`AddPosition::token`、
+/// `ReducePosition::token` をすべて union 化し、`BTreeSet` で dedup する。
+fn extract_token_accounts_from_actions(actions: &[TradingAction]) -> Vec<TokenAccount> {
+    let mut set: BTreeSet<TokenAccount> = BTreeSet::new();
+    for action in actions {
+        match action {
+            TradingAction::Hold => {}
+            TradingAction::Sell { token, target } => {
+                set.insert(token.inner().clone());
+                set.insert(target.inner().clone());
+            }
+            TradingAction::Switch { from, to } => {
+                set.insert(from.inner().clone());
+                set.insert(to.inner().clone());
+            }
+            TradingAction::Rebalance { target_weights } => {
+                for token in target_weights.keys() {
+                    set.insert(token.inner().clone());
+                }
+            }
+            TradingAction::AddPosition { token, .. } => {
+                set.insert(token.inner().clone());
+            }
+            TradingAction::ReducePosition { token, .. } => {
+                set.insert(token.inner().clone());
+            }
+        }
+    }
+    set.into_iter().collect()
 }
 
 /// `start()` 用の保有トークン取得ヘルパー (all-token モードで使用)。
