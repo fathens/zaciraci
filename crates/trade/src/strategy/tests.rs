@@ -1,10 +1,10 @@
 use super::*;
 use bigdecimal::BigDecimal;
 use chrono::NaiveDate;
-use common::types::{ExchangeRate, NearValue, TokenAccount, TokenInAccount};
+use common::types::{ExchangeRate, NearValue, TokenAccount, TokenInAccount, TokenOutAccount};
 use near_sdk::AccountId;
 use near_sdk::json_types::U128;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -760,4 +760,196 @@ fn test_select_error_when_all_filtered_out() {
         result.is_err(),
         "Should return error when no volatility tokens match buyable tokens"
     );
+}
+
+// =============================================================================
+// hard_filter_tokens_keeping_held テスト (all-token モード用)
+// =============================================================================
+
+fn make_held(tokens: &[&str]) -> BTreeSet<TokenOutAccount> {
+    tokens
+        .iter()
+        .map(|name| TokenOutAccount::from(make_token(name)))
+        .collect()
+}
+
+/// held が空のとき: `apply_liquidity_filter_and_select(limit=None)` と等価な結果になる
+#[test]
+fn test_hard_filter_keeping_held_empty_held_matches_legacy() {
+    let wnear = wnear();
+    let wnear_in: TokenInAccount = wnear.clone().into();
+    let min_liquidity = NearValue::from_near(BigDecimal::from(10));
+
+    let pool_good = make_pool(
+        1,
+        vec!["wrap.near", "good.near"],
+        vec![500 * 10u128.pow(24), 500_000_000],
+    );
+    let pool_low = make_pool(
+        2,
+        vec!["wrap.near", "lowliq.near"],
+        vec![10u128.pow(23), 50_000],
+    );
+    let pools = Arc::new(dex::PoolInfoList::new(vec![pool_good, pool_low]));
+
+    let mut rates = HashMap::new();
+    rates.insert(
+        make_token("good.near"),
+        ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6),
+    );
+    rates.insert(
+        make_token("lowliq.near"),
+        ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6),
+    );
+
+    let tokens = vec![make_account_id("good.near"), make_account_id("lowliq.near")];
+    let held = BTreeSet::new();
+
+    let result = hard_filter_tokens_keeping_held(
+        tokens,
+        &pools,
+        &rates,
+        &wnear,
+        &wnear_in,
+        &min_liquidity,
+        &held,
+    )
+    .unwrap();
+
+    assert_eq!(
+        result.len(),
+        1,
+        "low-liquidity token should be filtered out"
+    );
+    assert_eq!(result[0], make_account_id("good.near"));
+}
+
+/// held に含まれるトークンは流動性不足でも残す (sell-only 経路確保)
+#[test]
+fn test_hard_filter_keeping_held_low_liquidity_kept_when_held() {
+    let wnear = wnear();
+    let wnear_in: TokenInAccount = wnear.clone().into();
+    let min_liquidity = NearValue::from_near(BigDecimal::from(10));
+
+    let pool_good = make_pool(
+        1,
+        vec!["wrap.near", "good.near"],
+        vec![500 * 10u128.pow(24), 500_000_000],
+    );
+    let pool_low = make_pool(
+        2,
+        vec!["wrap.near", "lowliq.near"],
+        vec![10u128.pow(23), 50_000],
+    );
+    let pools = Arc::new(dex::PoolInfoList::new(vec![pool_good, pool_low]));
+
+    let mut rates = HashMap::new();
+    rates.insert(
+        make_token("good.near"),
+        ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6),
+    );
+    rates.insert(
+        make_token("lowliq.near"),
+        ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6),
+    );
+
+    let tokens = vec![make_account_id("good.near"), make_account_id("lowliq.near")];
+    // lowliq.near を保有中と想定
+    let held = make_held(&["lowliq.near"]);
+
+    let result = hard_filter_tokens_keeping_held(
+        tokens,
+        &pools,
+        &rates,
+        &wnear,
+        &wnear_in,
+        &min_liquidity,
+        &held,
+    )
+    .unwrap();
+
+    assert_eq!(
+        result.len(),
+        2,
+        "held token should be kept despite low liquidity"
+    );
+    assert!(result.contains(&make_account_id("good.near")));
+    assert!(result.contains(&make_account_id("lowliq.near")));
+}
+
+/// held に含まれるが入力 tokens にもプールにも存在しないトークンは候補に出てこない
+/// (上流 `select_all_predicted_candidates` が union するため、ハードフィルタ単体ではフィルタしない)
+#[test]
+fn test_hard_filter_keeping_held_only_filters_input_tokens() {
+    let wnear = wnear();
+    let wnear_in: TokenInAccount = wnear.clone().into();
+    let min_liquidity = NearValue::from_near(BigDecimal::from(10));
+
+    let pool = make_pool(
+        1,
+        vec!["wrap.near", "good.near"],
+        vec![500 * 10u128.pow(24), 500_000_000],
+    );
+    let pools = Arc::new(dex::PoolInfoList::new(vec![pool]));
+
+    let mut rates = HashMap::new();
+    rates.insert(
+        make_token("good.near"),
+        ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6),
+    );
+
+    let tokens = vec![make_account_id("good.near")];
+    // held に "absent.near" が入っているが入力 tokens には含まれない
+    let held = make_held(&["absent.near"]);
+
+    let result = hard_filter_tokens_keeping_held(
+        tokens,
+        &pools,
+        &rates,
+        &wnear,
+        &wnear_in,
+        &min_liquidity,
+        &held,
+    )
+    .unwrap();
+
+    assert_eq!(result.len(), 1, "absent held token is not in input tokens");
+    assert_eq!(result[0], make_account_id("good.near"));
+}
+
+/// 入力 tokens が全て filter で落ち、かつ held も空ならエラー
+#[test]
+fn test_hard_filter_keeping_held_empty_result_is_error() {
+    let wnear = wnear();
+    let wnear_in: TokenInAccount = wnear.clone().into();
+    let min_liquidity = NearValue::from_near(BigDecimal::from(10));
+
+    // プールに含まれないトークンを入力
+    let pool = make_pool(
+        1,
+        vec!["wrap.near", "other.near"],
+        vec![500 * 10u128.pow(24), 500_000_000],
+    );
+    let pools = Arc::new(dex::PoolInfoList::new(vec![pool]));
+
+    let mut rates = HashMap::new();
+    rates.insert(
+        make_token("other.near"),
+        ExchangeRate::from_raw_rate(BigDecimal::from(5_000_000), 6),
+    );
+
+    let tokens = vec![make_account_id("unrelated.near")];
+    let held = BTreeSet::new();
+
+    let result = hard_filter_tokens_keeping_held(
+        tokens,
+        &pools,
+        &rates,
+        &wnear,
+        &wnear_in,
+        &min_liquidity,
+        &held,
+    );
+
+    assert!(result.is_err());
 }

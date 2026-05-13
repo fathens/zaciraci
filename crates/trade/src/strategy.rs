@@ -41,7 +41,7 @@ use futures::stream::{self, StreamExt};
 use logging::*;
 use near_sdk::{AccountId, NearToken};
 use persistence::evaluation_period::EvaluationPeriod;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Display;
 use std::sync::Arc;
 
@@ -162,9 +162,45 @@ where
     let pool_snapshot =
         persistence::pool_info::read_from_db(Some(current_time.naive_utc())).await?;
 
-    // Step 4: トークン選定 (評価期間に応じて処理を分岐)
-    let selected_tokens = if is_new_period {
-        // 新規期間: 新しくトークンを選定
+    // Step 4: トークン選定 (フラグでモード分岐)
+    let all_predicted_enabled = cfg.trade_all_predicted_enabled();
+    let selected_tokens = if all_predicted_enabled {
+        // All-token モード: 全予測トークン + 現在保有トークン union を毎サイクル算出
+        let held =
+            fetch_held_tokens(client, wallet, &period_id, is_new_period, &existing_tokens).await?;
+
+        let candidates = select_all_predicted_candidates(
+            &prediction_service,
+            current_time,
+            cfg,
+            &pool_snapshot,
+            &held,
+        )
+        .await?;
+
+        // 毎サイクル DB に書き込む。`manage_evaluation_period` の
+        // 「selected_tokens empty + transactions exist → 破損疑い」検知ロジックが
+        // 引き続き機能するよう、空でない候補集合を都度 selected_tokens 列に反映する。
+        if !candidates.is_empty() {
+            let token_strs: Vec<String> = candidates.iter().map(|t| t.to_string()).collect();
+            match EvaluationPeriod::update_selected_tokens_async(period_id.clone(), token_strs)
+                .await
+            {
+                Ok(_) => {
+                    debug!(log, "updated selected tokens (all-token mode)";
+                        "count" => candidates.len(),
+                        "held_count" => held.len());
+                }
+                Err(e) => {
+                    error!(log, "failed to update selected tokens (all-token mode)";
+                        "error" => ?e);
+                }
+            }
+        }
+
+        candidates
+    } else if is_new_period {
+        // Legacy モード (新規期間): 期間最初にトップ N ボラティリティトークンを固定
         let tokens =
             select_top_volatility_tokens(&prediction_service, current_time, cfg, &pool_snapshot)
                 .await?;
@@ -186,7 +222,7 @@ where
 
         tokens
     } else {
-        // 評価期間中: 既存のトークンを使用
+        // Legacy モード (評価期間中): 期間最初に固定したトークンを継続使用
         existing_tokens.into_iter().map(AccountId::from).collect()
     };
 
@@ -352,7 +388,11 @@ where
 ///
 /// `pools` は呼び出し側で取得した pool_info snapshot を共有する。
 /// 同一サイクル内で `pool_info` を二重に読まない (TOCTOU 解消) ため。
-pub async fn select_top_volatility_tokens(
+///
+/// `TRADE_ALL_PREDICTED_ENABLED=true` の場合は呼ばれない (代わりに
+/// `select_all_predicted_candidates` を使用)。crate 外からの呼び出しは
+/// 想定していないため `pub(crate)`。
+pub(crate) async fn select_top_volatility_tokens(
     prediction_service: &PredictionService,
     end_date: chrono::DateTime<chrono::Utc>,
     cfg: &impl ConfigAccess,
@@ -360,6 +400,136 @@ pub async fn select_top_volatility_tokens(
 ) -> Result<Vec<AccountId>> {
     let limit = cfg.trade_top_tokens() as usize;
     select_volatility_tokens_inner(prediction_service, end_date, cfg, Some(limit), pools).await
+}
+
+/// 全予測トークン + 現在保有トークンを union した候補集合を返す (all-token モード用)。
+///
+/// `select_top_volatility_tokens` との違い:
+/// - 上位 N トークンへの切り詰めなし (limit=None と同等)
+/// - 流動性 / グラフ到達性フィルタを通らない保有トークンも候補に保持 (sell-only)
+///
+/// 戻り値の `Vec<AccountId>` は最適化器に渡される候補集合。
+/// `execute_portfolio_optimization` 内で `current_weights > HELD_DUST_THRESHOLD`
+/// な銘柄に sell-only 制約が適用される (C1)。
+pub(crate) async fn select_all_predicted_candidates(
+    prediction_service: &PredictionService,
+    end_date: chrono::DateTime<chrono::Utc>,
+    cfg: &impl ConfigAccess,
+    pools: &Arc<dex::PoolInfoList>,
+    held: &BTreeSet<TokenOutAccount>,
+) -> Result<Vec<AccountId>> {
+    let log = DEFAULT.new(o!("function" => "select_all_predicted_candidates"));
+
+    let price_history_days = i64::from(cfg.trade_price_history_days());
+    let start_date = end_date - chrono::TimeDelta::days(price_history_days);
+    let quote_token: TokenInAccount = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
+
+    // 1) ボラティリティが計算可能な全トークン (まだフィルタ前)
+    let top_tokens = prediction_service
+        .get_tokens_by_volatility(start_date, end_date, &quote_token)
+        .await?;
+
+    let mut tokens: Vec<AccountId> = top_tokens
+        .into_iter()
+        .map(|token| token.token.into())
+        .collect();
+
+    // 2) 保有トークンを候補に union (volatility に出てこない銘柄でも sell 経路を確保)
+    for h in held {
+        let acc: AccountId = h.as_account_id().clone();
+        if !tokens.contains(&acc) {
+            tokens.push(acc);
+        }
+    }
+
+    if tokens.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No candidate tokens (volatility data empty and no holdings)"
+        ));
+    }
+
+    debug!(log, "candidate tokens before hard filter";
+        "count" => tokens.len(), "held" => held.len());
+
+    // 3) hard filter (流動性 + グラフ到達性)。保有は無条件保持。
+    let min_liquidity = NearValue::from_near(BigDecimal::from(cfg.trade_min_pool_liquidity()));
+    let wnear = blockchain::ref_finance::token_account::WNEAR_TOKEN.clone();
+    let wnear_in: TokenInAccount = wnear.to_in();
+    let latest_rates = persistence::token_rate::get_all_latest_rates(&wnear).await?;
+
+    hard_filter_tokens_keeping_held(
+        tokens,
+        pools,
+        &latest_rates,
+        &wnear,
+        &wnear_in,
+        &min_liquidity,
+        held,
+    )
+}
+
+/// `start()` 用の保有トークン取得ヘルパー (all-token モードで使用)。
+///
+/// - 新規期間 (`is_new_period=true`): 直前に清算済みのため空集合を返す。
+/// - 評価期間中:
+///   1. `record_portfolio_holdings` が書き込んだ DB snapshot を優先 (最新の正)。
+///   2. snapshot がなければ前サイクルの `existing_tokens` を補助情報として RPC fallback。
+///   3. RPC でも取れなければ空集合 (ログ警告のみ)。
+///
+/// 戻り値の `BTreeSet<TokenOutAccount>` は wnear / ゼロ残高を除外済み。
+async fn fetch_held_tokens<C, W>(
+    client: &C,
+    wallet: &W,
+    period_id: &str,
+    is_new_period: bool,
+    fallback_tokens: &[TokenAccount],
+) -> Result<BTreeSet<TokenOutAccount>>
+where
+    C: AccountInfo + SendTx + ViewContract + GasInfo,
+    <C as SendTx>::Output: Display + blockchain::jsonrpc::SentTx,
+    W: Wallet,
+{
+    let log = DEFAULT.new(o!("function" => "fetch_held_tokens"));
+
+    if is_new_period {
+        debug!(log, "new period, held is empty");
+        return Ok(BTreeSet::new());
+    }
+
+    let wnear = &*blockchain::ref_finance::token_account::WNEAR_TOKEN;
+
+    let balances = match super::snapshot::get_holdings_from_db(period_id).await? {
+        Some(h) => {
+            debug!(log, "held tokens from DB snapshot");
+            h
+        }
+        None => {
+            if fallback_tokens.is_empty() {
+                warn!(log, "no DB snapshot and no fallback tokens, held treated as empty";
+                    "period_id" => period_id);
+                return Ok(BTreeSet::new());
+            }
+            let mut token_accounts: Vec<TokenAccount> = fallback_tokens.to_vec();
+            super::snapshot::ensure_wnear_included(&mut token_accounts);
+            match swap::get_current_portfolio_balances(client, wallet, &token_accounts).await {
+                Ok(b) => {
+                    debug!(log, "held tokens from RPC fallback");
+                    b
+                }
+                Err(e) => {
+                    warn!(log, "RPC fallback for held tokens failed, treating as empty";
+                        "error" => ?e);
+                    return Ok(BTreeSet::new());
+                }
+            }
+        }
+    };
+
+    Ok(balances
+        .into_iter()
+        .filter(|(token, amount)| token != wnear && !amount.is_zero())
+        .map(|(token, _)| TokenOutAccount::from(token))
+        .collect())
 }
 
 /// 全対象トークンの予測用リストを生成（流動性フィルタ適用、上限なし）
@@ -1125,6 +1295,57 @@ fn estimate_pool_liquidity_in_near(
     }
 
     min_side
+}
+
+/// 全予測トークン + 保有 union 用のハードフィルタ (all-token モード)。
+///
+/// `apply_liquidity_filter_and_select` との差分:
+/// - `limit` パラメータなし (all-token モードは切り詰めない)
+/// - `held` に含まれるトークンは流動性 / 到達性に関係なく**無条件保持**
+///   (sell-only の出口経路を確保するため)
+///
+/// フィルタ後にトークンが残らなければエラー (呼び出し側で `Hold` フォールバック想定)。
+fn hard_filter_tokens_keeping_held(
+    tokens: Vec<AccountId>,
+    pools: &Arc<dex::PoolInfoList>,
+    latest_rates: &HashMap<TokenAccount, ExchangeRate>,
+    wnear: &TokenAccount,
+    wnear_in: &TokenInAccount,
+    min_liquidity: &NearValue,
+    held: &BTreeSet<TokenOutAccount>,
+) -> Result<Vec<AccountId>> {
+    let log = DEFAULT.new(o!("function" => "hard_filter_tokens_keeping_held"));
+
+    let filtered_pools = filter_pools_by_liquidity(pools, wnear, min_liquidity, latest_rates);
+    let graph = blockchain::ref_finance::path::graph::TokenGraph::new(filtered_pools);
+    let buyable_tokens: HashSet<AccountId> = match graph.update_graph(wnear_in) {
+        Ok(goals) => goals.iter().map(|t| t.as_account_id().clone()).collect(),
+        Err(e) => return Err(anyhow::anyhow!("Failed to build token graph: {}", e)),
+    };
+
+    let held_ids: HashSet<AccountId> = held.iter().map(|t| t.as_account_id().clone()).collect();
+
+    let original_count = tokens.len();
+    let result: Vec<AccountId> = tokens
+        .into_iter()
+        .filter(|t| buyable_tokens.contains(t) || held_ids.contains(t))
+        .collect();
+
+    if result.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No candidate tokens after hard filter (filtered {} tokens, no held)",
+            original_count
+        ));
+    }
+
+    debug!(log, "tokens after hard filter (keeping held)";
+        "original" => original_count,
+        "buyable" => buyable_tokens.len(),
+        "held" => held.len(),
+        "result" => result.len(),
+    );
+
+    Ok(result)
 }
 
 /// ボラティリティトークンに対して流動性フィルタとグラフ到達性フィルタを適用する
