@@ -1,3 +1,4 @@
+use super::shrinkage;
 use crate::Result;
 use crate::types::{NearValue, TokenOutAccount, TokenPrice};
 use bigdecimal::{BigDecimal, FromPrimitive, RoundingMode, ToPrimitive};
@@ -2057,7 +2058,11 @@ pub async fn execute_portfolio_optimization(
     // 期待リターンを計算
     let raw_expected_returns = calculate_expected_returns(&selected_tokens, &selected_predictions);
 
-    // 取引コスト控除（cost_deductions が空のときは raw を素通し）
+    // 予測不確実性 shrinkage を先に適用してから取引コストを控除する。
+    // 順序: shrinkage → cost
+    // 理由: cost を先に引くと小さな μ ほど soft-threshold が ER をゼロ化しやすく
+    // なり、不確実性ペナルティの効きが過剰になる。raw のスケールで shrinkage
+    // を適用し、その後コストを線形に引くことで両者を独立に評価できる。
     //
     // Consumer-side re-guard: `cost_deductions` は pub フィールドのため struct
     // literal 経由で `CostDeduction::new` の不変条件 (`is_finite() && >= 0.0`)
@@ -2065,12 +2070,23 @@ pub async fn execute_portfolio_optimization(
     // `r - NaN = NaN` cascade で box_maximize_sharpe Cholesky 後段の NaN 比較
     // ガード（`sum_p.abs() < 1e-15` 等）が無効化される経路を遮断する。
     // follow-up: BTreeMap<_, CostDeduction> へ型 lift して入口で塞ぐ。
+    let shrunk_expected_returns: Vec<f64> = match &portfolio_data.pred_uncertainty {
+        Some(pu) if pu.lambda > 0.0 => selected_tokens
+            .iter()
+            .zip(raw_expected_returns.iter())
+            .map(|(t, &r)| {
+                let msre = pu.msre.get(&t.symbol).copied();
+                shrinkage::apply_soft_threshold(r, msre, pu.lambda)
+            })
+            .collect(),
+        _ => raw_expected_returns,
+    };
     let expected_returns: Vec<f64> = if portfolio_data.cost_deductions.is_empty() {
-        raw_expected_returns
+        shrunk_expected_returns
     } else {
         selected_tokens
             .iter()
-            .zip(raw_expected_returns.iter())
+            .zip(shrunk_expected_returns.iter())
             .map(|(t, &r)| {
                 let deduction = portfolio_data
                     .cost_deductions

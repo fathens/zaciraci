@@ -1129,8 +1129,14 @@ where
         }
     }
 
-    // 予測誤差分散ベース対角合成（フラグ on のとき）
-    let pred_err_diagonal = if cfg.portfolio_pred_err_diagonal_enabled() {
+    // 予測誤差分散ベース対角合成（フラグ on のとき）と shrinkage 入力（λ > 0 のとき）。
+    // 同じ MSRE データ (`calculate_per_token_pred_err_variance` の戻り値) を
+    // 両方の経路で再利用するため、1 回だけ DB アクセスする。どちらか一方でも
+    // 有効なら variances を取得し、それぞれの構造体に詰める。
+    let shrinkage_lambda = cfg.trade_prediction_shrinkage_lambda();
+    let pred_err_diagonal_enabled = cfg.portfolio_pred_err_diagonal_enabled();
+    let need_variances = pred_err_diagonal_enabled || shrinkage_lambda > 0.0;
+    let variances_opt: Option<BTreeMap<TokenOutAccount, f64>> = if need_variances {
         let token_out_for_var: Vec<TokenOutAccount> =
             token_data.iter().map(|t| t.symbol.clone()).collect();
         match super::prediction_accuracy::calculate_per_token_pred_err_variance(
@@ -1139,21 +1145,38 @@ where
         )
         .await
         {
-            Ok(variances) => {
-                // typed config returns the enum directly — typo'd values
-                // would have panicked at startup in `ConfigResolve`.
-                let mode = cfg.portfolio_pred_err_diagonal_mode();
-                Some(common::algorithm::portfolio::PredErrDiagonal {
-                    k: cfg.portfolio_pred_err_diagonal_k(),
-                    variances,
-                    mode,
-                })
-            }
+            Ok(v) => Some(v),
             Err(e) => {
                 warn!(log, "pred_err_variance calculation failed, holding"; "error" => %e);
                 return Ok((vec![TradingAction::Hold], BTreeMap::new()));
             }
         }
+    } else {
+        None
+    };
+
+    let pred_err_diagonal = if pred_err_diagonal_enabled {
+        variances_opt.as_ref().map(|variances| {
+            // typed config returns the enum directly — typo'd values
+            // would have panicked at startup in `ConfigResolve`.
+            let mode = cfg.portfolio_pred_err_diagonal_mode();
+            common::algorithm::portfolio::PredErrDiagonal {
+                k: cfg.portfolio_pred_err_diagonal_k(),
+                variances: variances.clone(),
+                mode,
+            }
+        })
+    } else {
+        None
+    };
+
+    let pred_uncertainty = if shrinkage_lambda > 0.0 {
+        variances_opt
+            .as_ref()
+            .map(|variances| common::algorithm::portfolio::PredUncertainty {
+                msre: variances.clone(),
+                lambda: shrinkage_lambda,
+            })
     } else {
         None
     };
@@ -1165,7 +1188,7 @@ where
         prediction_confidences: filtered_confidences,
         pred_err_diagonal,
         cost_deductions: BTreeMap::new(),
-        pred_uncertainty: None,
+        pred_uncertainty,
     };
 
     funnel.optimizer_input = portfolio_data.tokens.len();
