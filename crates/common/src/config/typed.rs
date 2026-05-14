@@ -793,6 +793,29 @@ define_typed_config! {
         default: false
     }
 
+    /// Cap on the number of candidates handed to the portfolio optimizer
+    /// after the confidence filter, when all-token mode is enabled.
+    ///
+    /// When `0` (default), no Top-N pruning is applied — every candidate
+    /// surviving confidence + liquidity filters reaches the optimizer.
+    /// When `> 0`, a composite score
+    /// `confidence × liquidity_score × max(0, expected_return)` is computed
+    /// per token and only the top N are kept. Currently held tokens are
+    /// always included regardless of rank, so existing positions can still
+    /// be sold even if their score is low.
+    ///
+    /// The cap is intended to reduce the optimizer's search space in
+    /// all-token mode (~290 candidates) where noise from low-quality
+    /// predictions appears to dominate. It is gated as a feature flag
+    /// so its effect can be A/B compared via `simulate` before shipping
+    /// as a production default.
+    ///
+    /// Has no effect when `TRADE_ALL_PREDICTED_ENABLED` is `false`.
+    fn trade_top_n_after_prediction() -> u32 {
+        key: "TRADE_TOP_N_AFTER_PREDICTION",
+        default: 0
+    }
+
     // ── arbitrage ──
 
     /// Whether arbitrage engine is enabled
