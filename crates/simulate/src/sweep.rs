@@ -31,6 +31,8 @@ pub struct SweepConfig {
     pub cost_iterations_max: Vec<u32>,
     #[serde(default = "default_all_predicted")]
     pub all_predicted: Vec<bool>,
+    #[serde(default = "default_top_n_after_prediction")]
+    pub top_n_after_prediction: Vec<u32>,
 }
 
 fn default_top_tokens() -> Vec<usize> {
@@ -66,6 +68,9 @@ fn default_cost_iterations_max() -> Vec<u32> {
 fn default_all_predicted() -> Vec<bool> {
     vec![false]
 }
+fn default_top_n_after_prediction() -> Vec<u32> {
+    vec![0]
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SweepResult {
@@ -96,6 +101,7 @@ pub struct SweepParameters {
     pub cost_aware_return: bool,
     pub cost_iterations_max: u32,
     pub all_predicted: bool,
+    pub top_n_after_prediction: u32,
 }
 
 pub async fn run_sweep(base_cli: &RunArgs, sweep_config_path: &Path) -> Result<()> {
@@ -124,6 +130,7 @@ pub async fn run_sweep(base_cli: &RunArgs, sweep_config_path: &Path) -> Result<(
         cli.cost_aware_return = params.cost_aware_return;
         cli.cost_iterations_max = params.cost_iterations_max;
         cli.all_predicted = params.all_predicted;
+        cli.top_n_after_prediction = params.top_n_after_prediction;
 
         match run_simulation(&cli).await {
             Ok(result) => {
@@ -186,7 +193,8 @@ fn generate_combinations(config: &SweepConfig) -> Vec<SweepParameters> {
         &config.pred_err_diagonal_mode,
         &config.cost_aware_return,
         &config.cost_iterations_max,
-        &config.all_predicted
+        &config.all_predicted,
+        &config.top_n_after_prediction
     )
     .map(
         |(
@@ -201,6 +209,7 @@ fn generate_combinations(config: &SweepConfig) -> Vec<SweepParameters> {
             &cost_aware_return,
             &cost_iterations_max,
             &all_predicted,
+            &top_n_after_prediction,
         )| SweepParameters {
             top_tokens,
             price_history_days,
@@ -213,6 +222,7 @@ fn generate_combinations(config: &SweepConfig) -> Vec<SweepParameters> {
             cost_aware_return,
             cost_iterations_max,
             all_predicted,
+            top_n_after_prediction,
         },
     )
     .collect()
@@ -220,28 +230,30 @@ fn generate_combinations(config: &SweepConfig) -> Vec<SweepParameters> {
 
 fn print_summary_table(result: &SweepResult) {
     println!(
-        "\n{:<8} {:<8} {:<10} {:<10} {:<8} {:>10} {:>10} {:>10} {:>12} {:>10}",
+        "\n{:<8} {:<8} {:<10} {:<10} {:<8} {:<6} {:>10} {:>10} {:>10} {:>12} {:>10}",
         "TopTok",
         "HistDays",
         "RebThresh",
         "RebIntv",
         "AllPred",
+        "TopN",
         "Return%",
         "Sharpe",
         "MaxDD%",
         "FinalBal",
         "RealPnL"
     );
-    println!("{}", "-".repeat(107));
+    println!("{}", "-".repeat(114));
 
     for entry in &result.results {
         println!(
-            "{:<8} {:<8} {:<10.2} {:<10} {:<8} {:>10.2} {:>10.3} {:>10.2} {:>12.4} {:>10.4}",
+            "{:<8} {:<8} {:<10.2} {:<10} {:<8} {:<6} {:>10.2} {:>10.3} {:>10.2} {:>12.4} {:>10.4}",
             entry.parameters.top_tokens,
             entry.parameters.price_history_days,
             entry.parameters.rebalance_threshold,
             entry.parameters.rebalance_interval_days,
             entry.parameters.all_predicted,
+            entry.parameters.top_n_after_prediction,
             entry.total_return * 100.0,
             entry.sharpe_ratio,
             entry.max_drawdown * 100.0,
