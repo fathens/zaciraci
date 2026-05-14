@@ -26,6 +26,7 @@ use crate::Result;
 use crate::candidate_telemetry;
 use crate::predict::PredictionService;
 use crate::swap;
+use crate::top_n_pruner;
 use bigdecimal::{BigDecimal, ToPrimitive, Zero};
 use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, ViewContract};
 use blockchain::wallet::Wallet;
@@ -264,6 +265,7 @@ where
         cfg,
         pools: &pool_snapshot,
         all_predicted_pre_filter_count,
+        held_tokens: &held,
     };
     let (actions, expected_returns) =
         match execute_portfolio_strategy(&params, client, wallet).await {
@@ -684,6 +686,9 @@ pub(crate) struct PortfolioStrategyParams<'a, Cfg: ConfigAccess> {
     /// 適用前に持っていた候補数 (predicted ∪ held)。`Some` のときだけ
     /// telemetry funnel をログ出力する (legacy mode は `None` で静音)。
     pub(crate) all_predicted_pre_filter_count: Option<usize>,
+    /// 現在保有しているトークン集合。Top-N pruning で sell 経路を確保するための
+    /// 「無条件で残す」セット (bypass) として使われる。legacy mode では空集合でよい。
+    pub(crate) held_tokens: &'a BTreeSet<TokenOutAccount>,
 }
 
 /// ポートフォリオ戦略の実行
@@ -1088,6 +1093,41 @@ where
         .iter()
         .filter_map(|t| t.liquidity_score.map(|s| (t.symbol.clone(), s)))
         .collect();
+
+    // Top-N pruning: all-token モード時のみ、composite score
+    // (confidence × liquidity × max(0, ER)) で上位 N + held を残す。
+    // 0 のときは無効化 (旧挙動と等価)。
+    let top_n = cfg.trade_top_n_after_prediction() as usize;
+    let mut filtered_confidences = filtered_confidences;
+    if top_n > 0 && params.all_predicted_pre_filter_count.is_some() {
+        let scores: BTreeMap<TokenOutAccount, f64> = token_data
+            .iter()
+            .filter_map(|t| {
+                let er = expected_returns.get(&t.symbol).copied()?;
+                let conf = telemetry_confidences.get(&t.symbol).copied()?;
+                let liq = t.liquidity_score?;
+                Some((
+                    t.symbol.clone(),
+                    top_n_pruner::composite_score(er, conf, liq),
+                ))
+            })
+            .collect();
+        let kept = top_n_pruner::prune_top_n(&scores, params.held_tokens, top_n);
+        let before = token_data.len();
+        token_data.retain(|t| kept.contains(&t.symbol));
+        predictions.retain(|k, _| kept.contains(k));
+        historical_prices.retain(|k, _| kept.contains(k));
+        filtered_confidences.retain(|k, _| kept.contains(k));
+        debug!(log, "Top-N pruning applied";
+            "top_n" => top_n,
+            "before" => before,
+            "after" => token_data.len(),
+            "held_count" => params.held_tokens.len());
+        if token_data.is_empty() {
+            warn!(log, "Top-N pruning removed all candidates, holding");
+            return Ok((vec![TradingAction::Hold], BTreeMap::new()));
+        }
+    }
 
     // 予測誤差分散ベース対角合成（フラグ on のとき）
     let pred_err_diagonal = if cfg.portfolio_pred_err_diagonal_enabled() {
