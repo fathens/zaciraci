@@ -172,9 +172,9 @@ where
     let held =
         fetch_held_tokens(client, wallet, &period_id, is_new_period, &existing_tokens).await?;
 
-    let selected_tokens = if all_predicted_enabled {
+    let (selected_tokens, all_predicted_pre_filter_count) = if all_predicted_enabled {
         // All-token モード: 全予測トークン + 現在保有トークン union を毎サイクル算出
-        let candidates = select_all_predicted_candidates(
+        let (candidates, pre_filter_count) = select_all_predicted_candidates(
             &prediction_service,
             current_time,
             cfg,
@@ -203,7 +203,7 @@ where
             }
         }
 
-        candidates
+        (candidates, Some(pre_filter_count))
     } else if is_new_period {
         // Legacy モード (新規期間): 期間最初にトップ N ボラティリティトークンを固定
         let tokens =
@@ -225,14 +225,15 @@ where
             }
         }
 
-        tokens
+        (tokens, None)
     } else {
         // Legacy モード (評価期間中): 期間最初に固定したトークンを継続使用
-        existing_tokens
+        let tokens: Vec<AccountId> = existing_tokens
             .iter()
             .cloned()
             .map(AccountId::from)
-            .collect()
+            .collect();
+        (tokens, None)
     };
 
     debug!(log, "Selected tokens"; "count" => selected_tokens.len(), "is_new_period" => is_new_period);
@@ -262,6 +263,7 @@ where
         end_date: current_time,
         cfg,
         pools: &pool_snapshot,
+        all_predicted_pre_filter_count,
     };
     let (actions, expected_returns) =
         match execute_portfolio_strategy(&params, client, wallet).await {
@@ -438,7 +440,7 @@ pub(crate) async fn select_all_predicted_candidates(
     cfg: &impl ConfigAccess,
     pools: &Arc<dex::PoolInfoList>,
     held: &BTreeSet<TokenOutAccount>,
-) -> Result<Vec<AccountId>> {
+) -> Result<(Vec<AccountId>, usize)> {
     let log = DEFAULT.new(o!("function" => "select_all_predicted_candidates"));
 
     let price_history_days = i64::from(cfg.trade_price_history_days());
@@ -469,8 +471,9 @@ pub(crate) async fn select_all_predicted_candidates(
         ));
     }
 
+    let pre_filter_count = tokens.len();
     debug!(log, "candidate tokens before hard filter";
-        "count" => tokens.len(), "held" => held.len());
+        "count" => pre_filter_count, "held" => held.len());
 
     // 3) hard filter (流動性 + グラフ到達性)。保有は無条件保持。
     let min_liquidity = NearValue::from_near(BigDecimal::from(cfg.trade_min_pool_liquidity()));
@@ -478,7 +481,7 @@ pub(crate) async fn select_all_predicted_candidates(
     let wnear_in: TokenInAccount = wnear.to_in();
     let latest_rates = persistence::token_rate::get_all_latest_rates(&wnear).await?;
 
-    hard_filter_tokens_keeping_held(
+    let filtered = hard_filter_tokens_keeping_held(
         tokens,
         pools,
         &latest_rates,
@@ -486,7 +489,8 @@ pub(crate) async fn select_all_predicted_candidates(
         &wnear_in,
         &min_liquidity,
         held,
-    )
+    )?;
+    Ok((filtered, pre_filter_count))
 }
 
 /// `TradingAction` リストから storage 登録が必要な `TokenAccount` 集合を抽出する。
@@ -676,6 +680,10 @@ pub(crate) struct PortfolioStrategyParams<'a, Cfg: ConfigAccess> {
     /// `select_top_volatility_tokens` と `collect_cost_inputs` で同一 snapshot を
     /// 共有することで TOCTOU を排除する（F008 / F025）。
     pub(crate) pools: &'a Arc<dex::PoolInfoList>,
+    /// all-token モードで `select_all_predicted_candidates` が hard filter
+    /// 適用前に持っていた候補数 (predicted ∪ held)。`Some` のときだけ
+    /// telemetry funnel をログ出力する (legacy mode は `None` で静音)。
+    pub(crate) all_predicted_pre_filter_count: Option<usize>,
 }
 
 /// ポートフォリオ戦略の実行
@@ -706,9 +714,17 @@ where
     let log = DEFAULT.new(o!("function" => "execute_portfolio_strategy"));
 
     // Telemetry: 全ステージの token 数を funnel 形式で記録する。各段階の
-    // 値は計算可能になった時点で代入し、最後にまとめてログ出力する。
+    // 値は計算可能になった時点で代入し、最後に all-token モードでのみ
+    // まとめてログ出力する (legacy mode は funnel ログを出さない)。
+    //
+    // - `predicted`: hard filter 適用前の候補集合サイズ
+    //   (`select_all_predicted_candidates` で計測 / legacy mode では tokens.len() と同値)
+    // - `after_liquidity`: hard filter 通過後 (= tokens.len())
     let mut funnel = candidate_telemetry::CandidateFunnel {
-        predicted: tokens.len(),
+        predicted: params
+            .all_predicted_pre_filter_count
+            .unwrap_or(tokens.len()),
+        after_liquidity: tokens.len(),
         ..Default::default()
     };
 
@@ -1063,10 +1079,7 @@ where
         .collect();
 
     // Telemetry: confidence フィルタ通過後の token 数を記録。
-    // after_liquidity は本コミットでは入力 (= predicted) と同値に設定する
-    // (hard filter 通過後に execute_portfolio_strategy に入るため)。
     funnel.after_confidence = token_data.len();
-    funnel.after_liquidity = funnel.predicted;
 
     // 予測誤差分散ベース対角合成（フラグ on のとき）
     let pred_err_diagonal = if cfg.portfolio_pred_err_diagonal_enabled() {
@@ -1282,33 +1295,36 @@ where
     }
 
     // Telemetry: ファネル要約と expected_return 分布をサイクル単位で集約ログする。
+    // legacy mode (all_predicted_pre_filter_count=None) では出力しない。
     funnel.selected = execution_report
         .optimal_weights
         .weights
         .iter()
         .filter(|(_, w)| w.to_f64().unwrap_or(0.0) > 0.0)
         .count();
-    let er_values: Vec<f64> = expected_returns.values().copied().collect();
-    let er_stats = candidate_telemetry::summarize_distribution(&er_values);
-    match er_stats {
-        Some(s) => info!(log, "candidate funnel";
-            "predicted" => funnel.predicted,
-            "after_confidence" => funnel.after_confidence,
-            "after_liquidity" => funnel.after_liquidity,
-            "optimizer_input" => funnel.optimizer_input,
-            "selected" => funnel.selected,
-            "er_min" => format!("{:.4}", s.min),
-            "er_p5" => format!("{:.4}", s.p5),
-            "er_p25" => format!("{:.4}", s.p25),
-            "er_p50" => format!("{:.4}", s.p50),
-            "er_p75" => format!("{:.4}", s.p75),
-            "er_max" => format!("{:.4}", s.max)),
-        None => info!(log, "candidate funnel (no expected_return samples)";
-            "predicted" => funnel.predicted,
-            "after_confidence" => funnel.after_confidence,
-            "after_liquidity" => funnel.after_liquidity,
-            "optimizer_input" => funnel.optimizer_input,
-            "selected" => funnel.selected),
+    if params.all_predicted_pre_filter_count.is_some() {
+        let er_values: Vec<f64> = expected_returns.values().copied().collect();
+        let er_stats = candidate_telemetry::summarize_distribution(&er_values);
+        match er_stats {
+            Some(s) => info!(log, "candidate funnel";
+                "predicted" => funnel.predicted,
+                "after_confidence" => funnel.after_confidence,
+                "after_liquidity" => funnel.after_liquidity,
+                "optimizer_input" => funnel.optimizer_input,
+                "selected" => funnel.selected,
+                "er_min" => format!("{:.4}", s.min),
+                "er_p5" => format!("{:.4}", s.p5),
+                "er_p25" => format!("{:.4}", s.p25),
+                "er_p50" => format!("{:.4}", s.p50),
+                "er_p75" => format!("{:.4}", s.p75),
+                "er_max" => format!("{:.4}", s.max)),
+            None => info!(log, "candidate funnel (no expected_return samples)";
+                "predicted" => funnel.predicted,
+                "after_confidence" => funnel.after_confidence,
+                "after_liquidity" => funnel.after_liquidity,
+                "optimizer_input" => funnel.optimizer_input,
+                "selected" => funnel.selected),
+        }
     }
 
     Ok((execution_report.actions, expected_returns))
