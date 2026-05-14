@@ -532,6 +532,37 @@ fn clamp_portfolio_pred_err_diagonal_k(v: f64) -> f64 {
     }
 }
 
+/// Lower bound for [`ConfigAccess::trade_prediction_shrinkage_lambda`].
+///
+/// `0.0` disables shrinkage entirely (the formula reduces to the identity
+/// `μ_adj = μ`). Negative values would *amplify* the raw expected return
+/// against its prediction error, which inverts the intent of the
+/// uncertainty-aware adjustment.
+const TRADE_PREDICTION_SHRINKAGE_LAMBDA_LOWER: f64 = 0.0;
+
+/// Upper bound for [`ConfigAccess::trade_prediction_shrinkage_lambda`].
+///
+/// At `λ = 1.0`, a typical 10 % MAPE prediction (√MSRE ≈ 0.10) fully nulls
+/// a typical 3 % expected return through the soft-threshold. Higher values
+/// are not analytically wrong but would routinely zero out all signals,
+/// reducing the optimizer to a cost-deduction-only mode.
+const TRADE_PREDICTION_SHRINKAGE_LAMBDA_UPPER: f64 = 1.0;
+
+/// Idempotent clamp applied to `trade_prediction_shrinkage_lambda` reads.
+///
+/// `NaN` is mapped to the lower bound (disabling shrinkage) rather than
+/// poisoning the optimizer. `±INFINITY` is handled by `f64::clamp` itself.
+fn clamp_trade_prediction_shrinkage_lambda(v: f64) -> f64 {
+    if v.is_nan() {
+        TRADE_PREDICTION_SHRINKAGE_LAMBDA_LOWER
+    } else {
+        v.clamp(
+            TRADE_PREDICTION_SHRINKAGE_LAMBDA_LOWER,
+            TRADE_PREDICTION_SHRINKAGE_LAMBDA_UPPER,
+        )
+    }
+}
+
 /// Idempotent clamp applied to `portfolio_cost_iteration_damping` reads.
 ///
 /// `NaN` is mapped to [`PORTFOLIO_COST_ITERATION_DAMPING_NAN_FALLBACK`] so
@@ -814,6 +845,35 @@ define_typed_config! {
     fn trade_top_n_after_prediction() -> u32 {
         key: "TRADE_TOP_N_AFTER_PREDICTION",
         default: 0
+    }
+
+    /// Soft-threshold shrinkage strength applied to per-token expected returns.
+    ///
+    /// The optimizer's `expected_return` for each token is adjusted to
+    /// `sign(μ) × max(0, |μ| - λ × √MSRE)` where `λ` is this value and
+    /// `MSRE = mean((mape/100)²)` is the per-token prediction error
+    /// (`calculate_per_token_pred_err_variance`). The form preserves the sign
+    /// of the original return, dampens magnitudes toward zero in proportion
+    /// to prediction uncertainty, and bounds `|μ_adj| ≤ |μ|`.
+    ///
+    /// Defaults to `0.0` (no shrinkage, identical to the legacy behavior).
+    /// Production-recommended range is roughly `[0.05, 0.3]`; the upper
+    /// clamp bound is `1.0` because beyond that point typical signals
+    /// (≈3 % return) are fully nulled by typical prediction error
+    /// (≈10 % MAPE → √MSRE ≈ 0.1).
+    ///
+    /// ## Interaction with `PORTFOLIO_PRED_ERR_DIAGONAL_ENABLED`
+    ///
+    /// Both flags address prediction uncertainty: this shrinks `μ` in the
+    /// optimizer numerator while `PORTFOLIO_PRED_ERR_DIAGONAL_*` inflates
+    /// `Σ` in the denominator. Enabling both simultaneously produces a
+    /// super-linear joint effect against high-MSRE tokens that may be too
+    /// aggressive. Treat them as alternatives in production until A/B
+    /// evidence justifies stacking.
+    fn trade_prediction_shrinkage_lambda() -> f64 {
+        key: "TRADE_PREDICTION_SHRINKAGE_LAMBDA",
+        default: 0.0,
+        clamp: clamp_trade_prediction_shrinkage_lambda
     }
 
     // ── arbitrage ──
