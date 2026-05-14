@@ -73,6 +73,7 @@ pub(crate) fn summarize_distribution(values: &[f64]) -> Option<DistStats> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     fn approx(a: f64, b: f64) {
         assert!((a - b).abs() < 1e-9, "expected {a} ≈ {b}");
@@ -138,5 +139,37 @@ mod tests {
         approx(stats.min, 1.0);
         approx(stats.max, 5.0);
         approx(stats.p50, 3.0);
+    }
+
+    /// 有限値だけからなる任意の Vec で、min/max が実際の min/max と一致し、
+    /// 各 percentile が単調非減少であることを property-based に検証する。
+    fn finite_vec_strategy() -> impl Strategy<Value = Vec<f64>> {
+        prop::collection::vec(-1.0e6_f64..1.0e6, 1..200)
+    }
+
+    proptest! {
+        #[test]
+        fn percentiles_are_monotone_and_bracket(values in finite_vec_strategy()) {
+            let stats = summarize_distribution(&values).expect("non-empty finite input must yield Some");
+            prop_assert!(stats.min <= stats.p5);
+            prop_assert!(stats.p5 <= stats.p25);
+            prop_assert!(stats.p25 <= stats.p50);
+            prop_assert!(stats.p50 <= stats.p75);
+            prop_assert!(stats.p75 <= stats.max);
+            // min/max は入力データの厳密な極値と一致する。
+            let actual_min = values.iter().copied().fold(f64::INFINITY, f64::min);
+            let actual_max = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            prop_assert!((stats.min - actual_min).abs() < 1e-9);
+            prop_assert!((stats.max - actual_max).abs() < 1e-9);
+        }
+
+        /// 任意の f64 (NaN, ±inf を含む) を混入させても panic せず、
+        /// 全て non-finite なら None、有限が 1 件でもあれば Some を返す。
+        #[test]
+        fn handles_arbitrary_f64(values in prop::collection::vec(prop::num::f64::ANY, 0..50)) {
+            let stats = summarize_distribution(&values);
+            let any_finite = values.iter().any(|v| v.is_finite());
+            prop_assert_eq!(stats.is_some(), any_finite);
+        }
     }
 }
