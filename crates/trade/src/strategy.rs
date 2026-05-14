@@ -1080,6 +1080,14 @@ where
 
     // Telemetry: confidence フィルタ通過後の token 数を記録。
     funnel.after_confidence = token_data.len();
+    // 分布統計用に optimizer 入力直前の confidence と liquidity_score をクローンする。
+    // token_data / filtered_confidences はこの後 portfolio_data に move されるため、
+    // ここで Vec として取り出して所有権から切り離す。
+    let telemetry_confidences: BTreeMap<TokenOutAccount, f64> = filtered_confidences.clone();
+    let telemetry_liquidity: Vec<f64> = token_data
+        .iter()
+        .filter_map(|t| t.liquidity_score)
+        .collect();
 
     // 予測誤差分散ベース対角合成（フラグ on のとき）
     let pred_err_diagonal = if cfg.portfolio_pred_err_diagonal_enabled() {
@@ -1294,7 +1302,7 @@ where
         );
     }
 
-    // Telemetry: ファネル要約と expected_return 分布をサイクル単位で集約ログする。
+    // Telemetry: ファネル要約 (counts) と分布統計をサイクル単位で集約ログする。
     // legacy mode (all_predicted_pre_filter_count=None) では出力しない。
     funnel.selected = execution_report
         .optimal_weights
@@ -1303,31 +1311,41 @@ where
         .filter(|(_, w)| w.to_f64().unwrap_or(0.0) > 0.0)
         .count();
     if params.all_predicted_pre_filter_count.is_some() {
+        info!(log, "candidate funnel";
+            "predicted" => funnel.predicted,
+            "after_confidence" => funnel.after_confidence,
+            "after_liquidity" => funnel.after_liquidity,
+            "optimizer_input" => funnel.optimizer_input,
+            "selected" => funnel.selected);
+
+        // 分布統計: expected_return / confidence / liquidity_score を debug で出力。
+        // 各メトリクスは optimizer 入力時点 (post-confidence filter) のトークン集合で集計。
         let er_values: Vec<f64> = expected_returns.values().copied().collect();
-        let er_stats = candidate_telemetry::summarize_distribution(&er_values);
-        match er_stats {
-            Some(s) => info!(log, "candidate funnel";
-                "predicted" => funnel.predicted,
-                "after_confidence" => funnel.after_confidence,
-                "after_liquidity" => funnel.after_liquidity,
-                "optimizer_input" => funnel.optimizer_input,
-                "selected" => funnel.selected,
-                "er_min" => format!("{:.4}", s.min),
-                "er_p5" => format!("{:.4}", s.p5),
-                "er_p25" => format!("{:.4}", s.p25),
-                "er_p50" => format!("{:.4}", s.p50),
-                "er_p75" => format!("{:.4}", s.p75),
-                "er_max" => format!("{:.4}", s.max)),
-            None => info!(log, "candidate funnel (no expected_return samples)";
-                "predicted" => funnel.predicted,
-                "after_confidence" => funnel.after_confidence,
-                "after_liquidity" => funnel.after_liquidity,
-                "optimizer_input" => funnel.optimizer_input,
-                "selected" => funnel.selected),
-        }
+        let confidence_values: Vec<f64> = telemetry_confidences.values().copied().collect();
+        log_distribution(&log, "expected_return", &er_values);
+        log_distribution(&log, "confidence", &confidence_values);
+        log_distribution(&log, "liquidity_score", &telemetry_liquidity);
     }
 
     Ok((execution_report.actions, expected_returns))
+}
+
+/// Optimizer 入力時点の分布統計を `debug!` で出力するヘルパー。
+///
+/// 値が 1 件もない (全 non-finite or empty) 場合は専用ログメッセージ。
+fn log_distribution(log: &slog::Logger, metric: &str, values: &[f64]) {
+    match candidate_telemetry::summarize_distribution(values) {
+        Some(s) => debug!(log, "candidate distribution";
+            "metric" => metric,
+            "count" => values.len(),
+            "min" => format!("{:.4}", s.min),
+            "p5" => format!("{:.4}", s.p5),
+            "p25" => format!("{:.4}", s.p25),
+            "p50" => format!("{:.4}", s.p50),
+            "p75" => format!("{:.4}", s.p75),
+            "max" => format!("{:.4}", s.max)),
+        None => debug!(log, "candidate distribution (no samples)"; "metric" => metric),
+    }
 }
 
 /// 最小流動性を満たさないプールを除外する
