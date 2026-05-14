@@ -108,6 +108,23 @@ pub struct PredErrDiagonal {
     pub mode: PredErrDiagonalMode,
 }
 
+/// 予測不確実性に基づく soft-threshold shrinkage の入力。
+///
+/// `μ_adj = sign(μ) × max(0, |μ| - λ × √MSRE)` の形で per-token 期待リターンを
+/// 縮小する。`PredErrDiagonal` が共分散行列の対角を膨らませる (分散経由) のに
+/// 対して、こちらは optimizer の `μ` を直接 (期待値経由) 縮小する独立した
+/// 不確実性ペナルティ。両者は同一の MSRE を再利用するが、適用箇所と意味論は
+/// 直交している。
+#[derive(Debug, Clone)]
+pub struct PredUncertainty {
+    /// 銘柄ごとの **MSRE**（return² スケール、`mean of (mape / 100)²`）。
+    /// `PredErrDiagonal::variances` と同一スケール。
+    pub msre: BTreeMap<TokenOutAccount, f64>,
+    /// shrinkage 強度 λ。`0.0` で no-op (μ_adj = μ)。
+    /// typed config 層で `[0.0, 1.0]` に clamp 済みである前提。
+    pub lambda: f64,
+}
+
 /// ポートフォリオデータ
 #[derive(Debug, Clone, Default)]
 pub struct PortfolioData {
@@ -123,6 +140,11 @@ pub struct PortfolioData {
     pub pred_err_diagonal: Option<PredErrDiagonal>,
     /// 銘柄ごとの取引コスト控除比率（empty で無効、改良 D で使用）
     pub cost_deductions: BTreeMap<TokenOutAccount, f64>,
+    /// 予測不確実性に基づく soft-threshold shrinkage の入力（None で無効）。
+    /// `λ > 0` のとき expected_return が `sign(μ) × max(0, |μ| - λ × √MSRE)` で
+    /// 縮小される。`pred_err_diagonal` と同時 on も技術的には可能だが、
+    /// 同一 MSRE が `μ` と `Σ` の両方に作用するため運用上は片方ずつが推奨。
+    pub pred_uncertainty: Option<PredUncertainty>,
 }
 
 impl PortfolioData {
@@ -150,6 +172,9 @@ impl PortfolioData {
             ped.variances.retain(|k, _| retain.contains(k));
         }
         self.cost_deductions.retain(|k, _| retain.contains(k));
+        if let Some(pu) = self.pred_uncertainty.as_mut() {
+            pu.msre.retain(|k, _| retain.contains(k));
+        }
     }
 
     /// 指定 token を除外し、token-indexed な全フィールドを同期 filter する。
@@ -171,6 +196,9 @@ impl PortfolioData {
             ped.variances.retain(|k, _| !exclude.contains(k));
         }
         self.cost_deductions.retain(|k, _| !exclude.contains(k));
+        if let Some(pu) = self.pred_uncertainty.as_mut() {
+            pu.msre.retain(|k, _| !exclude.contains(k));
+        }
     }
 }
 

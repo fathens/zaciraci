@@ -1635,6 +1635,7 @@ fn pd_with_three_tokens() -> PortfolioData {
             mode: PredErrDiagonalMode::Additive,
         }),
         cost_deductions,
+        pred_uncertainty: None,
     }
 }
 

@@ -1165,6 +1165,7 @@ where
         prediction_confidences: filtered_confidences,
         pred_err_diagonal,
         cost_deductions: BTreeMap::new(),
+        pred_uncertainty: None,
     };
 
     funnel.optimizer_input = portfolio_data.tokens.len();
