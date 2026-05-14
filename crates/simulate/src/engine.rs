@@ -232,6 +232,10 @@ pub(crate) fn apply_config(cli: &RunArgs) {
         "TRADE_ALL_PREDICTED_ENABLED",
         &cli.all_predicted.to_string(),
     );
+    common::config::store::set(
+        "TRADE_TOP_N_AFTER_PREDICTION",
+        &cli.top_n_after_prediction.to_string(),
+    );
 }
 
 #[cfg(test)]
@@ -259,6 +263,7 @@ mod tests {
             cost_aware_return: true,
             cost_iterations_max: 3,
             all_predicted: false,
+            top_n_after_prediction: 0,
         }
     }
 
@@ -293,6 +298,7 @@ mod tests {
             cost_aware_return: true,
             cost_iterations_max: 5,
             all_predicted: true,
+            top_n_after_prediction: 30,
         };
 
         apply_config(&cli);
@@ -341,6 +347,10 @@ mod tests {
         assert_eq!(
             common::config::store::get("TRADE_ALL_PREDICTED_ENABLED").unwrap(),
             "true"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_TOP_N_AFTER_PREDICTION").unwrap(),
+            "30"
         );
     }
 }

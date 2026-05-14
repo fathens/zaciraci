@@ -100,6 +100,14 @@ pub struct RunArgs {
     /// `--all-predicted true` to compare against the legacy baseline.
     #[arg(long, action = clap::ArgAction::Set, default_value_t = false)]
     pub all_predicted: bool,
+
+    /// Cap on the candidate count fed to the portfolio optimizer in
+    /// all-token mode. `0` disables Top-N pruning (every candidate that
+    /// survives confidence + liquidity filters reaches the optimizer);
+    /// `> 0` keeps the top N by composite score plus all held tokens.
+    /// Has no effect when `--all-predicted false`.
+    #[arg(long, default_value = "0")]
+    pub top_n_after_prediction: u32,
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -171,6 +179,7 @@ mod tests {
             cost_aware_return: true,
             cost_iterations_max: 3,
             all_predicted: false,
+            top_n_after_prediction: 0,
         }
     }
 

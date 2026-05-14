@@ -278,6 +278,7 @@ fn make_cli(start: &str, end: &str) -> RunArgs {
         cost_aware_return: true,
         cost_iterations_max: 3,
         all_predicted: false,
+        top_n_after_prediction: 0,
     }
 }
 
@@ -366,6 +367,7 @@ fn from_state_config_reflects_cli_params() {
         cost_aware_return: true,
         cost_iterations_max: 3,
         all_predicted: false,
+        top_n_after_prediction: 0,
     };
     let state = PortfolioState::new(yocto(200_000_000_000_000_000_000_000_000));
 
