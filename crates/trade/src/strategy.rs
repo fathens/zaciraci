@@ -1080,13 +1080,13 @@ where
 
     // Telemetry: confidence フィルタ通過後の token 数を記録。
     funnel.after_confidence = token_data.len();
-    // 分布統計用に optimizer 入力直前の confidence と liquidity_score をクローンする。
-    // token_data / filtered_confidences はこの後 portfolio_data に move されるため、
-    // ここで Vec として取り出して所有権から切り離す。
+    // 分布統計と per-token 属性ログ用に optimizer 入力直前の confidence と
+    // liquidity_score をクローンする。token_data / filtered_confidences は
+    // この後 portfolio_data に move されるため、ここで所有権から切り離す。
     let telemetry_confidences: BTreeMap<TokenOutAccount, f64> = filtered_confidences.clone();
-    let telemetry_liquidity: Vec<f64> = token_data
+    let telemetry_liquidity: BTreeMap<TokenOutAccount, f64> = token_data
         .iter()
-        .filter_map(|t| t.liquidity_score)
+        .filter_map(|t| t.liquidity_score.map(|s| (t.symbol.clone(), s)))
         .collect();
 
     // 予測誤差分散ベース対角合成（フラグ on のとき）
@@ -1295,11 +1295,30 @@ where
     );
 
     for (token, weight) in &execution_report.optimal_weights.weights {
-        trace!(log, "optimal weight";
+        let weight_f = weight.to_f64().unwrap_or(0.0);
+        let er = expected_returns.get(token).copied();
+        let conf = telemetry_confidences.get(token).copied();
+        let liq = telemetry_liquidity.get(token).copied();
+        // 全候補は trace、weight > 0 のもの (= 実選出) は debug にも残して
+        // RUST_LOG=trade=debug で取得しやすくする。
+        trace!(log, "candidate weight";
             "token" => %token,
             "weight" => %weight,
-            "percentage" => format!("{:.2}%", weight.to_f64().unwrap_or(0.0) * 100.0)
+            "percentage" => format!("{:.2}%", weight_f * 100.0),
+            "expected_return" => er.map(|v| format!("{:.4}", v)).unwrap_or_else(|| "n/a".into()),
+            "confidence" => conf.map(|v| format!("{:.3}", v)).unwrap_or_else(|| "n/a".into()),
+            "liquidity_score" => liq.map(|v| format!("{:.3}", v)).unwrap_or_else(|| "n/a".into())
         );
+        if weight_f > 0.0 && params.all_predicted_pre_filter_count.is_some() {
+            debug!(log, "selected weight";
+                "token" => %token,
+                "weight" => %weight,
+                "percentage" => format!("{:.2}%", weight_f * 100.0),
+                "expected_return" => er.map(|v| format!("{:.4}", v)).unwrap_or_else(|| "n/a".into()),
+                "confidence" => conf.map(|v| format!("{:.3}", v)).unwrap_or_else(|| "n/a".into()),
+                "liquidity_score" => liq.map(|v| format!("{:.3}", v)).unwrap_or_else(|| "n/a".into())
+            );
+        }
     }
 
     // Telemetry: ファネル要約 (counts) と分布統計をサイクル単位で集約ログする。
@@ -1322,9 +1341,10 @@ where
         // 各メトリクスは optimizer 入力時点 (post-confidence filter) のトークン集合で集計。
         let er_values: Vec<f64> = expected_returns.values().copied().collect();
         let confidence_values: Vec<f64> = telemetry_confidences.values().copied().collect();
+        let liquidity_values: Vec<f64> = telemetry_liquidity.values().copied().collect();
         log_distribution(&log, "expected_return", &er_values);
         log_distribution(&log, "confidence", &confidence_values);
-        log_distribution(&log, "liquidity_score", &telemetry_liquidity);
+        log_distribution(&log, "liquidity_score", &liquidity_values);
     }
 
     Ok((execution_report.actions, expected_returns))
