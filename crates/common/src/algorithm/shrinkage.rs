@@ -122,4 +122,64 @@ mod tests {
             }
         }
     }
+
+    use proptest::prelude::*;
+
+    proptest! {
+        /// λ=0 で恒等変換。
+        #[test]
+        fn lambda_zero_invariant(
+            mu in -1e3_f64..1e3,
+            msre in 0.0_f64..1e3,
+        ) {
+            let adj = apply_soft_threshold(mu, Some(msre), 0.0);
+            prop_assert!((adj - mu).abs() < 1e-12);
+        }
+
+        /// `|μ_adj| ≤ |μ|`: shrinkage は magnitude を増幅しない。
+        #[test]
+        fn bounded_magnitude(
+            mu in -1e3_f64..1e3,
+            msre in 0.0_f64..1e3,
+            lambda in 0.0_f64..1.0,
+        ) {
+            let adj = apply_soft_threshold(mu, Some(msre), lambda);
+            prop_assert!(adj.abs() <= mu.abs() + 1e-9);
+        }
+
+        /// 符号保存: μ_adj が非ゼロなら sign(μ_adj) == sign(μ)。
+        #[test]
+        fn sign_preserved_or_zero(
+            mu in -1e3_f64..1e3,
+            msre in 0.0_f64..1e3,
+            lambda in 0.0_f64..1.0,
+        ) {
+            let adj = apply_soft_threshold(mu, Some(msre), lambda);
+            if adj != 0.0 {
+                prop_assert_eq!(adj.signum(), mu.signum());
+            }
+        }
+
+        /// λ→∞ で十分大きい λ なら μ_adj == 0 (有限 μ, 正の MSRE)。
+        #[test]
+        fn large_lambda_drives_to_zero(
+            mu in -10.0_f64..10.0,
+            msre in 0.01_f64..1.0,
+        ) {
+            // penalty = λ × √msre ≥ |μ| を保証する λ を選ぶ。
+            let lambda = (mu.abs() + 1.0) / msre.sqrt();
+            let adj = apply_soft_threshold(mu, Some(msre), lambda);
+            prop_assert_eq!(adj, 0.0);
+        }
+
+        /// MSRE 不在は素通し。
+        #[test]
+        fn msre_none_identity(
+            mu in -1e3_f64..1e3,
+            lambda in 0.0_f64..1.0,
+        ) {
+            let adj = apply_soft_threshold(mu, None, lambda);
+            prop_assert_eq!(adj, mu);
+        }
+    }
 }

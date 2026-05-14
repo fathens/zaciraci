@@ -653,6 +653,7 @@ dependencies = [
  "near-account-id",
  "num-traits",
  "predictor",
+ "proptest",
  "serde",
  "serde_json",
  "serial_test",
