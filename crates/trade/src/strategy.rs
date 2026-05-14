@@ -23,6 +23,7 @@
 //! - yoctoNEAR → NEAR: `YoctoValue::from_yocto(bd).to_near().as_bigdecimal()`
 
 use crate::Result;
+use crate::candidate_telemetry;
 use crate::predict::PredictionService;
 use crate::swap;
 use bigdecimal::{BigDecimal, ToPrimitive, Zero};
@@ -704,6 +705,13 @@ where
     let cfg = params.cfg;
     let log = DEFAULT.new(o!("function" => "execute_portfolio_strategy"));
 
+    // Telemetry: 全ステージの token 数を funnel 形式で記録する。各段階の
+    // 値は計算可能になった時点で代入し、最後にまとめてログ出力する。
+    let mut funnel = candidate_telemetry::CandidateFunnel {
+        predicted: tokens.len(),
+        ..Default::default()
+    };
+
     // ポートフォリオデータの準備
     let mut predictions: BTreeMap<common::types::TokenOutAccount, TokenPrice> = BTreeMap::new();
 
@@ -1054,6 +1062,12 @@ where
         .filter(|(k, _)| remaining_symbols.contains(k))
         .collect();
 
+    // Telemetry: confidence フィルタ通過後の token 数を記録。
+    // after_liquidity は本コミットでは入力 (= predicted) と同値に設定する
+    // (hard filter 通過後に execute_portfolio_strategy に入るため)。
+    funnel.after_confidence = token_data.len();
+    funnel.after_liquidity = funnel.predicted;
+
     // 予測誤差分散ベース対角合成（フラグ on のとき）
     let pred_err_diagonal = if cfg.portfolio_pred_err_diagonal_enabled() {
         let token_out_for_var: Vec<TokenOutAccount> =
@@ -1091,6 +1105,8 @@ where
         pred_err_diagonal,
         cost_deductions: BTreeMap::new(),
     };
+
+    funnel.optimizer_input = portfolio_data.tokens.len();
 
     // 既存ポジションの取得と WalletInfo の構築
     let wallet_info = if is_new_period {
@@ -1263,6 +1279,36 @@ where
             "weight" => %weight,
             "percentage" => format!("{:.2}%", weight.to_f64().unwrap_or(0.0) * 100.0)
         );
+    }
+
+    // Telemetry: ファネル要約と expected_return 分布をサイクル単位で集約ログする。
+    funnel.selected = execution_report
+        .optimal_weights
+        .weights
+        .iter()
+        .filter(|(_, w)| w.to_f64().unwrap_or(0.0) > 0.0)
+        .count();
+    let er_values: Vec<f64> = expected_returns.values().copied().collect();
+    let er_stats = candidate_telemetry::summarize_distribution(&er_values);
+    match er_stats {
+        Some(s) => info!(log, "candidate funnel";
+            "predicted" => funnel.predicted,
+            "after_confidence" => funnel.after_confidence,
+            "after_liquidity" => funnel.after_liquidity,
+            "optimizer_input" => funnel.optimizer_input,
+            "selected" => funnel.selected,
+            "er_min" => format!("{:.4}", s.min),
+            "er_p5" => format!("{:.4}", s.p5),
+            "er_p25" => format!("{:.4}", s.p25),
+            "er_p50" => format!("{:.4}", s.p50),
+            "er_p75" => format!("{:.4}", s.p75),
+            "er_max" => format!("{:.4}", s.max)),
+        None => info!(log, "candidate funnel (no expected_return samples)";
+            "predicted" => funnel.predicted,
+            "after_confidence" => funnel.after_confidence,
+            "after_liquidity" => funnel.after_liquidity,
+            "optimizer_input" => funnel.optimizer_input,
+            "selected" => funnel.selected),
     }
 
     Ok((execution_report.actions, expected_returns))
