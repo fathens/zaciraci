@@ -108,6 +108,14 @@ pub struct RunArgs {
     /// Has no effect when `--all-predicted false`.
     #[arg(long, default_value = "0")]
     pub top_n_after_prediction: u32,
+
+    /// Soft-threshold shrinkage strength applied to expected returns:
+    /// `μ_adj = sign(μ) × max(0, |μ| - λ × √MSRE)`. `0.0` disables
+    /// shrinkage (identical to the legacy behavior); typical production
+    /// range is `[0.05, 0.3]`. Clamped to `[0.0, 1.0]` at the typed-config
+    /// layer.
+    #[arg(long, default_value = "0.0")]
+    pub shrinkage_lambda: f64,
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -180,6 +188,7 @@ mod tests {
             cost_iterations_max: 3,
             all_predicted: false,
             top_n_after_prediction: 0,
+            shrinkage_lambda: 0.0,
         }
     }
 

@@ -236,6 +236,10 @@ pub(crate) fn apply_config(cli: &RunArgs) {
         "TRADE_TOP_N_AFTER_PREDICTION",
         &cli.top_n_after_prediction.to_string(),
     );
+    common::config::store::set(
+        "TRADE_PREDICTION_SHRINKAGE_LAMBDA",
+        &cli.shrinkage_lambda.to_string(),
+    );
 }
 
 #[cfg(test)]
@@ -264,6 +268,7 @@ mod tests {
             cost_iterations_max: 3,
             all_predicted: false,
             top_n_after_prediction: 0,
+            shrinkage_lambda: 0.0,
         }
     }
 
@@ -299,6 +304,7 @@ mod tests {
             cost_iterations_max: 5,
             all_predicted: true,
             top_n_after_prediction: 30,
+            shrinkage_lambda: 0.1,
         };
 
         apply_config(&cli);
@@ -351,6 +357,10 @@ mod tests {
         assert_eq!(
             common::config::store::get("TRADE_TOP_N_AFTER_PREDICTION").unwrap(),
             "30"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_PREDICTION_SHRINKAGE_LAMBDA").unwrap(),
+            "0.1"
         );
     }
 }

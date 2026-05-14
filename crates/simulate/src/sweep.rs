@@ -33,6 +33,8 @@ pub struct SweepConfig {
     pub all_predicted: Vec<bool>,
     #[serde(default = "default_top_n_after_prediction")]
     pub top_n_after_prediction: Vec<u32>,
+    #[serde(default = "default_shrinkage_lambda")]
+    pub shrinkage_lambda: Vec<f64>,
 }
 
 fn default_top_tokens() -> Vec<usize> {
@@ -71,6 +73,9 @@ fn default_all_predicted() -> Vec<bool> {
 fn default_top_n_after_prediction() -> Vec<u32> {
     vec![0]
 }
+fn default_shrinkage_lambda() -> Vec<f64> {
+    vec![0.0]
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SweepResult {
@@ -102,6 +107,7 @@ pub struct SweepParameters {
     pub cost_iterations_max: u32,
     pub all_predicted: bool,
     pub top_n_after_prediction: u32,
+    pub shrinkage_lambda: f64,
 }
 
 pub async fn run_sweep(base_cli: &RunArgs, sweep_config_path: &Path) -> Result<()> {
@@ -131,6 +137,7 @@ pub async fn run_sweep(base_cli: &RunArgs, sweep_config_path: &Path) -> Result<(
         cli.cost_iterations_max = params.cost_iterations_max;
         cli.all_predicted = params.all_predicted;
         cli.top_n_after_prediction = params.top_n_after_prediction;
+        cli.shrinkage_lambda = params.shrinkage_lambda;
 
         match run_simulation(&cli).await {
             Ok(result) => {
@@ -182,7 +189,10 @@ pub async fn run_sweep(base_cli: &RunArgs, sweep_config_path: &Path) -> Result<(
 }
 
 fn generate_combinations(config: &SweepConfig) -> Vec<SweepParameters> {
-    iproduct!(
+    // `iproduct!` のタプル合成は 12 引数までしか型推論が通らないため、
+    // shrinkage_lambda は外側の flat_map で組み合わせる。意味論は同じ
+    // (cartesian product) だが、型 chain を 2 段に分けて itertools の上限を回避。
+    let inner = iproduct!(
         &config.top_tokens,
         &config.price_history_days,
         &config.rebalance_threshold,
@@ -195,65 +205,73 @@ fn generate_combinations(config: &SweepConfig) -> Vec<SweepParameters> {
         &config.cost_iterations_max,
         &config.all_predicted,
         &config.top_n_after_prediction
-    )
-    .map(
-        |(
-            &top_tokens,
-            &price_history_days,
-            &rebalance_threshold,
-            &rebalance_interval_days,
-            &bias_correction,
-            &pred_err_diagonal,
-            &pred_err_diagonal_k,
-            &pred_err_diagonal_mode,
-            &cost_aware_return,
-            &cost_iterations_max,
-            &all_predicted,
-            &top_n_after_prediction,
-        )| SweepParameters {
-            top_tokens,
-            price_history_days,
-            rebalance_threshold,
-            rebalance_interval_days,
-            bias_correction,
-            pred_err_diagonal,
-            pred_err_diagonal_k,
-            pred_err_diagonal_mode,
-            cost_aware_return,
-            cost_iterations_max,
-            all_predicted,
-            top_n_after_prediction,
-        },
-    )
-    .collect()
+    );
+    inner
+        .flat_map(|outer| config.shrinkage_lambda.iter().map(move |&l| (outer, l)))
+        .map(
+            |(
+                (
+                    &top_tokens,
+                    &price_history_days,
+                    &rebalance_threshold,
+                    &rebalance_interval_days,
+                    &bias_correction,
+                    &pred_err_diagonal,
+                    &pred_err_diagonal_k,
+                    &pred_err_diagonal_mode,
+                    &cost_aware_return,
+                    &cost_iterations_max,
+                    &all_predicted,
+                    &top_n_after_prediction,
+                ),
+                shrinkage_lambda,
+            )| SweepParameters {
+                top_tokens,
+                price_history_days,
+                rebalance_threshold,
+                rebalance_interval_days,
+                bias_correction,
+                pred_err_diagonal,
+                pred_err_diagonal_k,
+                pred_err_diagonal_mode,
+                cost_aware_return,
+                cost_iterations_max,
+                all_predicted,
+                top_n_after_prediction,
+                shrinkage_lambda,
+            },
+        )
+        .collect()
 }
 
 fn print_summary_table(result: &SweepResult) {
     println!(
-        "\n{:<8} {:<8} {:<10} {:<10} {:<8} {:<6} {:>10} {:>10} {:>10} {:>12} {:>10}",
+        "\n{:<8} {:<8} {:<10} {:<10} {:<8} {:<6} {:<8} {:>10} {:>10} {:>10} {:>12} {:>10}",
         "TopTok",
         "HistDays",
         "RebThresh",
         "RebIntv",
         "AllPred",
         "TopN",
+        "Lambda",
         "Return%",
         "Sharpe",
         "MaxDD%",
         "FinalBal",
         "RealPnL"
     );
-    println!("{}", "-".repeat(114));
+    println!("{}", "-".repeat(123));
 
     for entry in &result.results {
         println!(
-            "{:<8} {:<8} {:<10.2} {:<10} {:<8} {:<6} {:>10.2} {:>10.3} {:>10.2} {:>12.4} {:>10.4}",
+            "{:<8} {:<8} {:<10.2} {:<10} {:<8} {:<6} {:<8.3} {:>10.2} {:>10.3} {:>10.2} {:>12.4} {:>10.4}",
             entry.parameters.top_tokens,
             entry.parameters.price_history_days,
             entry.parameters.rebalance_threshold,
             entry.parameters.rebalance_interval_days,
             entry.parameters.all_predicted,
             entry.parameters.top_n_after_prediction,
+            entry.parameters.shrinkage_lambda,
             entry.total_return * 100.0,
             entry.sharpe_ratio,
             entry.max_drawdown * 100.0,

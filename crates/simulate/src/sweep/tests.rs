@@ -17,6 +17,7 @@ fn combinations_single_values() {
         cost_iterations_max: vec![3],
         all_predicted: vec![false],
         top_n_after_prediction: vec![0],
+        shrinkage_lambda: vec![0.0],
     };
     let combos = generate_combinations(&config);
     assert_eq!(combos.len(), 1);
@@ -42,6 +43,7 @@ fn combinations_cartesian_product() {
         cost_iterations_max: vec![3],
         all_predicted: vec![false],
         top_n_after_prediction: vec![0],
+        shrinkage_lambda: vec![0.0],
     };
     let combos = generate_combinations(&config);
     // 2 * 1 * 3 * 1 = 6
@@ -63,6 +65,7 @@ fn combinations_empty_dimension() {
         cost_iterations_max: vec![3],
         all_predicted: vec![false],
         top_n_after_prediction: vec![0],
+        shrinkage_lambda: vec![0.0],
     };
     let combos = generate_combinations(&config);
     assert_eq!(combos.len(), 0);
@@ -83,6 +86,7 @@ fn combinations_preserves_all_values() {
         cost_iterations_max: vec![3],
         all_predicted: vec![false],
         top_n_after_prediction: vec![0],
+        shrinkage_lambda: vec![0.0],
     };
     let combos = generate_combinations(&config);
     assert_eq!(combos.len(), 2);
@@ -105,6 +109,7 @@ fn combinations_all_predicted_a_b() {
         cost_iterations_max: vec![3],
         all_predicted: vec![false, true],
         top_n_after_prediction: vec![0],
+        shrinkage_lambda: vec![0.0],
     };
     let combos = generate_combinations(&config);
     assert_eq!(combos.len(), 2, "A/B should produce 2 combinations");
