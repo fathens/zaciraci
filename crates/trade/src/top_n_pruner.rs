@@ -68,9 +68,40 @@ pub(crate) fn prune_top_n(
 mod tests {
     use super::*;
     use common::types::TokenAccount;
+    use proptest::prelude::*;
 
     fn token(s: &str) -> TokenOutAccount {
         s.parse::<TokenAccount>().unwrap().into()
+    }
+
+    /// Generate a small population of tokens with arbitrary finite f64 scores,
+    /// a held subset, and an n-cap.
+    fn pruning_inputs() -> impl Strategy<
+        Value = (
+            BTreeMap<TokenOutAccount, f64>,
+            BTreeSet<TokenOutAccount>,
+            usize,
+        ),
+    > {
+        // Use letter-keyed tokens "a.near".."j.near" so we cover ~10 candidates.
+        let token_names: Vec<TokenOutAccount> =
+            ('a'..='j').map(|c| token(&format!("{c}.near"))).collect();
+        let n_tokens = token_names.len();
+        (
+            prop::collection::vec(-1e3_f64..1e3, n_tokens),
+            prop::collection::vec(any::<bool>(), n_tokens),
+            0_usize..=n_tokens,
+        )
+            .prop_map(move |(scores, held_flags, n)| {
+                let scores: BTreeMap<_, _> = token_names.iter().cloned().zip(scores).collect();
+                let held: BTreeSet<_> = token_names
+                    .iter()
+                    .cloned()
+                    .zip(held_flags)
+                    .filter_map(|(t, keep)| if keep { Some(t) } else { None })
+                    .collect();
+                (scores, held, n)
+            })
     }
 
     #[test]
@@ -160,5 +191,53 @@ mod tests {
         assert_eq!(kept.len(), 2);
         assert!(kept.contains(&token("b.near")));
         assert!(kept.contains(&token("c.near")));
+    }
+
+    proptest! {
+        /// `held` は常に `result` の部分集合 (sell-only bypass)。
+        #[test]
+        fn held_is_subset_of_result((scores, held, n) in pruning_inputs()) {
+            let kept = prune_top_n(&scores, &held, n);
+            for h in &held {
+                prop_assert!(kept.contains(h), "held token {h} missing from result");
+            }
+        }
+
+        /// 結果サイズの上限: |held| + min(n, non_held_count)。
+        #[test]
+        fn result_size_bounded((scores, held, n) in pruning_inputs()) {
+            let kept = prune_top_n(&scores, &held, n);
+            let non_held_count = scores.keys().filter(|t| !held.contains(t)).count();
+            let upper = held.len() + n.min(non_held_count);
+            prop_assert!(
+                kept.len() <= upper,
+                "result {} > bound {}", kept.len(), upper,
+            );
+        }
+
+        /// 非保有で結果に含まれる token は、含まれない非保有 token と同等以上のスコアを持つ。
+        /// (NaN は事前除外されるので両側に出現しない)
+        #[test]
+        fn non_held_results_dominate_excluded((scores, held, n) in pruning_inputs()) {
+            let kept = prune_top_n(&scores, &held, n);
+            let in_kept_non_held: Vec<f64> = scores
+                .iter()
+                .filter(|(t, s)| kept.contains(*t) && !held.contains(*t) && !s.is_nan())
+                .map(|(_, s)| *s)
+                .collect();
+            let in_excluded: Vec<f64> = scores
+                .iter()
+                .filter(|(t, s)| !kept.contains(*t) && !s.is_nan())
+                .map(|(_, s)| *s)
+                .collect();
+            let min_kept = in_kept_non_held.iter().copied().fold(f64::INFINITY, f64::min);
+            let max_excluded = in_excluded.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            if !in_kept_non_held.is_empty() && !in_excluded.is_empty() {
+                prop_assert!(
+                    min_kept >= max_excluded,
+                    "min kept non-held {min_kept} < max excluded {max_excluded}",
+                );
+            }
+        }
     }
 }
