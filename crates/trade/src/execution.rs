@@ -9,7 +9,7 @@ use crate::Result;
 use crate::slippage::{ExpectedReturn, SlippagePolicy};
 use crate::swap::SwapParams;
 use crate::{recorder::TradeRecorder, swap};
-use bigdecimal::{BigDecimal, ToPrimitive, Zero};
+use bigdecimal::{BigDecimal, FromPrimitive, ToPrimitive, Zero};
 use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx, ViewContract};
 use blockchain::wallet::Wallet;
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -909,15 +909,17 @@ fn spawn_cleanup_old_evaluation_periods(retention_days: u32) {
 
 /// Evaluation-period management decision.
 ///
-/// Determined purely from time vs. period duration. Each variant carries the
-/// minimum data the corresponding async handler needs from the loaded `EvaluationPeriod`,
-/// so the dispatcher does not need to keep the original record around.
+/// `Continue` / `EndAndStartNew` / `Bootstrap` are determined purely from time
+/// vs. period duration. `ForceLiquidate` is produced by an additional async
+/// drawdown check that runs only when the period would otherwise continue and
+/// the circuit-breaker flag is enabled.
 #[derive(Debug)]
 pub(crate) enum PeriodAction {
     /// Period is still active and trading should continue with existing positions.
     Continue {
         period_id: String,
         period_selected_tokens: Option<Vec<Option<String>>>,
+        period_initial_value: YoctoAmount,
         days_elapsed: i64,
     },
     /// Scheduled end-of-period: liquidate, harvest, then start a new period.
@@ -926,8 +928,121 @@ pub(crate) enum PeriodAction {
         period_initial_value: YoctoAmount,
         days_elapsed: i64,
     },
+    /// Drawdown circuit breaker fired: same liquidation flow as
+    /// `EndAndStartNew` but triggered by intra-period loss instead of by
+    /// elapsed time.
+    ForceLiquidate {
+        period_id: String,
+        period_initial_value: YoctoAmount,
+        days_elapsed: i64,
+        current_value: NearValue,
+        threshold: f64,
+    },
     /// No prior period exists; create the first one.
     Bootstrap,
+}
+
+/// Pure decision: does the current portfolio value cross the drawdown threshold?
+///
+/// The trigger condition is `current < initial × (1 - threshold)`, evaluated in
+/// `BigDecimal` to avoid `f64` precision loss on yocto-NEAR magnitudes.
+///
+/// Defensive returns of `false`:
+/// - `initial.is_zero()` → unable to compute a meaningful drawdown ratio.
+/// - `threshold` is non-finite, ≤ 0, or ≥ 1 → operator misconfigured the flag;
+///   typed-config clamping should already prevent this, but we re-check rather
+///   than let an injected NaN silently disable comparisons.
+pub(crate) fn drawdown_triggers_breaker(
+    initial: &NearValue,
+    current: &NearValue,
+    threshold: f64,
+) -> bool {
+    if initial.is_zero() {
+        return false;
+    }
+    if !threshold.is_finite() || threshold <= 0.0 || threshold >= 1.0 {
+        return false;
+    }
+    let one_minus_threshold = match BigDecimal::from_f64(1.0 - threshold) {
+        Some(v) => v,
+        None => return false,
+    };
+    let dd_limit = initial.as_bigdecimal() * &one_minus_threshold;
+    current.as_bigdecimal() < &dd_limit
+}
+
+/// Convert a yocto-denominated period initial value into the NearValue domain
+/// type used by `swap::calculate_total_portfolio_value`. The conversion goes
+/// through `NearAmount` so the rounding follows the same `YOCTO_PER_NEAR`
+/// division as everywhere else in the codebase.
+fn yocto_amount_to_near_value(y: &YoctoAmount) -> NearValue {
+    NearValue::from_near(y.to_near().as_bigdecimal().clone())
+}
+
+/// Fetch the current portfolio value for the active period and return
+/// `Some(current_value)` iff the drawdown crosses `threshold`. Holdings are
+/// preferred from the DB snapshot (the same source `fetch_held_tokens` uses);
+/// when the snapshot is missing we fall back to RPC against the period's
+/// `selected_tokens` set, which mirrors the existing fallback policy. If
+/// neither path yields a balance map (for example on the very first cycle of a
+/// brand-new period) the function returns `Ok(None)` rather than failing the
+/// whole `manage_evaluation_period` cycle.
+async fn evaluate_dd_breaker<C, W>(
+    client: &C,
+    wallet: &W,
+    period_id: &str,
+    period_initial_value: &YoctoAmount,
+    period_selected_tokens: &Option<Vec<Option<String>>>,
+    threshold: f64,
+    log: &slog::Logger,
+) -> Result<Option<NearValue>>
+where
+    C: AccountInfo + SendTx + ViewContract + GasInfo,
+    <C as SendTx>::Output: Display + SentTx,
+    W: Wallet,
+{
+    let balances = match crate::snapshot::get_holdings_from_db(period_id).await? {
+        Some(b) => b,
+        None => {
+            let token_accounts: Vec<TokenAccount> = period_selected_tokens
+                .as_ref()
+                .map(|tokens| {
+                    tokens
+                        .iter()
+                        .filter_map(|s| s.as_ref())
+                        .filter_map(|s| s.parse::<TokenAccount>().ok())
+                        .collect()
+                })
+                .unwrap_or_default();
+            if token_accounts.is_empty() {
+                debug!(log, "DD breaker eval skipped: no snapshot and no selected tokens";
+                    "period_id" => period_id);
+                return Ok(None);
+            }
+            match swap::get_current_portfolio_balances(client, wallet, &token_accounts).await {
+                Ok(b) => b,
+                Err(e) => {
+                    warn!(log, "DD breaker eval skipped: RPC fallback failed";
+                        "error" => ?e, "period_id" => period_id);
+                    return Ok(None);
+                }
+            }
+        }
+    };
+
+    let current_value = swap::calculate_total_portfolio_value(&balances).await?;
+    let initial_near = yocto_amount_to_near_value(period_initial_value);
+
+    if drawdown_triggers_breaker(&initial_near, &current_value, threshold) {
+        Ok(Some(current_value))
+    } else {
+        debug!(log, "DD breaker not triggered";
+            "period_id" => period_id,
+            "initial_value_near" => %initial_near,
+            "current_value_near" => %current_value,
+            "threshold" => threshold);
+        Ok(None)
+    }
 }
 
 pub(crate) fn determine_period_action(
@@ -950,6 +1065,7 @@ pub(crate) fn determine_period_action(
                 PeriodAction::Continue {
                     period_id: period.period_id,
                     period_selected_tokens: period.selected_tokens,
+                    period_initial_value: period.initial_value,
                     days_elapsed,
                 }
             }
@@ -1030,7 +1146,7 @@ where
     <C as SendTx>::Output: Display + SentTx,
     W: Wallet,
 {
-    info!(log, "evaluation period ended, starting new period";
+    info!(log, "ending evaluation period, starting new period";
         "previous_period_id" => %period_id,
         "days_elapsed" => days_elapsed
     );
@@ -1185,16 +1301,55 @@ where
 
     // 最新の評価期間を取得して、時間に基づいて action を決定
     let latest_period = EvaluationPeriod::get_latest_async().await?;
-    let action = determine_period_action(
+    let mut action = determine_period_action(
         latest_period,
         current_time.naive_utc(),
         evaluation_period_days,
     );
 
+    // Continue 判定なら DD circuit breaker を評価し、トリガーされれば
+    // ForceLiquidate に置き換える。フラグ無効・評価不能 (snapshot 未生成 +
+    // RPC fallback 失敗) のときは元の Continue を維持する fail-safe 動作。
+    if cfg.trade_dd_circuit_breaker_enabled()
+        && let PeriodAction::Continue {
+            period_id,
+            period_selected_tokens,
+            period_initial_value,
+            days_elapsed,
+        } = &action
+    {
+        let threshold = cfg.trade_dd_threshold();
+        let dd_eval = evaluate_dd_breaker(
+            client,
+            wallet,
+            period_id,
+            period_initial_value,
+            period_selected_tokens,
+            threshold,
+            &log,
+        )
+        .await?;
+        if let Some(current_value) = dd_eval {
+            warn!(log, "DD circuit breaker triggered, switching to force-liquidate";
+                "period_id" => %period_id,
+                "current_value_near" => %current_value,
+                "threshold" => threshold,
+                "days_elapsed" => days_elapsed);
+            action = PeriodAction::ForceLiquidate {
+                period_id: period_id.clone(),
+                period_initial_value: period_initial_value.clone(),
+                days_elapsed: *days_elapsed,
+                current_value,
+                threshold,
+            };
+        }
+    }
+
     match action {
         PeriodAction::Continue {
             period_id,
             period_selected_tokens,
+            period_initial_value: _,
             days_elapsed,
         } => {
             handle_continue(
@@ -1211,6 +1366,29 @@ where
             period_initial_value,
             days_elapsed,
         } => {
+            handle_end_and_start_new(
+                client,
+                wallet,
+                period_id,
+                period_initial_value,
+                days_elapsed,
+                cfg,
+                &log,
+            )
+            .await
+        }
+        PeriodAction::ForceLiquidate {
+            period_id,
+            period_initial_value,
+            days_elapsed,
+            current_value,
+            threshold,
+        } => {
+            warn!(log, "force-liquidating due to drawdown circuit breaker";
+                "previous_period_id" => %period_id,
+                "days_elapsed" => days_elapsed,
+                "current_value_near" => %current_value,
+                "threshold" => threshold);
             handle_end_and_start_new(
                 client,
                 wallet,

@@ -638,6 +638,43 @@ fn clamp_trade_max_position_vs_pool_ratio(v: f64) -> f64 {
     }
 }
 
+/// Lower bound for [`ConfigAccess::trade_dd_threshold`].
+///
+/// `0.01` (= 1% drawdown) is the floor for any meaningful circuit breaker;
+/// thresholds below 1% would fire on routine intraday volatility and turn
+/// the breaker into a churn generator.
+const TRADE_DD_THRESHOLD_LOWER: f64 = 0.01;
+
+/// Upper bound for [`ConfigAccess::trade_dd_threshold`].
+///
+/// `0.99` (= 99% drawdown) keeps the breaker at least notionally enabled.
+/// `1.0` would mean "only fire when the entire portfolio is gone", which is
+/// equivalent to disabling the feature; the dedicated
+/// `TRADE_DD_CIRCUIT_BREAKER_ENABLED` flag should be used to disable it.
+const TRADE_DD_THRESHOLD_UPPER: f64 = 0.99;
+
+/// NaN fallback for [`ConfigAccess::trade_dd_threshold`].
+///
+/// A poisoned config read does not propagate `NaN` into the period-end
+/// comparison `current/initial < 1 - threshold`. The conservative fallback
+/// (15%) matches the documented default and preserves the same semantics
+/// as if the operator had not set the variable at all.
+const TRADE_DD_THRESHOLD_NAN_FALLBACK: f64 = 0.15;
+
+/// Idempotent clamp applied to `trade_dd_threshold` reads.
+///
+/// `NaN` is mapped to [`TRADE_DD_THRESHOLD_NAN_FALLBACK`] so that an
+/// injected `NaN` does not silently disable the circuit breaker (a `NaN`
+/// comparison would always evaluate to false). `±INFINITY` is handled
+/// correctly by `f64::clamp` itself.
+fn clamp_trade_dd_threshold(v: f64) -> f64 {
+    if v.is_nan() {
+        TRADE_DD_THRESHOLD_NAN_FALLBACK
+    } else {
+        v.clamp(TRADE_DD_THRESHOLD_LOWER, TRADE_DD_THRESHOLD_UPPER)
+    }
+}
+
 define_typed_config! {
     // ── trade ──
 
@@ -705,6 +742,32 @@ define_typed_config! {
     fn trade_unwrap_on_stop() -> bool {
         key: "TRADE_UNWRAP_ON_STOP",
         default: false
+    }
+
+    /// Enable the period-mid drawdown circuit breaker.
+    ///
+    /// When `true`, `manage_evaluation_period` checks the current portfolio
+    /// value against `period.initial_value` on every cycle and forces an
+    /// early end-of-period (liquidation + new period) once drawdown exceeds
+    /// `trade_dd_threshold`. When `false` (default), the legacy behavior is
+    /// preserved: positions are held until the scheduled
+    /// `trade_evaluation_days` boundary regardless of intra-period loss.
+    fn trade_dd_circuit_breaker_enabled() -> bool {
+        key: "TRADE_DD_CIRCUIT_BREAKER_ENABLED",
+        default: false
+    }
+
+    /// Drawdown threshold (as a fraction of the period's initial value)
+    /// above which the circuit breaker fires.
+    ///
+    /// The trigger condition is `current_value / initial_value < 1 - threshold`,
+    /// i.e. a 0.15 threshold fires when the portfolio has lost more than 15%
+    /// of its period-start value. Has no effect when
+    /// `trade_dd_circuit_breaker_enabled` is `false`.
+    fn trade_dd_threshold() -> f64 {
+        key: "TRADE_DD_THRESHOLD",
+        default: 0.15,
+        clamp: clamp_trade_dd_threshold
     }
 
     /// Parallel prediction tasks
