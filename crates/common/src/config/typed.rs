@@ -675,6 +675,162 @@ fn clamp_trade_dd_threshold(v: f64) -> f64 {
     }
 }
 
+// ── PORTFOLIO_VOLATILITY_TARGET (Phase 1: vol targeting) ──
+
+/// Lower bound for [`ConfigAccess::portfolio_volatility_target`].
+///
+/// `0.005` (= 0.5 %/day, ~8 % annualized) is the floor for any nontrivial
+/// vol-targeting signal; below this every realistic crypto-portfolio
+/// volatility forces the cap to the absolute floor (10 %) and the signal
+/// degenerates into a constant-cash regime.
+const PORTFOLIO_VOLATILITY_TARGET_LOWER: f64 = 0.005;
+
+/// Upper bound for [`ConfigAccess::portfolio_volatility_target`].
+///
+/// `0.05` (= 5 %/day, ~80 % annualized) is the ceiling at which the
+/// vol-targeting signal saturates almost always at `cap = 1.0` for typical
+/// diversified crypto portfolios; beyond that the signal is effectively
+/// disabled regardless of the flag, so we clamp here for a clearer
+/// "this is the supported range" error rather than silent no-op.
+const PORTFOLIO_VOLATILITY_TARGET_UPPER: f64 = 0.05;
+
+/// NaN fallback for [`ConfigAccess::portfolio_volatility_target`].
+const PORTFOLIO_VOLATILITY_TARGET_NAN_FALLBACK: f64 = 0.015;
+
+fn clamp_portfolio_volatility_target(v: f64) -> f64 {
+    if v.is_nan() {
+        PORTFOLIO_VOLATILITY_TARGET_NAN_FALLBACK
+    } else {
+        v.clamp(
+            PORTFOLIO_VOLATILITY_TARGET_LOWER,
+            PORTFOLIO_VOLATILITY_TARGET_UPPER,
+        )
+    }
+}
+
+// ── PORTFOLIO_HALF_KELLY_FRACTION (Phase 3a: half-Kelly) ──
+
+/// Lower bound for [`ConfigAccess::portfolio_half_kelly_fraction`].
+///
+/// `0.1` (= one-tenth Kelly) is the floor; lower values turn the Kelly cap
+/// into a per-asset rounding-down, indistinguishable from the existing
+/// `MAX_POSITION_SIZE` cap.
+const PORTFOLIO_HALF_KELLY_FRACTION_LOWER: f64 = 0.1;
+
+/// Upper bound for [`ConfigAccess::portfolio_half_kelly_fraction`].
+///
+/// `0.5` (= half Kelly, the namesake of the module) is the ceiling. Full
+/// Kelly is famously fragile to ER estimation noise and a 10 % MAPE on `μ_i`
+/// translates to ~100 % error on `f_i`; we keep the operator from accidentally
+/// dialing in unstable territory.
+const PORTFOLIO_HALF_KELLY_FRACTION_UPPER: f64 = 0.5;
+
+const PORTFOLIO_HALF_KELLY_FRACTION_NAN_FALLBACK: f64 = 0.25;
+
+fn clamp_portfolio_half_kelly_fraction(v: f64) -> f64 {
+    if v.is_nan() {
+        PORTFOLIO_HALF_KELLY_FRACTION_NAN_FALLBACK
+    } else {
+        v.clamp(
+            PORTFOLIO_HALF_KELLY_FRACTION_LOWER,
+            PORTFOLIO_HALF_KELLY_FRACTION_UPPER,
+        )
+    }
+}
+
+// ── PORTFOLIO_STOP_LOSS_THRESHOLD (Phase 3b: per-token stop-loss) ──
+
+/// Lower bound for [`ConfigAccess::portfolio_stop_loss_threshold`].
+///
+/// `0.05` (= 5 % drawdown) is the floor; tighter thresholds fire on routine
+/// intraday volatility (~3-6 %/day for crypto) and turn the stop-loss into
+/// a churn generator.
+const PORTFOLIO_STOP_LOSS_THRESHOLD_LOWER: f64 = 0.05;
+
+/// Upper bound for [`ConfigAccess::portfolio_stop_loss_threshold`].
+///
+/// `0.30` (= 30 % drawdown) is the ceiling; beyond that the trigger rarely
+/// fires in practice and the stop-loss becomes a silent no-op.
+const PORTFOLIO_STOP_LOSS_THRESHOLD_UPPER: f64 = 0.30;
+
+const PORTFOLIO_STOP_LOSS_THRESHOLD_NAN_FALLBACK: f64 = 0.10;
+
+fn clamp_portfolio_stop_loss_threshold(v: f64) -> f64 {
+    if v.is_nan() {
+        PORTFOLIO_STOP_LOSS_THRESHOLD_NAN_FALLBACK
+    } else {
+        v.clamp(
+            PORTFOLIO_STOP_LOSS_THRESHOLD_LOWER,
+            PORTFOLIO_STOP_LOSS_THRESHOLD_UPPER,
+        )
+    }
+}
+
+// ── PORTFOLIO_REGIME_SMA_PERIOD (Phase 2: market breadth) ──
+
+/// Lower bound for [`ConfigAccess::portfolio_regime_sma_period`].
+///
+/// `5` (= 5 days) is the floor; shorter windows make the breadth indicator
+/// indistinguishable from the latest price tick and produce noise rather
+/// than signal.
+const PORTFOLIO_REGIME_SMA_PERIOD_LOWER: u32 = 5;
+
+/// Upper bound for [`ConfigAccess::portfolio_regime_sma_period`].
+///
+/// `60` (= 60 days) is the ceiling. Beyond that the simulate window
+/// (typically 10-30 days) cannot supply enough history for any token, and
+/// every breadth call collapses to the `Neutral` defensive fallback,
+/// which is equivalent to disabling the flag.
+const PORTFOLIO_REGIME_SMA_PERIOD_UPPER: u32 = 60;
+
+fn clamp_portfolio_regime_sma_period(v: u32) -> u32 {
+    v.clamp(
+        PORTFOLIO_REGIME_SMA_PERIOD_LOWER,
+        PORTFOLIO_REGIME_SMA_PERIOD_UPPER,
+    )
+}
+
+// ── PORTFOLIO_REGIME_*_EXPOSURE (Phase 2: regime → cap mapping) ──
+
+const PORTFOLIO_REGIME_EXPOSURE_LOWER: f64 = 0.0;
+const PORTFOLIO_REGIME_EXPOSURE_UPPER: f64 = 1.0;
+const PORTFOLIO_REGIME_BULL_EXPOSURE_NAN_FALLBACK: f64 = 1.0;
+const PORTFOLIO_REGIME_NEUTRAL_EXPOSURE_NAN_FALLBACK: f64 = 0.75;
+const PORTFOLIO_REGIME_BEAR_EXPOSURE_NAN_FALLBACK: f64 = 0.5;
+
+fn clamp_portfolio_regime_bull_exposure(v: f64) -> f64 {
+    if v.is_nan() {
+        PORTFOLIO_REGIME_BULL_EXPOSURE_NAN_FALLBACK
+    } else {
+        v.clamp(
+            PORTFOLIO_REGIME_EXPOSURE_LOWER,
+            PORTFOLIO_REGIME_EXPOSURE_UPPER,
+        )
+    }
+}
+
+fn clamp_portfolio_regime_neutral_exposure(v: f64) -> f64 {
+    if v.is_nan() {
+        PORTFOLIO_REGIME_NEUTRAL_EXPOSURE_NAN_FALLBACK
+    } else {
+        v.clamp(
+            PORTFOLIO_REGIME_EXPOSURE_LOWER,
+            PORTFOLIO_REGIME_EXPOSURE_UPPER,
+        )
+    }
+}
+
+fn clamp_portfolio_regime_bear_exposure(v: f64) -> f64 {
+    if v.is_nan() {
+        PORTFOLIO_REGIME_BEAR_EXPOSURE_NAN_FALLBACK
+    } else {
+        v.clamp(
+            PORTFOLIO_REGIME_EXPOSURE_LOWER,
+            PORTFOLIO_REGIME_EXPOSURE_UPPER,
+        )
+    }
+}
+
 define_typed_config! {
     // ── trade ──
 
@@ -768,6 +924,113 @@ define_typed_config! {
         key: "TRADE_DD_THRESHOLD",
         default: 0.15,
         clamp: clamp_trade_dd_threshold
+    }
+
+    /// Phase 1: enable volatility targeting for the aggregate cap.
+    ///
+    /// When `true`, `compute_vol_target_cap(σ_target, σ_portfolio)` runs
+    /// every cycle and contributes a `Volatility(cap)` signal to
+    /// `compose_aggregate_cap`. Default `false` (legacy behaviour: no
+    /// vol-targeting de-risk).
+    fn portfolio_volatility_target_enabled() -> bool {
+        key: "PORTFOLIO_VOLATILITY_TARGET_ENABLED",
+        default: false
+    }
+
+    /// Daily volatility target for `compute_vol_target_cap`.
+    ///
+    /// `cap = σ_target / σ_portfolio`, so smaller values force more cash.
+    /// Default 0.015 (= 1.5 %/day, ~24 % annualized) matches hedge-fund VaR
+    /// conventions and is conservative enough that typical crypto
+    /// portfolios get meaningful de-risk in volatile regimes without
+    /// collapsing to full cash in calm ones. Has no effect when
+    /// `portfolio_volatility_target_enabled` is `false`.
+    fn portfolio_volatility_target() -> f64 {
+        key: "PORTFOLIO_VOLATILITY_TARGET",
+        default: 0.015,
+        clamp: clamp_portfolio_volatility_target
+    }
+
+    /// Phase 2: enable market-breadth regime detection.
+    ///
+    /// When `true`, `detect_regime_from_prices` runs every cycle and
+    /// contributes a `Breadth(MarketRegime::aggregate_cap(scales))` signal
+    /// to `compose_aggregate_cap`. Default `false`.
+    fn portfolio_regime_breadth_enabled() -> bool {
+        key: "PORTFOLIO_REGIME_BREADTH_ENABLED",
+        default: false
+    }
+
+    /// SMA window length (days) used by the breadth indicator.
+    fn portfolio_regime_sma_period() -> u32 {
+        key: "PORTFOLIO_REGIME_SMA_PERIOD",
+        default: 20,
+        clamp: clamp_portfolio_regime_sma_period
+    }
+
+    /// Aggregate cap for the `Bull` regime.
+    fn portfolio_regime_bull_exposure() -> f64 {
+        key: "PORTFOLIO_REGIME_BULL_EXPOSURE",
+        default: 1.0,
+        clamp: clamp_portfolio_regime_bull_exposure
+    }
+
+    /// Aggregate cap for the `Neutral` regime.
+    fn portfolio_regime_neutral_exposure() -> f64 {
+        key: "PORTFOLIO_REGIME_NEUTRAL_EXPOSURE",
+        default: 0.75,
+        clamp: clamp_portfolio_regime_neutral_exposure
+    }
+
+    /// Aggregate cap for the `Bear` regime.
+    fn portfolio_regime_bear_exposure() -> f64 {
+        key: "PORTFOLIO_REGIME_BEAR_EXPOSURE",
+        default: 0.5,
+        clamp: clamp_portfolio_regime_bear_exposure
+    }
+
+    /// Phase 3a: enable per-asset half-Kelly upper bound.
+    ///
+    /// When `true`, `compute_half_kelly_uppers` runs every cycle and the
+    /// resulting per-asset uppers tighten `BoxBounds` via
+    /// `apply_half_kelly`. Default `false`.
+    fn portfolio_half_kelly_enabled() -> bool {
+        key: "PORTFOLIO_HALF_KELLY_ENABLED",
+        default: false
+    }
+
+    /// Kelly fraction for `compute_half_kelly_uppers`.
+    ///
+    /// Default `0.25` (Quarter Kelly) — Kelly sizing is fragile to ER
+    /// estimation noise; 10 % MAPE on `μ_i` translates to ~100 % error on
+    /// `f_i = (μ_i - rf) / σ²_i`. A fractional Kelly tames this. Has no
+    /// effect when `portfolio_half_kelly_enabled` is `false`.
+    fn portfolio_half_kelly_fraction() -> f64 {
+        key: "PORTFOLIO_HALF_KELLY_FRACTION",
+        default: 0.25,
+        clamp: clamp_portfolio_half_kelly_fraction
+    }
+
+    /// Phase 3b: enable per-token stop-loss override.
+    ///
+    /// When `true`, every held token whose realised drawdown exceeds
+    /// `portfolio_stop_loss_threshold` gets its per-asset upper forced to
+    /// `0` (sell-only). Default `false`.
+    fn portfolio_stop_loss_enabled() -> bool {
+        key: "PORTFOLIO_STOP_LOSS_ENABLED",
+        default: false
+    }
+
+    /// Drawdown threshold (as a fraction of entry price) above which the
+    /// per-token stop-loss fires.
+    ///
+    /// Default `0.10` (= 10 % drawdown) matches the ~2σ-event heuristic
+    /// for typical 3-6 %/day crypto volatility — tight enough to cap
+    /// realised loss without firing on routine intraday swings.
+    fn portfolio_stop_loss_threshold() -> f64 {
+        key: "PORTFOLIO_STOP_LOSS_THRESHOLD",
+        default: 0.10,
+        clamp: clamp_portfolio_stop_loss_threshold
     }
 
     /// Parallel prediction tasks
