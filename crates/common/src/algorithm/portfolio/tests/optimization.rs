@@ -1373,3 +1373,85 @@ fn box_maximize_sharpe_bounded_respects_per_asset_upper() {
     let sum_tight: f64 = tight.iter().sum();
     assert!((sum_tight - 1.0).abs() < 1e-10);
 }
+
+// ── BoxBoundsCap::AtMost (cash-bucket / aggregate cap) ──
+
+/// `cap = 1.0` is the boundary that should reproduce the legacy
+/// `sum(w) = 1` behaviour exactly (Sharpe scale invariance with α = 1).
+#[test]
+fn aggregate_cap_at_unit_matches_equality() {
+    let returns = generate_synthetic_returns(6, 30, 70001);
+    let cov = calculate_covariance_matrix(&returns);
+    let expected_returns: Vec<f64> = vec![0.05, 0.10, 0.02, 0.08, 0.04, 0.07];
+    let max_position = 0.4;
+
+    let baseline_bounds = BoxBounds::uniform(6, max_position);
+    let baseline = box_maximize_sharpe_bounded(&expected_returns, &cov, &baseline_bounds)
+        .expect("baseline should converge");
+
+    let capped_bounds = BoxBounds::uniform(6, max_position)
+        .with_aggregate_cap(1.0)
+        .expect("cap=1.0 is valid");
+    let capped = box_maximize_sharpe_bounded(&expected_returns, &cov, &capped_bounds)
+        .expect("cap=1.0 should converge");
+
+    assert_eq!(baseline.len(), capped.len());
+    for (i, (a, b)) in baseline.iter().zip(capped.iter()).enumerate() {
+        assert!((a - b).abs() < 1e-15, "i={i}: baseline={a}, capped={b}");
+    }
+}
+
+/// `cap → 0` should drive every weight to zero (Sharpe scale invariance with
+/// α → 0). The remaining 1.0 is implicit cash.
+#[test]
+fn aggregate_cap_near_zero_pushes_weights_to_zero() {
+    let returns = generate_synthetic_returns(5, 30, 70002);
+    let cov = calculate_covariance_matrix(&returns);
+    let expected_returns: Vec<f64> = vec![0.05, 0.03, 0.02, 0.04, 0.06];
+    let bounds = BoxBounds::uniform(5, 0.5).with_aggregate_cap(0.01).unwrap();
+
+    let weights =
+        box_maximize_sharpe_bounded(&expected_returns, &cov, &bounds).expect("should converge");
+
+    // sum(w) ≈ 0.01, so cash share ≈ 0.99
+    let sum: f64 = weights.iter().sum();
+    assert!(
+        (sum - 0.01).abs() < 1e-10,
+        "sum(w) = {sum}, expected ≈ 0.01"
+    );
+    for &w in &weights {
+        assert!(w >= 0.0 - 1e-12);
+        assert!(w <= 0.01 + 1e-10);
+    }
+}
+
+/// Sharpe-direction invariance: capping should preserve the relative
+/// ordering of weights (the optimizer picks the same tangency portfolio,
+/// just at a smaller scale).
+#[test]
+fn aggregate_cap_preserves_weight_ratios() {
+    let returns = generate_synthetic_returns(5, 30, 70003);
+    let cov = calculate_covariance_matrix(&returns);
+    let expected_returns: Vec<f64> = vec![0.06, 0.02, 0.05, 0.03, 0.07];
+
+    let baseline_bounds = BoxBounds::uniform(5, 0.5);
+    let baseline = box_maximize_sharpe_bounded(&expected_returns, &cov, &baseline_bounds)
+        .expect("baseline should converge");
+
+    let cap = 0.4;
+    let capped_bounds = BoxBounds::uniform(5, 0.5).with_aggregate_cap(cap).unwrap();
+    let capped = box_maximize_sharpe_bounded(&expected_returns, &cov, &capped_bounds)
+        .expect("capped should converge");
+
+    let sum_capped: f64 = capped.iter().sum();
+    assert!((sum_capped - cap).abs() < 1e-10, "sum(w) = {sum_capped}");
+
+    // capped[i] should equal baseline[i] * cap (same direction, scaled)
+    for (i, (b, c)) in baseline.iter().zip(capped.iter()).enumerate() {
+        assert!(
+            (b * cap - c).abs() < 1e-12,
+            "i={i}: baseline*cap={}, capped={c}",
+            b * cap
+        );
+    }
+}

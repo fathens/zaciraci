@@ -892,6 +892,29 @@ pub fn box_maximize_sharpe_bounded(
     covariance_matrix: &Array2<f64>,
     bounds: &BoxBounds,
 ) -> std::result::Result<Vec<f64>, OptimizerError> {
+    let weights = box_maximize_sharpe_bounded_inner(expected_returns, covariance_matrix, bounds)?;
+    Ok(apply_aggregate_cap(weights, bounds.aggregate_cap()))
+}
+
+/// Sharpe scale invariance: solving the simplex (`sum=1`) tangency portfolio
+/// and then multiplying weights by `cap` preserves the maximum-Sharpe direction
+/// (because `Sharpe(α·w) = Sharpe(w)` for `α > 0`). The remaining
+/// `1 - sum(w)` is implicit cash.
+///
+/// Equality (legacy) returns weights untouched, so this function is a no-op
+/// on the existing call paths.
+fn apply_aggregate_cap(weights: Vec<f64>, cap: BoxBoundsCap) -> Vec<f64> {
+    match cap {
+        BoxBoundsCap::Equality => weights,
+        BoxBoundsCap::AtMost(c) => weights.into_iter().map(|w| w * c).collect(),
+    }
+}
+
+fn box_maximize_sharpe_bounded_inner(
+    expected_returns: &[f64],
+    covariance_matrix: &Array2<f64>,
+    bounds: &BoxBounds,
+) -> std::result::Result<Vec<f64>, OptimizerError> {
     let n = expected_returns.len();
     if n == 0 {
         return Ok(vec![]);
