@@ -1636,6 +1636,7 @@ fn pd_with_three_tokens() -> PortfolioData {
         }),
         cost_deductions,
         pred_uncertainty: None,
+        aggregate_cap_strategy: Default::default(),
     }
 }
 

@@ -1181,6 +1181,8 @@ where
         None
     };
 
+    let aggregate_cap_strategy = crate::regime::build_aggregate_cap_strategy(cfg);
+
     let portfolio_data = PortfolioData {
         tokens: token_data,
         predictions,
@@ -1189,6 +1191,7 @@ where
         pred_err_diagonal,
         cost_deductions: BTreeMap::new(),
         pred_uncertainty,
+        aggregate_cap_strategy,
     };
 
     funnel.optimizer_input = portfolio_data.tokens.len();

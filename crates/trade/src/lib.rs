@@ -9,6 +9,7 @@ pub(crate) mod portfolio_cost;
 pub mod predict;
 pub mod prediction_accuracy;
 pub mod recorder;
+pub(crate) mod regime;
 pub mod slippage;
 pub mod snapshot;
 pub mod strategy;

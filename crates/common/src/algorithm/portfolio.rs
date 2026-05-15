@@ -13,6 +13,121 @@ use super::types::*;
 pub mod box_bounds;
 pub use box_bounds::{BoxBounds, BoxBoundsCap, BoxBoundsError};
 
+use crate::algorithm::aggregate_cap::{
+    AggregateCapSignal, AggregateCapStrategy, compose_aggregate_cap,
+};
+use crate::algorithm::half_kelly::compute_half_kelly_uppers;
+use crate::algorithm::regime::detect_regime_from_prices;
+use crate::algorithm::stop_loss::should_trigger_stop_loss;
+use crate::algorithm::vol_targeting::compute_vol_target_cap;
+
+/// Apply the cap-side adjustments dictated by `strategy` to `bounds`. Pure
+/// no-op when every signal is off (legacy code path).
+///
+/// Order:
+/// 1. Compose `AggregateCapSignal`s from vol-targeting (proxy σ via equal
+///    weights) and breadth-regime (per-token SMA).
+/// 2. Apply the composed cap via `BoxBounds::with_aggregate_cap`.
+/// 3. Apply per-asset half-Kelly uppers via `BoxBounds::apply_half_kelly`.
+fn apply_aggregate_cap_strategy(
+    bounds: BoxBounds,
+    strategy: &AggregateCapStrategy,
+    expected_returns: &[f64],
+    covariance_matrix: &Array2<f64>,
+    historical_prices: &BTreeMap<TokenOutAccount, crate::algorithm::types::PriceHistory>,
+) -> std::result::Result<BoxBounds, BoxBoundsError> {
+    if strategy.is_legacy() {
+        return Ok(bounds);
+    }
+
+    let mut signals: Vec<AggregateCapSignal> = Vec::new();
+
+    if let Some(sigma_target) = strategy.vol_target_sigma {
+        let n = expected_returns.len();
+        if n > 0 {
+            // Use equal-weighted portfolio σ as the proxy. This is independent
+            // of the optimizer's output (so we can apply the cap pre-solve)
+            // and reflects the diversified covariance structure.
+            let proxy_weights = vec![1.0 / n as f64; n];
+            let sigma_portfolio = calculate_portfolio_std(&proxy_weights, covariance_matrix);
+            signals.push(AggregateCapSignal::Volatility(compute_vol_target_cap(
+                sigma_target,
+                sigma_portfolio,
+            )));
+        }
+    }
+
+    if let Some((sma_period, scales)) = &strategy.regime_breadth {
+        let regime = detect_regime_from_prices(historical_prices, *sma_period);
+        signals.push(AggregateCapSignal::Breadth(regime.aggregate_cap(scales)));
+    }
+
+    let mut new_bounds = bounds;
+    if !signals.is_empty() {
+        let cap = compose_aggregate_cap(&signals);
+        new_bounds = new_bounds.with_aggregate_cap(cap)?;
+    }
+
+    if let Some(fraction) = strategy.half_kelly_fraction {
+        let diag_vars: Vec<f64> = (0..expected_returns.len())
+            .map(|i| covariance_matrix[[i, i]])
+            .collect();
+        let kelly_uppers =
+            compute_half_kelly_uppers(expected_returns, &diag_vars, RISK_FREE_RATE, fraction);
+        new_bounds = new_bounds.apply_half_kelly(&kelly_uppers)?;
+    }
+
+    Ok(new_bounds)
+}
+
+/// Zero out weights for positions whose latest price has dropped more than
+/// `threshold` below the recorded entry price. The remainder is renormalised
+/// so that `sum(w)` is preserved (we do not recover the cash freed by the
+/// triggered position; that is the responsibility of the caller's rebalance
+/// logic).
+fn apply_stop_loss_post_process(
+    weights: Vec<f64>,
+    selected_tokens: &[TokenData],
+    strategy: &AggregateCapStrategy,
+    historical_prices: &BTreeMap<TokenOutAccount, crate::algorithm::types::PriceHistory>,
+) -> Vec<f64> {
+    let (threshold, entry_prices) = match strategy.stop_loss.as_ref() {
+        Some(sl) => sl,
+        None => return weights,
+    };
+    let mut adjusted = weights;
+    let mut any_triggered = false;
+    for (i, token) in selected_tokens.iter().enumerate() {
+        if i >= adjusted.len() {
+            break;
+        }
+        let entry = match entry_prices.get(&token.symbol) {
+            Some(e) => e,
+            None => continue,
+        };
+        let latest = match historical_prices
+            .get(&token.symbol)
+            .and_then(|h| h.prices.last())
+        {
+            Some(p) => &p.price,
+            None => continue,
+        };
+        if should_trigger_stop_loss(entry, latest, *threshold) {
+            adjusted[i] = 0.0;
+            any_triggered = true;
+        }
+    }
+    if any_triggered {
+        let sum: f64 = adjusted.iter().sum();
+        if sum > 0.0 {
+            for w in &mut adjusted {
+                *w /= sum;
+            }
+        }
+    }
+    adjusted
+}
+
 /// Errors emitted by the box-constrained Sharpe maximizer.
 ///
 /// Replaces the previous silent `default_weights` (equal-weight) fallback so
@@ -174,6 +289,12 @@ pub struct PortfolioData {
     /// 縮小される。`pred_err_diagonal` と同時 on も技術的には可能だが、
     /// 同一 MSRE が `μ` と `Σ` の両方に作用するため運用上は片方ずつが推奨。
     pub pred_uncertainty: Option<PredUncertainty>,
+    /// PR-A: aggregate-cap pipeline (vol targeting / breadth / half-Kelly /
+    /// stop-loss). Defaults to `AggregateCapStrategy::legacy()` so the
+    /// optimizer behaves identically to the pre-PR-A path; callers that
+    /// want to enable any signal populate the relevant variant via
+    /// `trade::regime::build_aggregate_cap_strategy`.
+    pub aggregate_cap_strategy: crate::algorithm::aggregate_cap::AggregateCapStrategy,
 }
 
 impl PortfolioData {
@@ -2258,6 +2379,20 @@ pub async fn execute_portfolio_optimization(
         }
     };
 
+    // PR-A: aggregate-cap pipeline (vol targeting + breadth + half-Kelly).
+    // Legacy strategy (every signal off) leaves `bounds` untouched, so the
+    // optimizer behaves identically to the pre-PR-A path.
+    let bounds = match apply_aggregate_cap_strategy(
+        bounds,
+        &portfolio_data.aggregate_cap_strategy,
+        &expected_returns,
+        &covariance,
+        &portfolio_data.historical_prices,
+    ) {
+        Ok(b) => b,
+        Err(_) => return Ok(hold_report()),
+    };
+
     // 統合最適化（案 I: 3 フェーズ）
     let optimal_weights = unified_optimize(
         &expected_returns,
@@ -2267,6 +2402,17 @@ pub async fn execute_portfolio_optimization(
         MAX_HOLDINGS,
         MIN_POSITION_SIZE,
         &alphas,
+    );
+
+    // PR-A Phase 3b: per-token stop-loss is a post-processing step. The
+    // optimizer chose weights against the predicted return; if a position
+    // is already in realised drawdown beyond `threshold` we force its
+    // weight to 0 (sell-only) and renormalise the remainder.
+    let optimal_weights = apply_stop_loss_post_process(
+        optimal_weights,
+        &selected_tokens,
+        &portfolio_data.aggregate_cap_strategy,
+        &portfolio_data.historical_prices,
     );
 
     // リバランスが必要かチェック

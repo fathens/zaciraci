@@ -62,5 +62,47 @@ pub fn compose_aggregate_cap(signals: &[AggregateCapSignal]) -> f64 {
     raw.clamp(AGGREGATE_CAP_LOWER, AGGREGATE_CAP_UPPER)
 }
 
+use crate::algorithm::regime::ExposureScales;
+use crate::types::{TokenOutAccount, TokenPrice};
+use std::collections::BTreeMap;
+
+/// Per-cycle configuration for the aggregate-cap pipeline.
+///
+/// Carries the operator-controlled inputs (typed-config flags + runtime
+/// snapshots like entry prices) that the optimizer needs to compute and
+/// apply the cap. Each field is `Option`-wrapped so the legacy code path
+/// (every flag OFF) is the natural `Self::legacy()` constructor and the
+/// existing optimizer call sites do not need to know about the new
+/// machinery until they choose to.
+#[derive(Debug, Clone, Default)]
+pub struct AggregateCapStrategy {
+    /// Phase 1: σ_target value when vol-targeting is enabled.
+    pub vol_target_sigma: Option<f64>,
+    /// Phase 2: `(sma_period, exposure_scales)` when breadth regime is enabled.
+    pub regime_breadth: Option<(usize, ExposureScales)>,
+    /// Phase 3a: Kelly fraction when half-Kelly is enabled.
+    pub half_kelly_fraction: Option<f64>,
+    /// Phase 3b: `(threshold, entry_prices)` when per-token stop-loss is enabled.
+    pub stop_loss: Option<(f64, BTreeMap<TokenOutAccount, TokenPrice>)>,
+}
+
+impl AggregateCapStrategy {
+    /// Returns the legacy strategy: every signal off, optimizer behaves as
+    /// before. The same as `Default::default()` but spelled out for grep.
+    pub fn legacy() -> Self {
+        Self::default()
+    }
+
+    /// `true` iff every signal is off, i.e. the optimizer should apply no
+    /// cap-side adjustments and the cycle is indistinguishable from the
+    /// pre-PR-A behaviour.
+    pub fn is_legacy(&self) -> bool {
+        self.vol_target_sigma.is_none()
+            && self.regime_breadth.is_none()
+            && self.half_kelly_fraction.is_none()
+            && self.stop_loss.is_none()
+    }
+}
+
 #[cfg(test)]
 mod tests;
