@@ -51,6 +51,10 @@ pub enum BoxBoundsError {
     NonPositiveCap(f64),
     #[error("aggregate cap exceeds unit: {0}")]
     CapExceedsUnit(f64),
+    #[error("kelly upper length mismatch: bounds={bounds}, kelly={kelly}")]
+    KellyLengthMismatch { bounds: usize, kelly: usize },
+    #[error("non-finite kelly upper at index {idx}")]
+    NonFiniteKellyUpper { idx: usize },
 }
 
 const FEASIBILITY_TOLERANCE: f64 = 1e-9;
@@ -105,6 +109,42 @@ impl BoxBounds {
     /// `BoxBoundsCap::Equality`.
     pub fn aggregate_cap(&self) -> BoxBoundsCap {
         self.aggregate_cap
+    }
+
+    /// Tighten each per-asset upper to the minimum of the existing upper
+    /// and the supplied half-Kelly upper. The bound is taken element-wise:
+    /// `upper'[i] = min(upper[i], kelly_uppers[i])`. This composes naturally
+    /// with the box bound — the more conservative cap wins, so the
+    /// optimizer can never enter a position larger than either constraint
+    /// allows.
+    ///
+    /// # Errors
+    /// - [`BoxBoundsError::KellyLengthMismatch`] when `kelly_uppers.len()`
+    ///   does not equal `self.len()`.
+    /// - [`BoxBoundsError::NonFiniteKellyUpper`] when any element is
+    ///   `NaN` / `±∞`. The half-Kelly module already returns `MAX_POSITION_SIZE`
+    ///   for non-finite Kelly inputs, but we re-validate at the boundary so
+    ///   that a future caller cannot bypass that defensive policy.
+    pub fn apply_half_kelly(self, kelly_uppers: &[f64]) -> Result<Self, BoxBoundsError> {
+        if kelly_uppers.len() != self.upper.len() {
+            return Err(BoxBoundsError::KellyLengthMismatch {
+                bounds: self.upper.len(),
+                kelly: kelly_uppers.len(),
+            });
+        }
+        for (idx, &k) in kelly_uppers.iter().enumerate() {
+            if !k.is_finite() {
+                return Err(BoxBoundsError::NonFiniteKellyUpper { idx });
+            }
+        }
+        let mut new_upper = self.upper.clone();
+        for (i, &k) in kelly_uppers.iter().enumerate() {
+            new_upper[i] = new_upper[i].min(k.max(0.0));
+        }
+        Ok(Self {
+            upper: new_upper,
+            ..self
+        })
     }
 
     /// Build a copy of these bounds with `aggregate_cap = AtMost(cap)`.

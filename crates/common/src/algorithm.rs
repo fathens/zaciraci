@@ -1,3 +1,4 @@
+pub mod half_kelly;
 pub mod portfolio;
 pub mod prediction;
 pub mod regime;

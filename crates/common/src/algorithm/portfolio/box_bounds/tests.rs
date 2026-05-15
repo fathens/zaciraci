@@ -326,3 +326,56 @@ fn subset_propagates_aggregate_cap() {
     let sub = bounds.subset(&[0, 2]);
     assert_eq!(sub.aggregate_cap(), BoxBoundsCap::AtMost(0.6));
 }
+
+// ── apply_half_kelly ──
+
+#[test]
+fn apply_half_kelly_takes_minimum_per_asset() {
+    let bounds = BoxBounds::from_uppers(vec![0.6, 0.6, 0.6]);
+    // kelly tighter on 0 and 2, looser on 1
+    let tight = bounds.apply_half_kelly(&[0.2, 0.8, 0.3]).unwrap();
+    assert_eq!(tight.upper(0), 0.2);
+    assert_eq!(tight.upper(1), 0.6); // box wins
+    assert_eq!(tight.upper(2), 0.3);
+}
+
+#[test]
+fn apply_half_kelly_clamps_negative_to_zero() {
+    let bounds = BoxBounds::from_uppers(vec![0.6]);
+    let tight = bounds.apply_half_kelly(&[-0.1]).unwrap();
+    assert_eq!(tight.upper(0), 0.0);
+}
+
+#[test]
+fn apply_half_kelly_preserves_aggregate_cap() {
+    let bounds = BoxBounds::from_uppers(vec![0.6, 0.6])
+        .with_aggregate_cap(0.5)
+        .unwrap();
+    let tight = bounds.apply_half_kelly(&[0.2, 0.3]).unwrap();
+    assert_eq!(tight.aggregate_cap(), BoxBoundsCap::AtMost(0.5));
+}
+
+#[test]
+fn apply_half_kelly_rejects_length_mismatch() {
+    let bounds = BoxBounds::from_uppers(vec![0.6, 0.6, 0.6]);
+    assert!(matches!(
+        bounds.apply_half_kelly(&[0.2, 0.3]),
+        Err(BoxBoundsError::KellyLengthMismatch {
+            bounds: 3,
+            kelly: 2
+        })
+    ));
+}
+
+#[test]
+fn apply_half_kelly_rejects_non_finite_upper() {
+    let bounds = BoxBounds::from_uppers(vec![0.6, 0.6, 0.6]);
+    assert!(matches!(
+        bounds.clone().apply_half_kelly(&[0.2, f64::NAN, 0.3]),
+        Err(BoxBoundsError::NonFiniteKellyUpper { idx: 1 })
+    ));
+    assert!(matches!(
+        bounds.apply_half_kelly(&[f64::INFINITY, 0.2, 0.3]),
+        Err(BoxBoundsError::NonFiniteKellyUpper { idx: 0 })
+    ));
+}
