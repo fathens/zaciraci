@@ -110,6 +110,7 @@ fn validate_rejects_inverted_bounds() {
     let bounds = BoxBounds {
         lower: vec![0.5],
         upper: vec![0.3],
+        aggregate_cap: BoxBoundsCap::Equality,
     };
     assert!(matches!(
         bounds.validate(),
@@ -122,6 +123,7 @@ fn validate_rejects_negative_bounds() {
     let bounds = BoxBounds {
         lower: vec![0.0, -0.1],
         upper: vec![0.6, 0.5],
+        aggregate_cap: BoxBoundsCap::Equality,
     };
     assert!(matches!(
         bounds.validate(),
@@ -134,6 +136,7 @@ fn validate_rejects_non_finite_bounds() {
     let bounds = BoxBounds {
         lower: vec![0.0],
         upper: vec![f64::NAN],
+        aggregate_cap: BoxBoundsCap::Equality,
     };
     assert!(matches!(
         bounds.validate(),
@@ -146,6 +149,7 @@ fn validate_accepts_sum_upper_exactly_one() {
     let bounds = BoxBounds {
         lower: vec![0.0, 0.0],
         upper: vec![0.5, 0.5],
+        aggregate_cap: BoxBoundsCap::Equality,
     };
     assert!(bounds.validate().is_ok());
 }
@@ -155,6 +159,7 @@ fn validate_rejects_sum_lower_above_one() {
     let bounds = BoxBounds {
         lower: vec![0.6, 0.6],
         upper: vec![0.8, 0.8],
+        aggregate_cap: BoxBoundsCap::Equality,
     };
     assert!(matches!(
         bounds.validate(),
@@ -239,6 +244,7 @@ fn effective_uppers_non_uniform_scaling_sums_to_one() {
     let bounds = BoxBounds {
         lower: vec![0.0; 3],
         upper: vec![0.2, 0.3, 0.4], // sum = 0.9 < 1.0
+        aggregate_cap: BoxBoundsCap::Equality,
     };
     let eff = bounds.effective_uppers();
     let sum: f64 = eff.iter().sum();

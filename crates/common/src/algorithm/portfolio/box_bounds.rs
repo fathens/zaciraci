@@ -2,10 +2,30 @@ use crate::types::TokenOutAccount;
 use std::collections::BTreeSet;
 use thiserror::Error;
 
+/// Aggregate-budget constraint for `BoxBounds`.
+///
+/// `Equality` (the default) is the historical behaviour: `sum(w) = 1`,
+/// i.e. the optimizer is forced to allocate the entire budget across
+/// risky assets. `AtMost(cap)` relaxes this to `sum(w) ≤ cap`, with the
+/// remaining `1 - sum(w)` implicitly held as cash. The cap is stored
+/// here as a smart-constructor-validated `f64` in `(0, 1]`; the
+/// optimizer integration that actually honours it lands in a follow-up
+/// commit so this commit is purely additive.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum BoxBoundsCap {
+    /// Strict simplex: `sum(w) = 1` (legacy behaviour).
+    #[default]
+    Equality,
+    /// Relaxed: `sum(w) ≤ cap`, `cap ∈ (0, 1]`. Anything not allocated is
+    /// implicit cash.
+    AtMost(f64),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct BoxBounds {
     lower: Vec<f64>,
     upper: Vec<f64>,
+    aggregate_cap: BoxBoundsCap,
 }
 
 #[derive(Debug, Error, PartialEq)]
@@ -25,6 +45,12 @@ pub enum BoxBoundsError {
     UpperInfeasible { sum_upper: f64 },
     #[error("infeasible: sum_lower={sum_lower} > 1.0")]
     LowerInfeasible { sum_lower: f64 },
+    #[error("non-finite aggregate cap: {0}")]
+    NonFiniteCap(f64),
+    #[error("non-positive aggregate cap: {0}")]
+    NonPositiveCap(f64),
+    #[error("aggregate cap exceeds unit: {0}")]
+    CapExceedsUnit(f64),
 }
 
 const FEASIBILITY_TOLERANCE: f64 = 1e-9;
@@ -34,6 +60,7 @@ impl BoxBounds {
         Self {
             lower: vec![0.0; n],
             upper: vec![max_position; n],
+            aggregate_cap: BoxBoundsCap::Equality,
         }
     }
 
@@ -42,6 +69,7 @@ impl BoxBounds {
         Self {
             lower: vec![0.0; upper.len()],
             upper,
+            aggregate_cap: BoxBoundsCap::Equality,
         }
     }
 
@@ -67,9 +95,16 @@ impl BoxBounds {
         let bounds = Self {
             lower: vec![0.0; tokens.len()],
             upper,
+            aggregate_cap: BoxBoundsCap::Equality,
         };
         bounds.validate()?;
         Ok(bounds)
+    }
+
+    /// Returns the aggregate-budget constraint. Defaults to
+    /// `BoxBoundsCap::Equality`.
+    pub fn aggregate_cap(&self) -> BoxBoundsCap {
+        self.aggregate_cap
     }
 
     pub fn lower(&self, i: usize) -> f64 {
@@ -99,10 +134,13 @@ impl BoxBounds {
     /// 指定したインデックスのサブセットに対応する BoxBounds を抽出する。
     ///
     /// サブセット最適化（exhaustive 列挙等）で使用する。
+    /// `aggregate_cap` はサブセット側に伝播する (cash bucket は portfolio
+    /// レベルの constraint なので、sub-portfolio でも同じ cap を維持する)。
     pub fn subset(&self, indices: &[usize]) -> Self {
         Self {
             lower: indices.iter().map(|&i| self.lower[i]).collect(),
             upper: indices.iter().map(|&i| self.upper[i]).collect(),
+            aggregate_cap: self.aggregate_cap,
         }
     }
 

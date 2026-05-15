@@ -1216,7 +1216,13 @@ fn prop_test_uniform_bounds_equals_legacy_random() {
         for &max_position in &max_positions {
             let legacy = box_maximize_sharpe(&expected_returns, &cov, max_position);
             let bounds = BoxBounds::uniform(n, max_position);
-            let bounded = box_maximize_sharpe_bounded(&expected_returns, &cov, &bounds);
+            // 旧 wrapper `box_maximize_sharpe` は OptimizerError を等配分に
+            // silent fallback するため、numerical-equivalence 比較ではここでも
+            // 同じ fallback を適用する。新呼び出し元 (cost-aware loop 等) では
+            // Err を Hold へ昇格させる方針だが、本 test はあくまで「旧 API と
+            // 数値同等」を保証するためのリグレッションガード。
+            let bounded = box_maximize_sharpe_bounded(&expected_returns, &cov, &bounds)
+                .unwrap_or_else(|_| vec![1.0 / n as f64; n]);
 
             assert_eq!(legacy.len(), bounded.len());
             for (i, (a, b)) in legacy.iter().zip(bounded.iter()).enumerate() {
@@ -1348,7 +1354,8 @@ fn box_maximize_sharpe_bounded_respects_per_asset_upper() {
     let mut tight_uppers = vec![0.5; n];
     tight_uppers[1] = 0.15;
     let tight_bounds = BoxBounds::from_uppers(tight_uppers);
-    let tight = box_maximize_sharpe_bounded(&expected_returns, &cov, &tight_bounds);
+    let tight = box_maximize_sharpe_bounded(&expected_returns, &cov, &tight_bounds)
+        .expect("non-degenerate input should converge");
 
     // ベースラインでは資産 1 が大きく配分されているはず
     assert!(

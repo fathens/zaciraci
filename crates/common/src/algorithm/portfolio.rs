@@ -11,7 +11,35 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use super::types::*;
 
 pub mod box_bounds;
-pub use box_bounds::{BoxBounds, BoxBoundsError};
+pub use box_bounds::{BoxBounds, BoxBoundsCap, BoxBoundsError};
+
+/// Errors emitted by the box-constrained Sharpe maximizer.
+///
+/// Replaces the previous silent `default_weights` (equal-weight) fallback so
+/// that callers can fail-loud on numerical degeneracy. Existing callers
+/// preserve the old policy by mapping `Err` back to `default_weights`; future
+/// callers (cost-aware loop, strategy step) can choose `Hold` instead, or
+/// re-attempt with a relaxed `aggregate_cap`.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum OptimizerError {
+    /// Active-set iteration hit `max_iter` without satisfying KKT conditions.
+    #[error("active-set failed to converge after {max_iter} iterations")]
+    FailedToConverge { max_iter: usize },
+    /// `Σ_FF` and `Σ_FF + εI` were both unsolvable (Cholesky and LU both
+    /// failed). Indicates degenerate covariance: either ill-conditioned input
+    /// or a `cov` row/column structurally tied to a zero subspace.
+    #[error("singular covariance: Cholesky/LU/ridge all failed")]
+    SingularCovariance,
+    /// Lagrange-multiplier denominator (`Σ p`) collapsed to zero. Equivalent
+    /// to the active-set seeing no Sharpe gradient at this iteration; treated
+    /// as a hard failure rather than masking it as equal-weight.
+    #[error("degenerate Sharpe denominator: sum_p ≈ 0")]
+    DegenerateSharpe,
+    /// Bound configuration could not be honoured (e.g. `Free` set empty with
+    /// `Upper` set yielding `sum_upper < 1` and zero `Lower` capacity).
+    #[error("infeasible active set: {reason}")]
+    InfeasibleActiveSet { reason: &'static str },
+}
 
 // ==================== ポートフォリオ固有の型定義 ====================
 
@@ -863,13 +891,13 @@ pub fn box_maximize_sharpe_bounded(
     expected_returns: &[f64],
     covariance_matrix: &Array2<f64>,
     bounds: &BoxBounds,
-) -> Vec<f64> {
+) -> std::result::Result<Vec<f64>, OptimizerError> {
     let n = expected_returns.len();
     if n == 0 {
-        return vec![];
+        return Ok(vec![]);
     }
     if n == 1 {
-        return vec![1.0];
+        return Ok(vec![1.0]);
     }
 
     debug_assert_eq!(
@@ -878,17 +906,17 @@ pub fn box_maximize_sharpe_bounded(
         "bounds.len() must match expected_returns.len()"
     );
 
-    let default_weights = vec![1.0 / n as f64; n];
-
     // per-asset 上限 (sum_upper < 1.0 のときは比例スケーリング)
     let effective_uppers = bounds.effective_uppers();
 
     // 全資産が無制約 (>= 1.0) なら制約なしと同等
     if effective_uppers.iter().all(|&u| u >= 1.0) {
-        return maximize_sharpe_ratio(expected_returns, covariance_matrix);
+        return Ok(maximize_sharpe_ratio(expected_returns, covariance_matrix));
     }
 
-    // 全トークンの期待リターンが同一 → 等配分
+    // 全トークンの期待リターンが同一 → 等配分（degenerate だが well-defined な
+    // 解。`maximize_sharpe_ratio` も同入力で同じ等配分を返すため、これは silent
+    // failure ではなく optimal 解そのもの。）
     let min_ret = expected_returns
         .iter()
         .cloned()
@@ -898,7 +926,7 @@ pub fn box_maximize_sharpe_bounded(
         .cloned()
         .fold(f64::NEG_INFINITY, f64::max);
     if (max_ret - min_ret).abs() < 1e-12 {
-        return default_weights;
+        return Ok(vec![1.0 / n as f64; n]);
     }
 
     let excess_returns: Vec<f64> = expected_returns
@@ -922,7 +950,9 @@ pub fn box_maximize_sharpe_bounded(
         if free.is_empty() {
             // Free 集合が空: Upper 固定の資産 + Lower 固定の資産で重みを構築
             if upper.is_empty() {
-                return default_weights;
+                return Err(OptimizerError::InfeasibleActiveSet {
+                    reason: "free and upper sets both empty",
+                });
             }
             let mut weights = vec![0.0; n];
             for &i in &upper {
@@ -937,7 +967,7 @@ pub fn box_maximize_sharpe_bounded(
                 for w in weights.iter_mut() {
                     *w *= scale;
                 }
-                return weights;
+                return Ok(weights);
             }
 
             // sum_upper_set < 1.0: 不足分を Lower 集合のトークンで埋める
@@ -956,7 +986,7 @@ pub fn box_maximize_sharpe_bounded(
             }
             // sum_lower_caps == 0 や scale < 1.0 で sum < 1.0 のまま終わる場合あり。
             // 呼び出し側で必要なら正規化されるが、bounds は破らない。
-            return weights;
+            return Ok(weights);
         }
 
         let m = free.len();
@@ -972,7 +1002,7 @@ pub fn box_maximize_sharpe_bounded(
             for &i in &upper {
                 weights[i] = effective_uppers[i] / total;
             }
-            return weights;
+            return Ok(weights);
         }
 
         // Free 集合のサブ問題を構築
@@ -987,7 +1017,7 @@ pub fn box_maximize_sharpe_bounded(
             .or_else(|| Some(Factored::Lu(cov_ff.lu())));
         let factored = match factored {
             Some(f) => f,
-            None => return default_weights,
+            None => return Err(OptimizerError::SingularCovariance),
         };
         let solve = |rhs: &nalgebra::DVector<f64>| -> Option<nalgebra::DVector<f64>> {
             let result = match &factored {
@@ -1008,7 +1038,7 @@ pub fn box_maximize_sharpe_bounded(
         // p = Σ_FF⁻¹ · μ_excess_F
         let p = match solve(&excess_f) {
             Some(p) => p,
-            None => return default_weights,
+            None => return Err(OptimizerError::SingularCovariance),
         };
 
         // Σ_FU · w_U のベクトル → q = Σ_FF⁻¹ · (Σ_FU · w_U)
@@ -1025,7 +1055,7 @@ pub fn box_maximize_sharpe_bounded(
             }
             match solve(&cov_fu_wu) {
                 Some(q) => q,
-                None => return default_weights,
+                None => return Err(OptimizerError::SingularCovariance),
             }
         };
 
@@ -1034,7 +1064,7 @@ pub fn box_maximize_sharpe_bounded(
         let sum_q: f64 = q.iter().sum();
 
         if sum_p.abs() < 1e-15 {
-            return default_weights;
+            return Err(OptimizerError::DegenerateSharpe);
         }
 
         let gamma = (budget_free + sum_q) / sum_p;
@@ -1115,29 +1145,37 @@ pub fn box_maximize_sharpe_bounded(
         // 収束: 全 KKT 条件を満たす
         let sum: f64 = weights.iter().sum();
         if sum <= 0.0 {
-            return default_weights;
+            return Err(OptimizerError::InfeasibleActiveSet {
+                reason: "converged with non-positive weight sum",
+            });
         }
         normalize_weights(&mut weights);
         clamp_and_normalize_per_asset(&mut weights, &effective_uppers);
 
-        return weights;
+        return Ok(weights);
     }
 
-    // 収束しなかった場合: 等配分にフォールバック
-    default_weights
+    // 収束しなかった場合は fail-loud (旧実装は等配分 fallback で silent failure)
+    Err(OptimizerError::FailedToConverge { max_iter })
 }
 
 /// 旧 API: 一様な上限 `max_position` で `box_maximize_sharpe_bounded` を呼ぶ薄い wrapper。
 ///
 /// 既存テストとの後方互換のため残置。新規呼び出し元は
 /// `box_maximize_sharpe_bounded` を直接使うこと。
+///
+/// 旧 wrapper の `Vec<f64>` 戻り値を保つため、optimizer エラーは silent に
+/// 等配分へフォールバックする (これは旧実装の挙動を完全に再現する)。fail-loud
+/// が必要な呼び出し元は `box_maximize_sharpe_bounded` を直接呼ぶこと。
 pub fn box_maximize_sharpe(
     expected_returns: &[f64],
     covariance_matrix: &Array2<f64>,
     max_position: f64,
 ) -> Vec<f64> {
     let bounds = BoxBounds::uniform(expected_returns.len(), max_position);
+    let n = expected_returns.len();
     box_maximize_sharpe_bounded(expected_returns, covariance_matrix, &bounds)
+        .unwrap_or_else(|_| vec![1.0 / n.max(1) as f64; n])
 }
 
 /// リスクパリティ調整（反復収束版）
@@ -1424,7 +1462,12 @@ fn blend_and_expand(
         subset_indices.iter().all(|&idx| idx < n_total),
         "subset_indices contains out-of-bounds index"
     );
-    let w_sharpe = box_maximize_sharpe_bounded(sub_returns, sub_cov, sub_bounds);
+    // 旧実装は box_maximize_sharpe_bounded が等配分 fallback を返していたため、
+    // ここでも `OptimizerError` を等配分にマップして blend を継続する。fail-loud
+    // への切り替えは optimizer 統合 (BoxBoundsCap::AtMost) と同 PR で行う。
+    let n_sub = sub_returns.len();
+    let w_sharpe = box_maximize_sharpe_bounded(sub_returns, sub_cov, sub_bounds)
+        .unwrap_or_else(|_| vec![1.0 / n_sub.max(1) as f64; n_sub]);
     let w_rp = box_risk_parity_bounded(sub_cov, sub_bounds);
 
     let mut blended: Vec<f64> = w_sharpe
@@ -1827,7 +1870,11 @@ fn unified_optimize(
     let adj_returns = adjust_returns_for_liquidity(expected_returns, liquidity_scores);
 
     // Phase 1: 全 n トークンで独立に最適化
-    let w_sharpe = box_maximize_sharpe_bounded(&adj_returns, covariance_matrix, bounds);
+    // 旧実装は box_maximize_sharpe_bounded が等配分 fallback を返していたため、
+    // ここでも `OptimizerError` を等配分にマップして Phase 2 (blend) を継続。
+    // fail-loud への切り替えは optimizer 統合 (BoxBoundsCap::AtMost) と同 PR で行う。
+    let w_sharpe = box_maximize_sharpe_bounded(&adj_returns, covariance_matrix, bounds)
+        .unwrap_or_else(|_| vec![1.0 / n as f64; n]);
     let w_rp = box_risk_parity_bounded(covariance_matrix, bounds);
 
     // Phase 2: 枝刈り — Sharpe 上位 ∪ RP 上位 の和集合
