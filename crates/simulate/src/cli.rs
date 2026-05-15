@@ -116,6 +116,35 @@ pub struct RunArgs {
     /// layer.
     #[arg(long, default_value = "0.0")]
     pub shrinkage_lambda: f64,
+
+    /// PR-A Phase 1: enable volatility targeting (Moreira & Muir 2017).
+    /// Adds a `Volatility(cap)` signal where `cap = σ_target / σ_portfolio`.
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = false)]
+    pub vol_target: bool,
+
+    /// PR-A Phase 2: enable market-breadth regime detection.
+    /// Adds a `Breadth(cap)` signal based on the fraction of tokens above
+    /// their own SMA(20).
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = false)]
+    pub regime_breadth: bool,
+
+    /// PR-A Phase 3a: enable per-asset half-Kelly upper bound.
+    /// Tightens BoxBounds via `apply_half_kelly` using the typed-config
+    /// fraction (default Quarter Kelly, 0.25).
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = false)]
+    pub half_kelly: bool,
+
+    /// PR-A Phase 3b: enable per-token stop-loss override.
+    /// Zeroes out the optimizer weight for any held token whose realised
+    /// drawdown exceeds the typed-config threshold (default 10%).
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = false)]
+    pub stop_loss: bool,
+
+    /// PR-B: enable period-mid drawdown circuit breaker.
+    /// Triggers a force-liquidate when current portfolio value falls more
+    /// than `--dd-threshold` below the period's initial value.
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = false)]
+    pub dd_circuit_breaker: bool,
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -189,6 +218,11 @@ mod tests {
             all_predicted: false,
             top_n_after_prediction: 0,
             shrinkage_lambda: 0.0,
+            vol_target: false,
+            regime_breadth: false,
+            half_kelly: false,
+            stop_loss: false,
+            dd_circuit_breaker: false,
         }
     }
 

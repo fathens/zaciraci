@@ -240,6 +240,20 @@ pub(crate) fn apply_config(cli: &RunArgs) {
         "TRADE_PREDICTION_SHRINKAGE_LAMBDA",
         &cli.shrinkage_lambda.to_string(),
     );
+    common::config::store::set(
+        "PORTFOLIO_VOLATILITY_TARGET_ENABLED",
+        &cli.vol_target.to_string(),
+    );
+    common::config::store::set(
+        "PORTFOLIO_REGIME_BREADTH_ENABLED",
+        &cli.regime_breadth.to_string(),
+    );
+    common::config::store::set("PORTFOLIO_HALF_KELLY_ENABLED", &cli.half_kelly.to_string());
+    common::config::store::set("PORTFOLIO_STOP_LOSS_ENABLED", &cli.stop_loss.to_string());
+    common::config::store::set(
+        "TRADE_DD_CIRCUIT_BREAKER_ENABLED",
+        &cli.dd_circuit_breaker.to_string(),
+    );
 }
 
 #[cfg(test)]
@@ -269,6 +283,11 @@ mod tests {
             all_predicted: false,
             top_n_after_prediction: 0,
             shrinkage_lambda: 0.0,
+            vol_target: false,
+            regime_breadth: false,
+            half_kelly: false,
+            stop_loss: false,
+            dd_circuit_breaker: false,
         }
     }
 
@@ -305,6 +324,11 @@ mod tests {
             all_predicted: true,
             top_n_after_prediction: 30,
             shrinkage_lambda: 0.1,
+            vol_target: true,
+            regime_breadth: true,
+            half_kelly: true,
+            stop_loss: true,
+            dd_circuit_breaker: true,
         };
 
         apply_config(&cli);
@@ -361,6 +385,26 @@ mod tests {
         assert_eq!(
             common::config::store::get("TRADE_PREDICTION_SHRINKAGE_LAMBDA").unwrap(),
             "0.1"
+        );
+        assert_eq!(
+            common::config::store::get("PORTFOLIO_VOLATILITY_TARGET_ENABLED").unwrap(),
+            "true"
+        );
+        assert_eq!(
+            common::config::store::get("PORTFOLIO_REGIME_BREADTH_ENABLED").unwrap(),
+            "true"
+        );
+        assert_eq!(
+            common::config::store::get("PORTFOLIO_HALF_KELLY_ENABLED").unwrap(),
+            "true"
+        );
+        assert_eq!(
+            common::config::store::get("PORTFOLIO_STOP_LOSS_ENABLED").unwrap(),
+            "true"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_DD_CIRCUIT_BREAKER_ENABLED").unwrap(),
+            "true"
         );
     }
 }

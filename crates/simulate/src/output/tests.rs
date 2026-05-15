@@ -280,6 +280,11 @@ fn make_cli(start: &str, end: &str) -> RunArgs {
         all_predicted: false,
         top_n_after_prediction: 0,
         shrinkage_lambda: 0.0,
+        vol_target: false,
+        regime_breadth: false,
+        half_kelly: false,
+        stop_loss: false,
+        dd_circuit_breaker: false,
     }
 }
 
@@ -370,6 +375,11 @@ fn from_state_config_reflects_cli_params() {
         all_predicted: false,
         top_n_after_prediction: 0,
         shrinkage_lambda: 0.0,
+        vol_target: false,
+        regime_breadth: false,
+        half_kelly: false,
+        stop_loss: false,
+        dd_circuit_breaker: false,
     };
     let state = PortfolioState::new(yocto(200_000_000_000_000_000_000_000_000));
 
