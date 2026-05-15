@@ -1,3 +1,4 @@
+pub mod aggregate_cap;
 pub mod half_kelly;
 pub mod portfolio;
 pub mod prediction;
