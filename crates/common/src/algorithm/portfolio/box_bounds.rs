@@ -107,6 +107,39 @@ impl BoxBounds {
         self.aggregate_cap
     }
 
+    /// Build a copy of these bounds with `aggregate_cap = AtMost(cap)`.
+    ///
+    /// Smart constructor — validates `cap` against the cash-bucket invariants
+    /// before stamping it on the struct. Existing per-asset `lower` / `upper`
+    /// values are preserved; the only effect is to relax `sum(w) = 1` to
+    /// `sum(w) ≤ cap`.
+    ///
+    /// # Errors
+    /// - [`BoxBoundsError::NonFiniteCap`] when `cap` is `NaN` / `±∞`.
+    /// - [`BoxBoundsError::NonPositiveCap`] when `cap ≤ 0`. The aggregate
+    ///   cap is the optimizer's risk budget; setting it to zero would force
+    ///   100 % cash, which the dedicated `BoxBoundsCap::Equality` (with all
+    ///   uppers at 0) already expresses more clearly.
+    /// - [`BoxBoundsError::CapExceedsUnit`] when `cap > 1`. Any value above
+    ///   1 would silently allow over-allocation; we hard-cap at 1 so the
+    ///   invariant `sum(w) ≤ 1` is preserved exactly as in the legacy
+    ///   `Equality` mode.
+    pub fn with_aggregate_cap(self, cap: f64) -> Result<Self, BoxBoundsError> {
+        if !cap.is_finite() {
+            return Err(BoxBoundsError::NonFiniteCap(cap));
+        }
+        if cap <= 0.0 {
+            return Err(BoxBoundsError::NonPositiveCap(cap));
+        }
+        if cap > 1.0 {
+            return Err(BoxBoundsError::CapExceedsUnit(cap));
+        }
+        Ok(Self {
+            aggregate_cap: BoxBoundsCap::AtMost(cap),
+            ..self
+        })
+    }
+
     pub fn lower(&self, i: usize) -> f64 {
         self.lower[i]
     }

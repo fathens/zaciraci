@@ -254,3 +254,75 @@ fn effective_uppers_non_uniform_scaling_sums_to_one() {
     assert!((eff[1] - 0.3 / 0.9).abs() < 1e-15);
     assert!((eff[2] - 0.4 / 0.9).abs() < 1e-15);
 }
+
+// ── BoxBoundsCap / with_aggregate_cap ──
+
+#[test]
+fn aggregate_cap_default_is_equality() {
+    let bounds = BoxBounds::uniform(3, 0.6);
+    assert_eq!(bounds.aggregate_cap(), BoxBoundsCap::Equality);
+}
+
+#[test]
+fn with_aggregate_cap_accepts_value_in_open_unit_interval() {
+    let bounds = BoxBounds::uniform(3, 0.6).with_aggregate_cap(0.5).unwrap();
+    assert_eq!(bounds.aggregate_cap(), BoxBoundsCap::AtMost(0.5));
+    // per-asset bounds are preserved
+    assert_eq!(bounds.upper(0), 0.6);
+    assert_eq!(bounds.lower(0), 0.0);
+}
+
+#[test]
+fn with_aggregate_cap_accepts_unit_cap() {
+    // cap = 1.0 is the boundary; legacy Equality still implies sum(w) = 1.
+    let bounds = BoxBounds::uniform(3, 0.6).with_aggregate_cap(1.0).unwrap();
+    assert_eq!(bounds.aggregate_cap(), BoxBoundsCap::AtMost(1.0));
+}
+
+#[test]
+fn with_aggregate_cap_rejects_zero_and_negative() {
+    let base = BoxBounds::uniform(3, 0.6);
+    assert!(matches!(
+        base.clone().with_aggregate_cap(0.0),
+        Err(BoxBoundsError::NonPositiveCap(c)) if c == 0.0
+    ));
+    assert!(matches!(
+        base.clone().with_aggregate_cap(-0.1),
+        Err(BoxBoundsError::NonPositiveCap(c)) if c == -0.1
+    ));
+}
+
+#[test]
+fn with_aggregate_cap_rejects_above_unit() {
+    let base = BoxBounds::uniform(3, 0.6);
+    assert!(matches!(
+        base.with_aggregate_cap(1.5),
+        Err(BoxBoundsError::CapExceedsUnit(c)) if c == 1.5
+    ));
+}
+
+#[test]
+fn with_aggregate_cap_rejects_non_finite() {
+    let base = BoxBounds::uniform(3, 0.6);
+    assert!(matches!(
+        base.clone().with_aggregate_cap(f64::NAN),
+        Err(BoxBoundsError::NonFiniteCap(_))
+    ));
+    assert!(matches!(
+        base.clone().with_aggregate_cap(f64::INFINITY),
+        Err(BoxBoundsError::NonFiniteCap(_))
+    ));
+    assert!(matches!(
+        base.with_aggregate_cap(f64::NEG_INFINITY),
+        Err(BoxBoundsError::NonFiniteCap(_))
+    ));
+}
+
+#[test]
+fn subset_propagates_aggregate_cap() {
+    let bounds = BoxBounds::from_uppers(vec![0.2, 0.3, 0.4, 0.5])
+        .with_aggregate_cap(0.6)
+        .unwrap();
+    let sub = bounds.subset(&[0, 2]);
+    assert_eq!(sub.aggregate_cap(), BoxBoundsCap::AtMost(0.6));
+}
