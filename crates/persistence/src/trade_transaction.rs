@@ -1,3 +1,4 @@
+use crate::batch;
 use crate::connection_pool;
 use crate::schema::trade_transactions;
 use anyhow::{Context, Result};
@@ -50,9 +51,22 @@ impl TradeTransaction {
         transactions: Vec<Self>,
         conn: &mut PgConnection,
     ) -> QueryResult<Vec<TradeTransaction>> {
-        diesel::insert_into(trade_transactions::table)
-            .values(transactions)
-            .get_results(conn)
+        // TradeTransaction binds 9 params per row; chunk to stay under the
+        // PostgreSQL 65535 bind-parameter limit. See crate::batch.
+        const CHUNK_ROWS: usize = batch::chunk_rows(9);
+
+        conn.transaction(|conn| {
+            let mut inserted = Vec::with_capacity(transactions.len());
+            for chunk in transactions.chunks(CHUNK_ROWS) {
+                // `Insertable` is derived only for the owned type, so the
+                // slice must be materialized into a `Vec` per chunk.
+                let rows: Vec<TradeTransaction> = diesel::insert_into(trade_transactions::table)
+                    .values(chunk.to_vec())
+                    .get_results(conn)?;
+                inserted.extend(rows);
+            }
+            Ok(inserted)
+        })
     }
 
     pub async fn insert_batch_async(transactions: Vec<Self>) -> Result<Vec<TradeTransaction>> {
