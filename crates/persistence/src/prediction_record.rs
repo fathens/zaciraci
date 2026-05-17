@@ -1,3 +1,4 @@
+use crate::batch;
 use crate::connection_pool;
 use crate::schema::prediction_records;
 use anyhow::Result;
@@ -248,6 +249,10 @@ mod tests;
 impl PredictionRecord {
     /// 予測バッチ挿入
     pub async fn batch_insert(records: &[NewPredictionRecord]) -> Result<()> {
+        // NewPredictionRecord binds 6 params per row; chunk to stay under the
+        // PostgreSQL 65535 bind-parameter limit. See crate::batch.
+        const CHUNK_ROWS: usize = batch::chunk_rows(6);
+
         if records.is_empty() {
             return Ok(());
         }
@@ -256,9 +261,14 @@ impl PredictionRecord {
         let conn = connection_pool::get().await?;
 
         conn.interact(move |conn| {
-            diesel::insert_into(prediction_records::table)
-                .values(&records)
-                .execute(conn)
+            conn.transaction::<_, diesel::result::Error, _>(|conn| {
+                for chunk in records.chunks(CHUNK_ROWS) {
+                    diesel::insert_into(prediction_records::table)
+                        .values(chunk)
+                        .execute(conn)?;
+                }
+                Ok(())
+            })
         })
         .await
         .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
