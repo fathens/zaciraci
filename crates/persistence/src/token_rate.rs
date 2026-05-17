@@ -1,4 +1,5 @@
 use crate::Result;
+use crate::batch;
 use crate::connection_pool;
 use crate::schema::token_rates;
 use anyhow::anyhow;
@@ -184,12 +185,21 @@ impl TokenRate {
             token_rates.iter().map(|rate| rate.to_new_db()).collect();
 
         {
+            // NewDbTokenRate binds 7 params per row; chunk to stay under the
+            // PostgreSQL 65535 bind-parameter limit. See crate::batch.
+            const CHUNK_ROWS: usize = batch::chunk_rows(7);
+
             let conn = connection_pool::get().await?;
 
             conn.interact(move |conn| {
-                diesel::insert_into(token_rates::table)
-                    .values(&new_rates)
-                    .execute(conn)
+                conn.transaction::<_, diesel::result::Error, _>(|conn| {
+                    for chunk in new_rates.chunks(CHUNK_ROWS) {
+                        diesel::insert_into(token_rates::table)
+                            .values(chunk)
+                            .execute(conn)?;
+                    }
+                    Ok(())
+                })
             })
             .await
             .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
