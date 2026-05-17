@@ -1,4 +1,5 @@
 use crate::Result;
+use crate::batch;
 use crate::connection_pool;
 use crate::schema::pool_info;
 use anyhow::anyhow;
@@ -95,12 +96,21 @@ pub async fn batch_insert(pool_infos: &[Arc<PoolInfo>], cfg: &impl ConfigAccess)
 
     let new_pools = new_pools?;
     {
+        // NewDbPoolInfo binds 8 params per row; chunk to stay under the
+        // PostgreSQL 65535 bind-parameter limit. See crate::batch.
+        const CHUNK_ROWS: usize = batch::chunk_rows(8);
+
         let conn = connection_pool::get().await?;
 
         conn.interact(move |conn| {
-            diesel::insert_into(pool_info::table)
-                .values(&new_pools)
-                .execute(conn)
+            conn.transaction::<_, diesel::result::Error, _>(|conn| {
+                for chunk in new_pools.chunks(CHUNK_ROWS) {
+                    diesel::insert_into(pool_info::table)
+                        .values(chunk)
+                        .execute(conn)?;
+                }
+                Ok(())
+            })
         })
         .await
         .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
