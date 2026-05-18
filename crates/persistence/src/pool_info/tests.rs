@@ -682,7 +682,16 @@ async fn test_insert_chunked_with_rolls_back_chunk1_on_chunk2_collision() {
         );
     }
 
-    let _ = cleanup_old_records(0).await;
+    let mut ids = safe_pool_ids.clone();
+    ids.push(collision_pool_id);
+    let conn = connection_pool::get_test_only().await.unwrap();
+    conn.interact(move |conn| {
+        use diesel::RunQueryDsl;
+        diesel::delete(pool_info::table.filter(pool_info::pool_id.eq_any(ids))).execute(conn)
+    })
+    .await
+    .unwrap()
+    .unwrap();
 }
 
 /// Multi-chunk happy path on the slice path: 5 rows with chunk_rows=2
@@ -726,7 +735,14 @@ async fn test_insert_chunked_with_multi_chunk_happy_path() {
         );
     }
 
-    let _ = cleanup_old_records(0).await;
+    let conn = connection_pool::get_test_only().await.unwrap();
+    conn.interact(move |conn| {
+        use diesel::RunQueryDsl;
+        diesel::delete(pool_info::table.filter(pool_info::pool_id.eq_any(pool_ids))).execute(conn)
+    })
+    .await
+    .unwrap()
+    .unwrap();
 }
 
 mod structural;
