@@ -45,6 +45,47 @@ pub(crate) const fn chunk_rows(cols: NonZeroUsize) -> NonZeroUsize {
     }
 }
 
+/// Test-only `chunk_rows` variant that takes an explicit `budget` instead of
+/// `MAX_BIND_PARAMS_PER_CHUNK`. Tests shrink the budget (e.g. 4 with COLS=2)
+/// so a 3-row insert spans two chunks, exercising the chunk-boundary
+/// atomicity contract without the cost of inserting 6666+ rows. The same
+/// underflow-to-zero guard as `chunk_rows` applies.
+#[cfg(test)]
+pub(crate) const fn chunk_rows_with_budget(
+    budget: NonZeroUsize,
+    cols: NonZeroUsize,
+) -> NonZeroUsize {
+    match NonZeroUsize::new(budget.get() / cols.get()) {
+        Some(n) => n,
+        None => panic!("budget divided by cols underflowed to 0; budget < cols"),
+    }
+}
+
+/// Compile-time assertion that `<ty>::COLS` matches the destructuring
+/// pattern's field list. Adding or removing an `Insertable` field without
+/// updating `COLS` triggers a compile error: the destructuring is
+/// exhaustive, and the array literal's length is type-checked against
+/// `<ty>::COLS`. Caller supplies the field name list explicitly so
+/// auto-discovery does not silently absorb a new field.
+#[cfg(test)]
+macro_rules! enforce_cols_matches_fields {
+    ($ty:ident { $($field:ident),+ $(,)? }) => {
+        #[test]
+        fn cols_matches_struct_fields() {
+            fn _enforce(v: $ty) {
+                let $ty { $($field),+ } = v;
+                let _: [(); <$ty>::COLS.get()] = [
+                    $({ let _ = $field; }),+
+                ];
+            }
+            let _: fn($ty) = _enforce;
+        }
+    };
+}
+
+#[cfg(test)]
+pub(crate) use enforce_cols_matches_fields;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -72,5 +113,14 @@ mod tests {
     fn chunk_rows_uses_full_budget_at_cols_one() {
         let rows = chunk_rows(NonZeroUsize::new(1).expect("non-zero"));
         assert_eq!(rows.get(), MAX_BIND_PARAMS_PER_CHUNK);
+    }
+
+    /// `chunk_rows_with_budget` must yield the test-friendly small chunk
+    /// sizes that exercise multi-chunk paths without large row counts.
+    #[test]
+    fn chunk_rows_with_budget_supports_small_chunks() {
+        let budget = NonZeroUsize::new(4).expect("non-zero");
+        let cols = NonZeroUsize::new(2).expect("non-zero");
+        assert_eq!(chunk_rows_with_budget(budget, cols).get(), 2);
     }
 }
