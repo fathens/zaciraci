@@ -428,22 +428,41 @@ async fn test_insert_chunked_with_rolls_back_chunk1_on_chunk2_collision() {
 /// Multi-chunk happy path: 5 rows with chunk_rows=2 spans three chunks
 /// (2 + 2 + 1). Exercises the `while !empty { take = len.min(...) }` loop
 /// in `insert_chunked_with` past the off-by-one boundary and verifies
-/// that `RETURNING *` preserves input order across chunks.
+/// that `RETURNING *` preserves input order **and** each field's value
+/// across chunks. Each row carries distinct `from_amount`, `to_amount`,
+/// and a `Some`/`None`-mixed `actual_to_amount` so the drain-based move
+/// (which transfers `BigDecimal` heap pointers per element) is verified
+/// field-by-field: any positional swap, value mutation, or chunk-boundary
+/// drop would surface as a mismatched assertion rather than silently
+/// passing on equal-valued rows.
 #[tokio::test]
 async fn test_insert_chunked_with_multi_chunk_happy_path() {
     let period_id = create_test_evaluation_period().await;
     let batch_id = uuid::Uuid::new_v4().to_string();
 
-    let tx_ids: Vec<String> = (0..5)
-        .map(|i| format!("happy_{}_{}", i, uuid::Uuid::new_v4()))
+    let expected: Vec<TradeTransaction> = (0..5)
+        .map(|i| {
+            let i = i as u128;
+            TradeTransaction {
+                tx_id: format!("happy_{}_{}", i, uuid::Uuid::new_v4()),
+                trade_batch_id: batch_id.clone(),
+                from_token: "wrap.near".to_string(),
+                from_amount: TokenSmallestUnits::from_u128(1_000_000 + i),
+                to_token: "akaia.tkn.near".to_string(),
+                to_amount: TokenSmallestUnits::from_u128(2_000_000 + i * 7),
+                timestamp: chrono::Utc::now().naive_utc(),
+                evaluation_period_id: period_id.clone(),
+                actual_to_amount: if i.is_multiple_of(2) {
+                    None
+                } else {
+                    Some(BigDecimal::from(3_000_000_u128 + i * 11))
+                },
+            }
+        })
         .collect();
-    let batch: Vec<TradeTransaction> = tx_ids
-        .iter()
-        .map(|tx_id| make_tx(tx_id.clone(), period_id.clone(), batch_id.clone()))
-        .collect();
+    let batch = expected.clone();
 
     let result = AssertUnwindSafe(async {
-        let expected_ids = tx_ids.clone();
         let conn = crate::connection_pool::get().await.unwrap();
         let inserted = conn
             .interact(move |conn| {
@@ -457,19 +476,31 @@ async fn test_insert_chunked_with_multi_chunk_happy_path() {
             .unwrap()
             .unwrap();
 
-        assert_eq!(inserted.len(), expected_ids.len());
-        for (i, expected_id) in expected_ids.iter().enumerate() {
+        assert_eq!(inserted.len(), expected.len());
+        for (i, want) in expected.iter().enumerate() {
             assert_eq!(
-                inserted[i].tx_id, *expected_id,
-                "RETURNING * must preserve input order across chunks"
+                inserted[i].tx_id, want.tx_id,
+                "RETURNING * must preserve input order across chunks at index {i}"
+            );
+            assert_eq!(
+                inserted[i].from_amount, want.from_amount,
+                "from_amount mismatch at index {i}"
+            );
+            assert_eq!(
+                inserted[i].to_amount, want.to_amount,
+                "to_amount mismatch at index {i}"
+            );
+            assert_eq!(
+                inserted[i].actual_to_amount, want.actual_to_amount,
+                "actual_to_amount mismatch at index {i}"
             );
         }
     })
     .catch_unwind()
     .await;
 
-    for tx_id in &tx_ids {
-        let _ = TradeTransaction::delete_by_tx_id_async(tx_id.clone()).await;
+    for tx in &expected {
+        let _ = TradeTransaction::delete_by_tx_id_async(tx.tx_id.clone()).await;
     }
     delete_test_evaluation_period(period_id).await;
 
