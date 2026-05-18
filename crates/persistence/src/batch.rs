@@ -18,14 +18,31 @@
 
 use std::num::NonZeroUsize;
 
-/// Conservative budget for bind parameters per chunk. Leaves headroom below
-/// the hard 65535 limit for protocol overhead and future schema growth.
+/// Conservative budget for bind parameters per chunk.
+///
+/// The PostgreSQL wire protocol caps parameters at 65535 (i16). The 5535
+/// headroom below that cap (≈8.4%) absorbs protocol overhead and future
+/// schema growth: adding one column to the worst-case row (currently
+/// `TradeTransaction`, COLS=9 → CHUNK_ROWS=6666) shrinks the row budget
+/// to ≈6000 (≈10% reduction), still well clear of the hard limit.
 const MAX_BIND_PARAMS_PER_CHUNK: usize = 60_000;
 
 /// Maximum rows that fit in one INSERT statement, given the per-row
 /// bind-parameter count.
-pub(crate) const fn chunk_rows(cols: NonZeroUsize) -> usize {
-    MAX_BIND_PARAMS_PER_CHUNK / cols.get()
+///
+/// Returns `NonZeroUsize` so call sites cannot accidentally feed `0` into
+/// `slice::chunks` (which panics) or `Vec::drain(..0)` (which loops
+/// forever). The `const` panic fires at compile time if `cols` is large
+/// enough that the integer division underflows to 0 — for the workspace's
+/// current `Insertable` set (COLS ∈ {6,7,8,9}) this never triggers, but
+/// it guards future schema growth past the budget.
+pub(crate) const fn chunk_rows(cols: NonZeroUsize) -> NonZeroUsize {
+    match NonZeroUsize::new(MAX_BIND_PARAMS_PER_CHUNK / cols.get()) {
+        Some(n) => n,
+        None => panic!(
+            "MAX_BIND_PARAMS_PER_CHUNK divided by cols underflowed to 0; cols exceeds the budget",
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -39,7 +56,7 @@ mod tests {
     fn chunk_rows_stays_within_budget() {
         for cols in [1usize, 6, 7, 8, 9, 100, 1_000, MAX_BIND_PARAMS_PER_CHUNK] {
             let n = NonZeroUsize::new(cols).expect("test input must be non-zero");
-            let rows = chunk_rows(n);
+            let rows = chunk_rows(n).get();
             assert!(
                 rows * cols <= MAX_BIND_PARAMS_PER_CHUNK,
                 "chunk_rows({cols}) = {rows} exceeds budget: {} > {}",
@@ -54,6 +71,6 @@ mod tests {
     #[test]
     fn chunk_rows_uses_full_budget_at_cols_one() {
         let rows = chunk_rows(NonZeroUsize::new(1).expect("non-zero"));
-        assert_eq!(rows, MAX_BIND_PARAMS_PER_CHUNK);
+        assert_eq!(rows.get(), MAX_BIND_PARAMS_PER_CHUNK);
     }
 }

@@ -193,12 +193,12 @@ impl TokenRate {
         {
             // Chunk size derived from `NewDbTokenRate::COLS` to stay under the
             // PostgreSQL 65535 bind-parameter limit. See `crate::batch`.
-            const CHUNK_ROWS: usize = batch::chunk_rows(NewDbTokenRate::COLS);
+            const CHUNK_ROWS: NonZeroUsize = batch::chunk_rows(NewDbTokenRate::COLS);
 
-            if new_rates.len() > CHUNK_ROWS {
+            if new_rates.len() > CHUNK_ROWS.get() {
                 debug!(log, "batch chunked";
                     "rows" => new_rates.len(),
-                    "chunk_rows" => CHUNK_ROWS,
+                    "chunk_rows" => CHUNK_ROWS.get(),
                 );
             }
 
@@ -206,7 +206,7 @@ impl TokenRate {
 
             conn.interact(move |conn| {
                 conn.transaction::<_, diesel::result::Error, _>(|conn| {
-                    for chunk in new_rates.chunks(CHUNK_ROWS) {
+                    for chunk in new_rates.chunks(CHUNK_ROWS.get()) {
                         diesel::insert_into(token_rates::table)
                             .values(chunk)
                             .execute(conn)?;

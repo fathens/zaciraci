@@ -257,17 +257,17 @@ impl PredictionRecord {
     pub async fn batch_insert(records: &[NewPredictionRecord]) -> Result<()> {
         // Chunk size derived from `NewPredictionRecord::COLS` to stay under the
         // PostgreSQL 65535 bind-parameter limit. See `crate::batch`.
-        const CHUNK_ROWS: usize = batch::chunk_rows(NewPredictionRecord::COLS);
+        const CHUNK_ROWS: NonZeroUsize = batch::chunk_rows(NewPredictionRecord::COLS);
 
         if records.is_empty() {
             return Ok(());
         }
 
-        if records.len() > CHUNK_ROWS {
+        if records.len() > CHUNK_ROWS.get() {
             let log = DEFAULT.new(o!("function" => "PredictionRecord::batch_insert"));
             debug!(log, "batch chunked";
                 "rows" => records.len(),
-                "chunk_rows" => CHUNK_ROWS,
+                "chunk_rows" => CHUNK_ROWS.get(),
             );
         }
 
@@ -276,7 +276,7 @@ impl PredictionRecord {
 
         conn.interact(move |conn| {
             conn.transaction::<_, diesel::result::Error, _>(|conn| {
-                for chunk in records.chunks(CHUNK_ROWS) {
+                for chunk in records.chunks(CHUNK_ROWS.get()) {
                     diesel::insert_into(prediction_records::table)
                         .values(chunk)
                         .execute(conn)?;

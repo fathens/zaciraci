@@ -60,14 +60,14 @@ impl TradeTransaction {
     ) -> QueryResult<Vec<TradeTransaction>> {
         // Chunk size derived from `Self::COLS` to stay under the PostgreSQL
         // 65535 bind-parameter limit. See `crate::batch`.
-        const CHUNK_ROWS: usize = batch::chunk_rows(TradeTransaction::COLS);
+        const CHUNK_ROWS: NonZeroUsize = batch::chunk_rows(TradeTransaction::COLS);
 
         let total = transactions.len();
-        if total > CHUNK_ROWS {
+        if total > CHUNK_ROWS.get() {
             let log = DEFAULT.new(o!("function" => "TradeTransaction::insert_batch"));
             debug!(log, "batch chunked";
                 "rows" => total,
-                "chunk_rows" => CHUNK_ROWS,
+                "chunk_rows" => CHUNK_ROWS.get(),
             );
         }
 
@@ -89,7 +89,7 @@ impl TradeTransaction {
             // would let this drop down to a slice-by-reference call and is
             // left for a future PR.
             while !transactions.is_empty() {
-                let take = transactions.len().min(CHUNK_ROWS);
+                let take = transactions.len().min(CHUNK_ROWS.get());
                 let chunk: Vec<TradeTransaction> = transactions.drain(..take).collect();
                 let rows: Vec<TradeTransaction> = diesel::insert_into(trade_transactions::table)
                     .values(chunk)

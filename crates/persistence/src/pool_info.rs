@@ -106,12 +106,12 @@ pub async fn batch_insert(pool_infos: &[Arc<PoolInfo>], cfg: &impl ConfigAccess)
     {
         // Chunk size derived from `NewDbPoolInfo::COLS` to stay under the
         // PostgreSQL 65535 bind-parameter limit. See `crate::batch`.
-        const CHUNK_ROWS: usize = batch::chunk_rows(NewDbPoolInfo::COLS);
+        const CHUNK_ROWS: NonZeroUsize = batch::chunk_rows(NewDbPoolInfo::COLS);
 
-        if new_pools.len() > CHUNK_ROWS {
+        if new_pools.len() > CHUNK_ROWS.get() {
             debug!(log, "batch chunked";
                 "rows" => new_pools.len(),
-                "chunk_rows" => CHUNK_ROWS,
+                "chunk_rows" => CHUNK_ROWS.get(),
             );
         }
 
@@ -119,7 +119,7 @@ pub async fn batch_insert(pool_infos: &[Arc<PoolInfo>], cfg: &impl ConfigAccess)
 
         conn.interact(move |conn| {
             conn.transaction::<_, diesel::result::Error, _>(|conn| {
-                for chunk in new_pools.chunks(CHUNK_ROWS) {
+                for chunk in new_pools.chunks(CHUNK_ROWS.get()) {
                     diesel::insert_into(pool_info::table)
                         .values(chunk)
                         .execute(conn)?;
