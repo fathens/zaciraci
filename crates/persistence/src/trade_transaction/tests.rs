@@ -478,14 +478,4 @@ async fn test_insert_chunked_with_multi_chunk_happy_path() {
     }
 }
 
-crate::batch::enforce_cols_matches_fields!(TradeTransaction {
-    tx_id,
-    trade_batch_id,
-    from_token,
-    from_amount,
-    to_token,
-    to_amount,
-    timestamp,
-    evaluation_period_id,
-    actual_to_amount,
-});
+mod structural;

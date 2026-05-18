@@ -729,13 +729,4 @@ async fn test_insert_chunked_with_multi_chunk_happy_path() {
     let _ = cleanup_old_records(0).await;
 }
 
-crate::batch::enforce_cols_matches_fields!(NewDbPoolInfo {
-    pool_id,
-    pool_kind,
-    token_account_ids,
-    amounts,
-    total_fee,
-    shares_total_supply,
-    amp,
-    timestamp,
-});
+mod structural;
