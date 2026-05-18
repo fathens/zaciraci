@@ -6,6 +6,7 @@ use bigdecimal::BigDecimal;
 use chrono::NaiveDateTime;
 use common::types::TokenSmallestUnits;
 use diesel::prelude::*;
+use logging::*;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroUsize;
 
@@ -60,6 +61,14 @@ impl TradeTransaction {
         // Chunk size derived from `Self::COLS` to stay under the PostgreSQL
         // 65535 bind-parameter limit. See `crate::batch`.
         const CHUNK_ROWS: usize = batch::chunk_rows(TradeTransaction::COLS);
+
+        if transactions.len() > CHUNK_ROWS {
+            let log = DEFAULT.new(o!("function" => "TradeTransaction::insert_batch"));
+            debug!(log, "batch chunked";
+                "rows" => transactions.len(),
+                "chunk_rows" => CHUNK_ROWS,
+            );
+        }
 
         conn.transaction(|conn| {
             let mut inserted = Vec::with_capacity(transactions.len());

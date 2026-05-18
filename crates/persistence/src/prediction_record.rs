@@ -263,6 +263,14 @@ impl PredictionRecord {
             return Ok(());
         }
 
+        if records.len() > CHUNK_ROWS {
+            let log = DEFAULT.new(o!("function" => "PredictionRecord::batch_insert"));
+            debug!(log, "batch chunked";
+                "rows" => records.len(),
+                "chunk_rows" => CHUNK_ROWS,
+            );
+        }
+
         let records = records.to_vec();
         let conn = connection_pool::get().await?;
 

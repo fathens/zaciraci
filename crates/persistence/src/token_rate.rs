@@ -195,6 +195,13 @@ impl TokenRate {
             // PostgreSQL 65535 bind-parameter limit. See `crate::batch`.
             const CHUNK_ROWS: usize = batch::chunk_rows(NewDbTokenRate::COLS);
 
+            if new_rates.len() > CHUNK_ROWS {
+                debug!(log, "batch chunked";
+                    "rows" => new_rates.len(),
+                    "chunk_rows" => CHUNK_ROWS,
+                );
+            }
+
             let conn = connection_pool::get().await?;
 
             conn.interact(move |conn| {
