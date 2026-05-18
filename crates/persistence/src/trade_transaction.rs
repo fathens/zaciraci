@@ -64,8 +64,18 @@ impl TradeTransaction {
         conn.transaction(|conn| {
             let mut inserted = Vec::with_capacity(transactions.len());
             for chunk in transactions.chunks(CHUNK_ROWS) {
-                // `Insertable` is derived only for the owned type, so the
-                // slice must be materialized into a `Vec` per chunk.
+                // `TradeTransaction` is used both as the read model
+                // (`Queryable`/`Selectable`) and the insert model
+                // (`Insertable`). The `#[diesel(serialize_as = BigDecimal)]`
+                // attributes on `from_amount`/`to_amount` require an owned
+                // `Into<BigDecimal>` conversion, which prevents diesel from
+                // deriving `Insertable for &TradeTransaction` — so passing
+                // `chunk` by reference (as in the other three batch_insert
+                // paths) does not compile. The owned `chunk.to_vec()` clone
+                // is the cost of keeping the dual-purpose struct here;
+                // refactoring to a dedicated `NewDbTradeTransaction` insert
+                // model would enable slice-by-reference and is left for a
+                // future PR.
                 let rows: Vec<TradeTransaction> = diesel::insert_into(trade_transactions::table)
                     .values(chunk.to_vec())
                     .get_results(conn)?;
