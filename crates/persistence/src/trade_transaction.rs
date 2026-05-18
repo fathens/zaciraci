@@ -55,38 +55,44 @@ impl TradeTransaction {
     }
 
     pub fn insert_batch(
-        transactions: Vec<Self>,
+        mut transactions: Vec<Self>,
         conn: &mut PgConnection,
     ) -> QueryResult<Vec<TradeTransaction>> {
         // Chunk size derived from `Self::COLS` to stay under the PostgreSQL
         // 65535 bind-parameter limit. See `crate::batch`.
         const CHUNK_ROWS: usize = batch::chunk_rows(TradeTransaction::COLS);
 
-        if transactions.len() > CHUNK_ROWS {
+        let total = transactions.len();
+        if total > CHUNK_ROWS {
             let log = DEFAULT.new(o!("function" => "TradeTransaction::insert_batch"));
             debug!(log, "batch chunked";
-                "rows" => transactions.len(),
+                "rows" => total,
                 "chunk_rows" => CHUNK_ROWS,
             );
         }
 
         conn.transaction(|conn| {
-            let mut inserted = Vec::with_capacity(transactions.len());
-            for chunk in transactions.chunks(CHUNK_ROWS) {
-                // `TradeTransaction` is used both as the read model
-                // (`Queryable`/`Selectable`) and the insert model
-                // (`Insertable`). The `#[diesel(serialize_as = BigDecimal)]`
-                // attributes on `from_amount`/`to_amount` require an owned
-                // `Into<BigDecimal>` conversion, which prevents diesel from
-                // deriving `Insertable for &TradeTransaction` — so passing
-                // `chunk` by reference (as in the other three batch_insert
-                // paths) does not compile. The owned `chunk.to_vec()` clone
-                // is the cost of keeping the dual-purpose struct here;
-                // refactoring to a dedicated `NewDbTradeTransaction` insert
-                // model would enable slice-by-reference and is left for a
-                // future PR.
+            let mut inserted = Vec::with_capacity(total);
+            // `TradeTransaction` doubles as the read model
+            // (`Queryable`/`Selectable`) and the insert model (`Insertable`),
+            // and the `#[diesel(serialize_as = BigDecimal)]` attributes on
+            // the amount fields force diesel to require owned values — there
+            // is no `Insertable for &TradeTransaction` derive available, so
+            // `.values(chunk)` with a slice (as the other three batch_insert
+            // paths do) does not compile. Move chunks out of `transactions`
+            // via `Vec::drain` instead of cloning: the heap fields
+            // (`String`s, `BigDecimal`s, `Option<BigDecimal>`) are
+            // transferred by move per element, avoiding the ~7 per-row
+            // allocations the previous `chunk.to_vec()` paid. The owned
+            // `Vec<Self>` argument is reused as the working buffer.
+            // Splitting a dedicated `NewDbTradeTransaction` insert model
+            // would let this drop down to a slice-by-reference call and is
+            // left for a future PR.
+            while !transactions.is_empty() {
+                let take = transactions.len().min(CHUNK_ROWS);
+                let chunk: Vec<TradeTransaction> = transactions.drain(..take).collect();
                 let rows: Vec<TradeTransaction> = diesel::insert_into(trade_transactions::table)
-                    .values(chunk.to_vec())
+                    .values(chunk)
                     .get_results(conn)?;
                 inserted.extend(rows);
             }
