@@ -11,6 +11,7 @@ pub use serial_test::serial;
 mod helpers;
 pub use helpers::*;
 
+mod chunked;
 mod constructor;
 mod db;
 mod structural;
