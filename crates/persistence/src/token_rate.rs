@@ -58,7 +58,7 @@ struct DbTokenRate {
 // データベース挿入用モデル（ExchangeRate から構築）
 #[derive(Debug, Clone, Insertable)]
 #[diesel(table_name = token_rates)]
-struct NewDbTokenRate {
+pub(crate) struct NewDbTokenRate {
     pub base_token: String,
     pub quote_token: String,
     pub rate: BigDecimal,
@@ -191,7 +191,7 @@ impl TokenRate {
     }
 
     /// NewDbTokenRate に変換
-    fn to_new_db(&self) -> NewDbTokenRate {
+    pub(crate) fn to_new_db(&self) -> NewDbTokenRate {
         NewDbTokenRate::from_exchange_rate(
             &self.base,
             &self.quote,

@@ -18,6 +18,7 @@ pub use std::str::FromStr;
 mod helpers;
 pub use helpers::*;
 
+mod chunked;
 mod computation;
 mod db;
 mod structural;
