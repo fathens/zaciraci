@@ -14,6 +14,7 @@ use diesel::prelude::*;
 use logging::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::str::FromStr;
 
 /// スワップパス内の個々のプール情報
@@ -68,6 +69,11 @@ struct NewDbTokenRate {
 }
 
 impl NewDbTokenRate {
+    /// Bind-parameter count per row for the chunked batch insert. SSoT for
+    /// `chunk_rows` budgeting (`crate::batch`); the structural test in
+    /// `tests::cols_matches_struct_fields` enforces field-count alignment.
+    const COLS: NonZeroUsize = NonZeroUsize::new(7).expect("COLS must be non-zero");
+
     /// ExchangeRate から挿入用モデルを作成
     fn from_exchange_rate(
         base: &TokenOutAccount,
@@ -185,9 +191,9 @@ impl TokenRate {
             token_rates.iter().map(|rate| rate.to_new_db()).collect();
 
         {
-            // NewDbTokenRate binds 7 params per row; chunk to stay under the
-            // PostgreSQL 65535 bind-parameter limit. See crate::batch.
-            const CHUNK_ROWS: usize = batch::chunk_rows(7);
+            // Chunk size derived from `NewDbTokenRate::COLS` to stay under the
+            // PostgreSQL 65535 bind-parameter limit. See `crate::batch`.
+            const CHUNK_ROWS: usize = batch::chunk_rows(NewDbTokenRate::COLS);
 
             let conn = connection_pool::get().await?;
 

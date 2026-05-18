@@ -7,6 +7,7 @@ use chrono::NaiveDateTime;
 use common::types::TokenSmallestUnits;
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroUsize;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable, Insertable, AsChangeset)]
 #[diesel(table_name = trade_transactions)]
@@ -30,6 +31,11 @@ pub struct TradeTransaction {
 }
 
 impl TradeTransaction {
+    /// Bind-parameter count per row for the chunked batch insert. SSoT for
+    /// `chunk_rows` budgeting (`crate::batch`); the structural test in
+    /// `tests::cols_matches_struct_fields` enforces field-count alignment.
+    const COLS: NonZeroUsize = NonZeroUsize::new(9).expect("COLS must be non-zero");
+
     pub fn insert(self, conn: &mut PgConnection) -> QueryResult<TradeTransaction> {
         diesel::insert_into(trade_transactions::table)
             .values(self)
@@ -51,9 +57,9 @@ impl TradeTransaction {
         transactions: Vec<Self>,
         conn: &mut PgConnection,
     ) -> QueryResult<Vec<TradeTransaction>> {
-        // TradeTransaction binds 9 params per row; chunk to stay under the
-        // PostgreSQL 65535 bind-parameter limit. See crate::batch.
-        const CHUNK_ROWS: usize = batch::chunk_rows(9);
+        // Chunk size derived from `Self::COLS` to stay under the PostgreSQL
+        // 65535 bind-parameter limit. See `crate::batch`.
+        const CHUNK_ROWS: usize = batch::chunk_rows(TradeTransaction::COLS);
 
         conn.transaction(|conn| {
             let mut inserted = Vec::with_capacity(transactions.len());

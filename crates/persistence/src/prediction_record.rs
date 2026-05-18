@@ -7,6 +7,7 @@ use chrono::NaiveDateTime;
 use common::types::{TokenAccount, TokenOutAccount};
 use diesel::prelude::*;
 use logging::*;
+use std::num::NonZeroUsize;
 
 /// Layer 3 CHECK 制約名の Single Source of Truth。
 ///
@@ -154,6 +155,11 @@ pub enum NewPredictionRecordError {
 }
 
 impl NewPredictionRecord {
+    /// Bind-parameter count per row for the chunked batch insert. SSoT for
+    /// `chunk_rows` budgeting (`crate::batch`); the structural test in
+    /// `tests::cols_matches_struct_fields` enforces field-count alignment.
+    const COLS: NonZeroUsize = NonZeroUsize::new(6).expect("COLS must be non-zero");
+
     /// 予測レコード挿入用の値を構築する (唯一の構築経路)。
     ///
     /// `created_at >= data_cutoff_time` および `target_time > data_cutoff_time` を
@@ -249,9 +255,9 @@ mod tests;
 impl PredictionRecord {
     /// 予測バッチ挿入
     pub async fn batch_insert(records: &[NewPredictionRecord]) -> Result<()> {
-        // NewPredictionRecord binds 6 params per row; chunk to stay under the
-        // PostgreSQL 65535 bind-parameter limit. See crate::batch.
-        const CHUNK_ROWS: usize = batch::chunk_rows(6);
+        // Chunk size derived from `NewPredictionRecord::COLS` to stay under the
+        // PostgreSQL 65535 bind-parameter limit. See `crate::batch`.
+        const CHUNK_ROWS: usize = batch::chunk_rows(NewPredictionRecord::COLS);
 
         if records.is_empty() {
             return Ok(());

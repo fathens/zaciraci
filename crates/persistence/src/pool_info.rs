@@ -10,6 +10,7 @@ use dex::{PoolInfo, PoolInfoBared, PoolInfoList};
 use diesel::prelude::*;
 use logging::*;
 use serde_json::Value as JsonValue;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 // データベース用モデル
@@ -40,6 +41,13 @@ struct NewDbPoolInfo {
     pub shares_total_supply: JsonValue,
     pub amp: i64,
     pub timestamp: NaiveDateTime,
+}
+
+impl NewDbPoolInfo {
+    /// Bind-parameter count per row for the chunked batch insert. SSoT for
+    /// `chunk_rows` budgeting (`crate::batch`); the structural test in
+    /// `tests::cols_matches_struct_fields` enforces field-count alignment.
+    const COLS: NonZeroUsize = NonZeroUsize::new(8).expect("COLS must be non-zero");
 }
 
 // DbPoolInfoからPoolInfoへの変換
@@ -96,9 +104,9 @@ pub async fn batch_insert(pool_infos: &[Arc<PoolInfo>], cfg: &impl ConfigAccess)
 
     let new_pools = new_pools?;
     {
-        // NewDbPoolInfo binds 8 params per row; chunk to stay under the
-        // PostgreSQL 65535 bind-parameter limit. See crate::batch.
-        const CHUNK_ROWS: usize = batch::chunk_rows(8);
+        // Chunk size derived from `NewDbPoolInfo::COLS` to stay under the
+        // PostgreSQL 65535 bind-parameter limit. See `crate::batch`.
+        const CHUNK_ROWS: usize = batch::chunk_rows(NewDbPoolInfo::COLS);
 
         let conn = connection_pool::get().await?;
 
