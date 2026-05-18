@@ -611,3 +611,51 @@ async fn test_cleanup_old_records_minimum_retention() -> Result<()> {
 
     Ok(())
 }
+
+/// Adding or removing an `Insertable` field on `NewDbPoolInfo` without
+/// updating `COLS` triggers a compile error here: the destructuring
+/// pattern is exhaustive, and the array literal's length is type-checked
+/// against `NewDbPoolInfo::COLS`. Together they refuse to compile until
+/// the bind-parameter count and the field list are realigned.
+#[test]
+fn cols_matches_struct_fields() {
+    fn _enforce(v: NewDbPoolInfo) {
+        let NewDbPoolInfo {
+            pool_id,
+            pool_kind,
+            token_account_ids,
+            amounts,
+            total_fee,
+            shares_total_supply,
+            amp,
+            timestamp,
+        } = v;
+        let _: [(); NewDbPoolInfo::COLS.get()] = [
+            {
+                let _ = pool_id;
+            },
+            {
+                let _ = pool_kind;
+            },
+            {
+                let _ = token_account_ids;
+            },
+            {
+                let _ = amounts;
+            },
+            {
+                let _ = total_fee;
+            },
+            {
+                let _ = shares_total_supply;
+            },
+            {
+                let _ = amp;
+            },
+            {
+                let _ = timestamp;
+            },
+        ];
+    }
+    let _: fn(NewDbPoolInfo) = _enforce;
+}

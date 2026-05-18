@@ -27,3 +27,33 @@ const MAX_BIND_PARAMS_PER_CHUNK: usize = 60_000;
 pub(crate) const fn chunk_rows(cols: NonZeroUsize) -> usize {
     MAX_BIND_PARAMS_PER_CHUNK / cols.get()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `chunk_rows` must always produce a row count whose total bind-param
+    /// usage stays at or below the configured budget, for every column
+    /// count the workspace currently uses.
+    #[test]
+    fn chunk_rows_stays_within_budget() {
+        for cols in [1usize, 6, 7, 8, 9, 100, 1_000, MAX_BIND_PARAMS_PER_CHUNK] {
+            let n = NonZeroUsize::new(cols).expect("test input must be non-zero");
+            let rows = chunk_rows(n);
+            assert!(
+                rows * cols <= MAX_BIND_PARAMS_PER_CHUNK,
+                "chunk_rows({cols}) = {rows} exceeds budget: {} > {}",
+                rows * cols,
+                MAX_BIND_PARAMS_PER_CHUNK,
+            );
+        }
+    }
+
+    /// `cols = 1` must consume the full budget (no wasted headroom from
+    /// the integer division).
+    #[test]
+    fn chunk_rows_uses_full_budget_at_cols_one() {
+        let rows = chunk_rows(NonZeroUsize::new(1).expect("non-zero"));
+        assert_eq!(rows, MAX_BIND_PARAMS_PER_CHUNK);
+    }
+}

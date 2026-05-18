@@ -333,3 +333,55 @@ async fn test_find_by_date_range() {
         std::panic::resume_unwind(e);
     }
 }
+
+/// Adding or removing an `Insertable` field on `TradeTransaction` without
+/// updating `COLS` triggers a compile error here: the destructuring pattern
+/// is exhaustive, and the array literal's length is type-checked against
+/// `TradeTransaction::COLS`. Together they refuse to compile until the
+/// bind-parameter count and the field list are realigned.
+#[test]
+fn cols_matches_struct_fields() {
+    fn _enforce(v: TradeTransaction) {
+        let TradeTransaction {
+            tx_id,
+            trade_batch_id,
+            from_token,
+            from_amount,
+            to_token,
+            to_amount,
+            timestamp,
+            evaluation_period_id,
+            actual_to_amount,
+        } = v;
+        let _: [(); TradeTransaction::COLS.get()] = [
+            {
+                let _ = tx_id;
+            },
+            {
+                let _ = trade_batch_id;
+            },
+            {
+                let _ = from_token;
+            },
+            {
+                let _ = from_amount;
+            },
+            {
+                let _ = to_token;
+            },
+            {
+                let _ = to_amount;
+            },
+            {
+                let _ = timestamp;
+            },
+            {
+                let _ = evaluation_period_id;
+            },
+            {
+                let _ = actual_to_amount;
+            },
+        ];
+    }
+    let _: fn(TradeTransaction) = _enforce;
+}
