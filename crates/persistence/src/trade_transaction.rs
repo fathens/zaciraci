@@ -89,8 +89,8 @@ impl TradeTransaction {
             let mut inserted = Vec::with_capacity(total);
             while !transactions.is_empty() {
                 let take = transactions.len().min(chunk_rows.get());
-                let chunk: Vec<TradeTransaction> = transactions.drain(..take).collect();
-                let rows: Vec<TradeTransaction> = diesel::insert_into(trade_transactions::table)
+                let chunk = transactions.drain(..take).collect::<Vec<_>>();
+                let rows = diesel::insert_into(trade_transactions::table)
                     .values(chunk)
                     .get_results(conn)?;
                 inserted.extend(rows);
@@ -103,6 +103,9 @@ impl TradeTransaction {
         transactions: Vec<Self>,
         conn: &mut PgConnection,
     ) -> QueryResult<Vec<TradeTransaction>> {
+        if transactions.is_empty() {
+            return Ok(Vec::new());
+        }
         let chunk_rows = Self::CHUNK_ROWS;
         let total = transactions.len();
         if total > chunk_rows.get() {
