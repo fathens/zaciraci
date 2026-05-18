@@ -72,7 +72,35 @@ impl NewDbTokenRate {
     /// Bind-parameter count per row for the chunked batch insert. SSoT for
     /// `chunk_rows` budgeting (`crate::batch`); the structural test in
     /// `tests::cols_matches_struct_fields` enforces field-count alignment.
-    const COLS: NonZeroUsize = NonZeroUsize::new(7).expect("COLS must be non-zero");
+    pub(crate) const COLS: NonZeroUsize = NonZeroUsize::new(7).expect("COLS must be non-zero");
+
+    /// Maximum rows per INSERT statement under the PostgreSQL 65535
+    /// bind-parameter limit. Co-located with `COLS` so the SSoT pair lives
+    /// next to the struct definition.
+    pub(crate) const CHUNK_ROWS: NonZeroUsize = batch::chunk_rows(Self::COLS);
+
+    /// Chunked INSERT into `token_rates` within a single transaction.
+    ///
+    /// Acts as the test DI point: production callers pass `Self::CHUNK_ROWS`
+    /// (via [`TokenRate::batch_insert`]), while tests use
+    /// [`batch::chunk_rows_with_budget`] to shrink chunks to 2-3 rows for
+    /// atomicity / off-by-one verification. All chunks execute inside one
+    /// `conn.transaction`, so a failure in any chunk rolls back every
+    /// preceding chunk.
+    pub(crate) fn insert_chunked_with(
+        rows: Vec<NewDbTokenRate>,
+        chunk_rows: NonZeroUsize,
+        conn: &mut PgConnection,
+    ) -> QueryResult<()> {
+        conn.transaction::<_, diesel::result::Error, _>(|conn| {
+            for chunk in rows.chunks(chunk_rows.get()) {
+                diesel::insert_into(token_rates::table)
+                    .values(chunk)
+                    .execute(conn)?;
+            }
+            Ok(())
+        })
+    }
 
     /// ExchangeRate から挿入用モデルを作成
     fn from_exchange_rate(
@@ -181,7 +209,6 @@ impl TokenRate {
             "token_rates" => token_rates.len(),
         ));
         info!(log, "start");
-        use diesel::RunQueryDsl;
 
         if token_rates.is_empty() {
             return Ok(());
@@ -191,28 +218,21 @@ impl TokenRate {
             token_rates.iter().map(|rate| rate.to_new_db()).collect();
 
         {
-            // Chunk size derived from `NewDbTokenRate::COLS` to stay under the
-            // PostgreSQL 65535 bind-parameter limit. See `crate::batch`.
-            const CHUNK_ROWS: NonZeroUsize = batch::chunk_rows(NewDbTokenRate::COLS);
-
-            if new_rates.len() > CHUNK_ROWS.get() {
+            let chunk_rows = NewDbTokenRate::CHUNK_ROWS;
+            let total = new_rates.len();
+            if total > chunk_rows.get() {
+                let chunks = total.div_ceil(chunk_rows.get());
                 debug!(log, "batch chunked";
-                    "rows" => new_rates.len(),
-                    "chunk_rows" => CHUNK_ROWS.get(),
+                    "rows" => total,
+                    "chunk_rows" => chunk_rows.get(),
+                    "chunks" => chunks,
                 );
             }
 
             let conn = connection_pool::get().await?;
 
             conn.interact(move |conn| {
-                conn.transaction::<_, diesel::result::Error, _>(|conn| {
-                    for chunk in new_rates.chunks(CHUNK_ROWS.get()) {
-                        diesel::insert_into(token_rates::table)
-                            .values(chunk)
-                            .execute(conn)?;
-                    }
-                    Ok(())
-                })
+                NewDbTokenRate::insert_chunked_with(new_rates, chunk_rows, conn)
             })
             .await
             .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;

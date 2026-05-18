@@ -158,7 +158,35 @@ impl NewPredictionRecord {
     /// Bind-parameter count per row for the chunked batch insert. SSoT for
     /// `chunk_rows` budgeting (`crate::batch`); the structural test in
     /// `tests::cols_matches_struct_fields` enforces field-count alignment.
-    const COLS: NonZeroUsize = NonZeroUsize::new(6).expect("COLS must be non-zero");
+    pub(crate) const COLS: NonZeroUsize = NonZeroUsize::new(6).expect("COLS must be non-zero");
+
+    /// Maximum rows per INSERT statement under the PostgreSQL 65535
+    /// bind-parameter limit. Co-located with `COLS` so the SSoT pair lives
+    /// next to the struct definition.
+    pub(crate) const CHUNK_ROWS: NonZeroUsize = batch::chunk_rows(Self::COLS);
+
+    /// Chunked INSERT into `prediction_records` within a single transaction.
+    ///
+    /// Acts as the test DI point: production callers pass `Self::CHUNK_ROWS`
+    /// (via [`PredictionRecord::batch_insert`]), while tests use
+    /// [`batch::chunk_rows_with_budget`] to shrink chunks to 2-3 rows for
+    /// atomicity / off-by-one verification. All chunks execute inside one
+    /// `conn.transaction`, so a failure in any chunk rolls back every
+    /// preceding chunk.
+    pub(crate) fn insert_chunked_with(
+        rows: Vec<NewPredictionRecord>,
+        chunk_rows: NonZeroUsize,
+        conn: &mut PgConnection,
+    ) -> QueryResult<()> {
+        conn.transaction::<_, diesel::result::Error, _>(|conn| {
+            for chunk in rows.chunks(chunk_rows.get()) {
+                diesel::insert_into(prediction_records::table)
+                    .values(chunk)
+                    .execute(conn)?;
+            }
+            Ok(())
+        })
+    }
 
     /// 予測レコード挿入用の値を構築する (唯一の構築経路)。
     ///
@@ -255,19 +283,19 @@ mod tests;
 impl PredictionRecord {
     /// 予測バッチ挿入
     pub async fn batch_insert(records: &[NewPredictionRecord]) -> Result<()> {
-        // Chunk size derived from `NewPredictionRecord::COLS` to stay under the
-        // PostgreSQL 65535 bind-parameter limit. See `crate::batch`.
-        const CHUNK_ROWS: NonZeroUsize = batch::chunk_rows(NewPredictionRecord::COLS);
-
         if records.is_empty() {
             return Ok(());
         }
 
-        if records.len() > CHUNK_ROWS.get() {
+        let chunk_rows = NewPredictionRecord::CHUNK_ROWS;
+        let total = records.len();
+        if total > chunk_rows.get() {
             let log = DEFAULT.new(o!("function" => "PredictionRecord::batch_insert"));
+            let chunks = total.div_ceil(chunk_rows.get());
             debug!(log, "batch chunked";
-                "rows" => records.len(),
-                "chunk_rows" => CHUNK_ROWS.get(),
+                "rows" => total,
+                "chunk_rows" => chunk_rows.get(),
+                "chunks" => chunks,
             );
         }
 
@@ -275,14 +303,7 @@ impl PredictionRecord {
         let conn = connection_pool::get().await?;
 
         conn.interact(move |conn| {
-            conn.transaction::<_, diesel::result::Error, _>(|conn| {
-                for chunk in records.chunks(CHUNK_ROWS.get()) {
-                    diesel::insert_into(prediction_records::table)
-                        .values(chunk)
-                        .execute(conn)?;
-                }
-                Ok(())
-            })
+            NewPredictionRecord::insert_chunked_with(records, chunk_rows, conn)
         })
         .await
         .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
