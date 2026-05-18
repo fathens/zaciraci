@@ -623,7 +623,7 @@ async fn test_cleanup_old_records_minimum_retention() -> Result<()> {
 /// drain-path test on `trade_transactions`; reproducing it on the slice
 /// path (`.chunks(...)`) verifies both code paths preserve atomicity.
 #[tokio::test]
-#[serial(pool_info)]
+#[serial(pool_info, persistence_chunked)]
 async fn test_insert_chunked_with_rolls_back_chunk1_on_chunk2_collision() {
     use std::num::NonZeroUsize;
 
@@ -698,7 +698,7 @@ async fn test_insert_chunked_with_rolls_back_chunk1_on_chunk2_collision() {
 /// spans three chunks (2 + 2 + 1). Exercises `.chunks(...)` past the
 /// off-by-one boundary on `pool_info::insert_chunked_with`.
 #[tokio::test]
-#[serial(pool_info)]
+#[serial(pool_info, persistence_chunked)]
 async fn test_insert_chunked_with_multi_chunk_happy_path() {
     use std::num::NonZeroUsize;
 

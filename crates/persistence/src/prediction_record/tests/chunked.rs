@@ -14,7 +14,7 @@ fn base_time() -> NaiveDateTime {
 /// → `Self::CHUNK_ROWS` → `insert_chunked_with`) so that a regression in any
 /// of those layers — not just the slice logic itself — would be caught.
 #[tokio::test]
-#[serial]
+#[serial(persistence_chunked)]
 async fn test_insert_chunked_with_multi_chunk_happy_path() -> Result<()> {
     clean_table().await?;
 
@@ -85,7 +85,7 @@ async fn test_insert_chunked_with_multi_chunk_happy_path() -> Result<()> {
 /// (PK collision); reproducing it here exercises the prediction_records
 /// table's Layer 3 CHECK as the error trigger.
 #[tokio::test]
-#[serial]
+#[serial(persistence_chunked)]
 async fn test_insert_chunked_with_rolls_back_chunk1_on_chunk2_check_violation() -> Result<()> {
     clean_table().await?;
 

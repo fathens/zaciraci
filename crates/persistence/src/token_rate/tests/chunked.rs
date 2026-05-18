@@ -14,7 +14,7 @@ use std::num::NonZeroUsize;
 /// violation in chunk 2) and the Layer 3 CHECK variant on
 /// `prediction_record::insert_chunked_with`.
 #[tokio::test]
-#[serial]
+#[serial(persistence_chunked)]
 async fn test_insert_chunked_with_multi_chunk_happy_path() -> Result<()> {
     clean_table().await?;
 

@@ -2,6 +2,7 @@ use super::*;
 use bigdecimal::BigDecimal;
 use common::types::TokenSmallestUnits;
 use futures::FutureExt;
+use serial_test::serial;
 use std::num::NonZeroUsize;
 use std::panic::AssertUnwindSafe;
 
@@ -362,6 +363,7 @@ async fn test_find_by_date_range() {
 /// collision in chunk 2 (not chunk 1) is what exercises this contract:
 /// a chunk 1 collision would abort before chunk 1 ever commits.
 #[tokio::test]
+#[serial(persistence_chunked)]
 async fn test_insert_chunked_with_rolls_back_chunk1_on_chunk2_collision() {
     let period_id = create_test_evaluation_period().await;
     let batch_id = uuid::Uuid::new_v4().to_string();
@@ -436,6 +438,7 @@ async fn test_insert_chunked_with_rolls_back_chunk1_on_chunk2_collision() {
 /// drop would surface as a mismatched assertion rather than silently
 /// passing on equal-valued rows.
 #[tokio::test]
+#[serial(persistence_chunked)]
 async fn test_insert_chunked_with_multi_chunk_happy_path() {
     let period_id = create_test_evaluation_period().await;
     let batch_id = uuid::Uuid::new_v4().to_string();
