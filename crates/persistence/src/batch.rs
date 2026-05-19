@@ -15,6 +15,15 @@
 //! adding a field forces an update of `COLS`; the structural tests in
 //! each insert module additionally enforce this with an exhaustive
 //! destructuring pattern that fails to compile on field-count drift.
+//!
+//! ## Logging policy
+//!
+//! The `debug!(log, "batch chunked"; ...)` line emitted by every call site
+//! MUST stay limited to integer aggregate counts (`rows`, `chunk_rows`,
+//! `chunks`). Do not extend with per-row identifiers — token names,
+//! tx_ids, wallet addresses, `BigDecimal` amounts — even at `debug` level.
+//! Those values survive log retention windows and propagate to forwarding
+//! pipelines that may have weaker access controls than the DB itself.
 
 use std::num::NonZeroUsize;
 
