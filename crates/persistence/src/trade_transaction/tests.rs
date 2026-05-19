@@ -387,7 +387,7 @@ async fn test_insert_chunked_with_rolls_back_chunk1_on_chunk2_collision() {
     ));
 
     let result = AssertUnwindSafe(async {
-        let conn = crate::connection_pool::get().await.unwrap();
+        let conn = crate::connection_pool::get_test_only().await.unwrap();
         let outcome = conn
             .interact(move |conn| {
                 let chunk_rows = crate::batch::chunk_rows_with_budget(
@@ -466,7 +466,7 @@ async fn test_insert_chunked_with_multi_chunk_happy_path() {
     let batch = expected.clone();
 
     let result = AssertUnwindSafe(async {
-        let conn = crate::connection_pool::get().await.unwrap();
+        let conn = crate::connection_pool::get_test_only().await.unwrap();
         let inserted = conn
             .interact(move |conn| {
                 let chunk_rows = crate::batch::chunk_rows_with_budget(
