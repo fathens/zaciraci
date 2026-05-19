@@ -12,7 +12,11 @@ use std::num::NonZeroUsize;
 /// here — the slice-path atomicity contract is independently validated on
 /// the structurally identical `pool_info::insert_chunked_with` (UNIQUE
 /// violation in chunk 2) and the Layer 3 CHECK variant on
-/// `prediction_record::insert_chunked_with`.
+/// `prediction_record::insert_chunked_with`. The omission therefore
+/// depends on `pool_info` carrying the slice-path rollback proof for the
+/// whole family: if a UNIQUE / CHECK constraint is ever added to
+/// `token_rates`, add a dedicated rollback test here rather than continuing
+/// to rely on the proxy.
 #[tokio::test]
 #[serial(persistence_chunked)]
 async fn test_insert_chunked_with_multi_chunk_happy_path() -> Result<()> {
