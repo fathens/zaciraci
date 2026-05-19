@@ -158,12 +158,12 @@ impl NewPredictionRecord {
     /// Bind-parameter count per row for the chunked batch insert. SSoT for
     /// `chunk_rows` budgeting (`crate::batch`); the structural test in
     /// `tests::cols_matches_struct_fields` enforces field-count alignment.
-    pub(crate) const COLS: NonZeroUsize = NonZeroUsize::new(6).expect("COLS must be non-zero");
+    const COLS: NonZeroUsize = NonZeroUsize::new(6).expect("COLS must be non-zero");
 
     /// Maximum rows per INSERT statement under the PostgreSQL 65535
     /// bind-parameter limit. Co-located with `COLS` so the SSoT pair lives
     /// next to the struct definition.
-    pub(crate) const CHUNK_ROWS: NonZeroUsize = batch::chunk_rows(Self::COLS);
+    const CHUNK_ROWS: NonZeroUsize = batch::chunk_rows(Self::COLS);
 
     /// Chunked INSERT into `prediction_records` within a single transaction.
     ///
@@ -173,7 +173,7 @@ impl NewPredictionRecord {
     /// atomicity / off-by-one verification. All chunks execute inside one
     /// `conn.transaction`, so a failure in any chunk rolls back every
     /// preceding chunk.
-    pub(crate) fn insert_chunked_with(
+    fn insert_chunked_with(
         rows: Vec<NewPredictionRecord>,
         chunk_rows: NonZeroUsize,
         conn: &mut PgConnection,

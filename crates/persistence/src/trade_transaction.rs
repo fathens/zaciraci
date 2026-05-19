@@ -35,12 +35,12 @@ impl TradeTransaction {
     /// Bind-parameter count per row for the chunked batch insert. SSoT for
     /// `chunk_rows` budgeting (`crate::batch`); the structural test in
     /// `tests::cols_matches_struct_fields` enforces field-count alignment.
-    pub(crate) const COLS: NonZeroUsize = NonZeroUsize::new(9).expect("COLS must be non-zero");
+    const COLS: NonZeroUsize = NonZeroUsize::new(9).expect("COLS must be non-zero");
 
     /// Maximum rows per INSERT statement under the PostgreSQL 65535
     /// bind-parameter limit. Co-located with `COLS` so the SSoT pair lives
     /// next to the struct definition.
-    pub(crate) const CHUNK_ROWS: NonZeroUsize = batch::chunk_rows(Self::COLS);
+    const CHUNK_ROWS: NonZeroUsize = batch::chunk_rows(Self::COLS);
 
     pub fn insert(self, conn: &mut PgConnection) -> QueryResult<TradeTransaction> {
         diesel::insert_into(trade_transactions::table)
@@ -79,7 +79,7 @@ impl TradeTransaction {
     /// reused as the working buffer. Splitting a dedicated
     /// `NewDbTradeTransaction` insert model would let this drop down to a
     /// slice-by-reference call and is left for a future PR.
-    pub(crate) fn insert_chunked_with(
+    fn insert_chunked_with(
         mut transactions: Vec<Self>,
         chunk_rows: NonZeroUsize,
         conn: &mut PgConnection,
