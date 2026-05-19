@@ -83,7 +83,7 @@ macro_rules! enforce_cols_matches_fields {
         fn cols_matches_struct_fields() {
             fn _enforce(v: $ty) {
                 let $ty { $($field),+ } = v;
-                let _: [(); <$ty>::COLS.get()] = [
+                let _: [(); $ty::COLS.get()] = [
                     $({ let _ = $field; }),+
                 ];
             }
