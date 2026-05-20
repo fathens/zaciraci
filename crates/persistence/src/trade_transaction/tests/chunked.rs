@@ -87,29 +87,33 @@ async fn test_insert_chunked_with_rolls_back_chunk1_on_chunk2_collision() {
 /// (2 + 2 + 1). Exercises the `while !empty { take = len.min(...) }` loop
 /// in `insert_chunked_with` past the off-by-one boundary and verifies
 /// that `RETURNING *` preserves input order **and** each field's value
-/// across chunks. Each row carries distinct `from_amount`, `to_amount`,
-/// and a `Some`/`None`-mixed `actual_to_amount` so the drain-based move
-/// (which transfers `BigDecimal` heap pointers per element) is verified
-/// field-by-field: any positional swap, value mutation, or chunk-boundary
-/// drop would surface as a mismatched assertion rather than silently
-/// passing on equal-valued rows.
+/// across chunks. Every row carries distinct values for **every**
+/// `Insertable` field — owned `String`s (`from_token`/`to_token`/
+/// `trade_batch_id`), `TokenSmallestUnits` amounts, `NaiveDateTime`
+/// timestamp, and a `Some`/`None`-mixed `actual_to_amount` — so the
+/// drain-based move (which transfers heap pointers per element) is
+/// verified field-by-field. The owned-`String` columns are the primary
+/// canary for the drain pattern: any positional swap where row X's
+/// `from_token` ends up in row Y's slot would surface as a mismatched
+/// assertion rather than silently passing on equal-valued rows.
 #[tokio::test]
 #[serial(persistence_chunked)]
 async fn test_insert_chunked_with_multi_chunk_happy_path() {
     let period_id = create_test_evaluation_period().await;
-    let batch_id = uuid::Uuid::new_v4().to_string();
+    let batch_id_prefix = uuid::Uuid::new_v4().to_string();
+    let base_ts = chrono::Utc::now().naive_utc();
 
     let expected: Vec<TradeTransaction> = (0..5)
         .map(|i| {
             let i = i as u128;
             TradeTransaction {
                 tx_id: format!("happy_{}_{}", i, uuid::Uuid::new_v4()),
-                trade_batch_id: batch_id.clone(),
-                from_token: "wrap.near".to_string(),
+                trade_batch_id: format!("{batch_id_prefix}_{i}"),
+                from_token: format!("wrap_{i}.near"),
                 from_amount: TokenSmallestUnits::from_u128(1_000_000 + i),
-                to_token: "akaia.tkn.near".to_string(),
+                to_token: format!("akaia_{i}.tkn.near"),
                 to_amount: TokenSmallestUnits::from_u128(2_000_000 + i * 7),
-                timestamp: chrono::Utc::now().naive_utc(),
+                timestamp: base_ts + chrono::TimeDelta::seconds(i as i64),
                 evaluation_period_id: period_id.clone(),
                 actual_to_amount: if i.is_multiple_of(2) {
                     None
@@ -142,12 +146,32 @@ async fn test_insert_chunked_with_multi_chunk_happy_path() {
                 "RETURNING * must preserve input order across chunks at index {i}"
             );
             assert_eq!(
+                inserted[i].trade_batch_id, want.trade_batch_id,
+                "trade_batch_id mismatch at index {i}"
+            );
+            assert_eq!(
+                inserted[i].from_token, want.from_token,
+                "from_token mismatch at index {i}"
+            );
+            assert_eq!(
                 inserted[i].from_amount, want.from_amount,
                 "from_amount mismatch at index {i}"
             );
             assert_eq!(
+                inserted[i].to_token, want.to_token,
+                "to_token mismatch at index {i}"
+            );
+            assert_eq!(
                 inserted[i].to_amount, want.to_amount,
                 "to_amount mismatch at index {i}"
+            );
+            assert_eq!(
+                inserted[i].timestamp, want.timestamp,
+                "timestamp mismatch at index {i}"
+            );
+            assert_eq!(
+                inserted[i].evaluation_period_id, want.evaluation_period_id,
+                "evaluation_period_id mismatch at index {i}"
             );
             assert_eq!(
                 inserted[i].actual_to_amount, want.actual_to_amount,
