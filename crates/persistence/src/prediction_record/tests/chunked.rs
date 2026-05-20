@@ -1,6 +1,8 @@
 use super::*;
 use bigdecimal::num_bigint::BigInt;
+use futures::FutureExt;
 use std::num::NonZeroUsize;
+use std::panic::AssertUnwindSafe;
 
 fn base_time() -> NaiveDateTime {
     chrono::DateTime::from_timestamp(1_700_000_000, 0)
@@ -83,72 +85,84 @@ async fn test_insert_chunked_with_multi_chunk_happy_path() -> Result<()> {
         })
         .collect();
 
-    let conn = connection_pool::get_test_only().await?;
-    conn.interact(move |conn| {
-        let chunk_rows = crate::batch::chunk_rows_with_budget(
-            NonZeroUsize::new(NewPredictionRecord::COLS.get() * 2).expect("non-zero budget"),
-            NewPredictionRecord::COLS,
-        );
-        NewPredictionRecord::insert_chunked_with(rows, chunk_rows, conn)
-    })
-    .await
-    .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
-
-    let inserted: Vec<DbPredictionRecord> = {
-        let tokens = tokens.clone();
+    let tokens_for_load = tokens.clone();
+    let result = AssertUnwindSafe(async {
         let conn = connection_pool::get_test_only().await?;
         conn.interact(move |conn| {
-            prediction_records::table
-                .filter(prediction_records::token.eq_any(&tokens))
-                .select(DbPredictionRecord::as_select())
-                .load::<DbPredictionRecord>(conn)
+            let chunk_rows = crate::batch::chunk_rows_with_budget(
+                NonZeroUsize::new(NewPredictionRecord::COLS.get() * 2).expect("non-zero budget"),
+                NewPredictionRecord::COLS,
+            );
+            NewPredictionRecord::insert_chunked_with(rows, chunk_rows, conn)
         })
         .await
-        .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??
-    };
-    assert_eq!(
-        inserted.len(),
-        expected.len(),
-        "expected {} rows visible after multi-chunk insert, got {}",
-        expected.len(),
-        inserted.len()
-    );
+        .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
 
-    let by_token: std::collections::HashMap<String, DbPredictionRecord> =
-        inserted.into_iter().map(|r| (r.token.clone(), r)).collect();
-    for want in &expected {
-        let got = by_token
-            .get(&want.token)
-            .unwrap_or_else(|| panic!("token={} not visible after multi-chunk insert", want.token));
+        let inserted: Vec<DbPredictionRecord> = {
+            let conn = connection_pool::get_test_only().await?;
+            conn.interact(move |conn| {
+                prediction_records::table
+                    .filter(prediction_records::token.eq_any(&tokens_for_load))
+                    .select(DbPredictionRecord::as_select())
+                    .load::<DbPredictionRecord>(conn)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??
+        };
         assert_eq!(
-            got.quote_token, want.quote_token,
-            "quote_token mismatch at token={}",
-            want.token
+            inserted.len(),
+            expected.len(),
+            "expected {} rows visible after multi-chunk insert, got {}",
+            expected.len(),
+            inserted.len()
         );
-        assert_eq!(
-            got.predicted_price, want.predicted_price,
-            "predicted_price mismatch at token={}",
-            want.token
-        );
-        assert_eq!(
-            got.data_cutoff_time, want.data_cutoff_time,
-            "data_cutoff_time mismatch at token={}",
-            want.token
-        );
-        assert_eq!(
-            got.target_time, want.target_time,
-            "target_time mismatch at token={}",
-            want.token
-        );
-        assert_eq!(
-            got.created_at, want.created_at,
-            "created_at mismatch at token={}",
-            want.token
-        );
+
+        let by_token: std::collections::HashMap<String, DbPredictionRecord> =
+            inserted.into_iter().map(|r| (r.token.clone(), r)).collect();
+        for want in &expected {
+            let got = by_token.get(&want.token).unwrap_or_else(|| {
+                panic!("token={} not visible after multi-chunk insert", want.token)
+            });
+            assert_eq!(
+                got.quote_token, want.quote_token,
+                "quote_token mismatch at token={}",
+                want.token
+            );
+            assert_eq!(
+                got.predicted_price, want.predicted_price,
+                "predicted_price mismatch at token={}",
+                want.token
+            );
+            assert_eq!(
+                got.data_cutoff_time, want.data_cutoff_time,
+                "data_cutoff_time mismatch at token={}",
+                want.token
+            );
+            assert_eq!(
+                got.target_time, want.target_time,
+                "target_time mismatch at token={}",
+                want.token
+            );
+            assert_eq!(
+                got.created_at, want.created_at,
+                "created_at mismatch at token={}",
+                want.token
+            );
+        }
+        Ok::<(), anyhow::Error>(())
+    })
+    .catch_unwind()
+    .await;
+
+    let cleanup = clean_table().await;
+
+    match result {
+        Err(panic) => std::panic::resume_unwind(panic),
+        Ok(inner) => {
+            cleanup?;
+            inner
+        }
     }
-
-    clean_table().await?;
-    Ok(())
 }
 
 /// Layer 3 CHECK violation in chunk 2 must roll back chunk 1.
@@ -201,40 +215,53 @@ async fn test_insert_chunked_with_rolls_back_chunk1_on_chunk2_check_violation() 
         base, // < data_cutoff_time → CHECK violation
     ));
 
-    let conn = connection_pool::get_test_only().await?;
-    let outcome = conn
-        .interact(move |conn| {
-            let chunk_rows = crate::batch::chunk_rows_with_budget(
-                NonZeroUsize::new(NewPredictionRecord::COLS.get() * 2).expect("non-zero budget"),
-                NewPredictionRecord::COLS,
-            );
-            NewPredictionRecord::insert_chunked_with(rows, chunk_rows, conn)
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))?;
-    assert!(
-        outcome.is_err(),
-        "chunk 2 CHECK violation should propagate as an error"
-    );
-
-    let leaked_count = {
-        let mut all_tokens = safe_tokens.clone();
-        all_tokens.push(violator_token.clone());
+    let mut all_tokens = safe_tokens.clone();
+    all_tokens.push(violator_token.clone());
+    let result = AssertUnwindSafe(async {
         let conn = connection_pool::get_test_only().await?;
-        conn.interact(move |conn| {
-            prediction_records::table
-                .filter(prediction_records::token.eq_any(&all_tokens))
-                .count()
-                .get_result::<i64>(conn)
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??
-    };
-    assert_eq!(
-        leaked_count, 0,
-        "chunk 1 rows leaked despite chunk 2 CHECK violation (count={leaked_count})"
-    );
+        let outcome = conn
+            .interact(move |conn| {
+                let chunk_rows = crate::batch::chunk_rows_with_budget(
+                    NonZeroUsize::new(NewPredictionRecord::COLS.get() * 2)
+                        .expect("non-zero budget"),
+                    NewPredictionRecord::COLS,
+                );
+                NewPredictionRecord::insert_chunked_with(rows, chunk_rows, conn)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))?;
+        assert!(
+            outcome.is_err(),
+            "chunk 2 CHECK violation should propagate as an error"
+        );
 
-    clean_table().await?;
-    Ok(())
+        let leaked_count = {
+            let conn = connection_pool::get_test_only().await?;
+            conn.interact(move |conn| {
+                prediction_records::table
+                    .filter(prediction_records::token.eq_any(&all_tokens))
+                    .count()
+                    .get_result::<i64>(conn)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??
+        };
+        assert_eq!(
+            leaked_count, 0,
+            "chunk 1 rows leaked despite chunk 2 CHECK violation (count={leaked_count})"
+        );
+        Ok::<(), anyhow::Error>(())
+    })
+    .catch_unwind()
+    .await;
+
+    let cleanup = clean_table().await;
+
+    match result {
+        Err(panic) => std::panic::resume_unwind(panic),
+        Ok(inner) => {
+            cleanup?;
+            inner
+        }
+    }
 }
