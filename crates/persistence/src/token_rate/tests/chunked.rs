@@ -1,5 +1,7 @@
 use super::*;
+use futures::FutureExt;
 use std::num::NonZeroUsize;
+use std::panic::AssertUnwindSafe;
 
 /// Multi-chunk happy path: 5 rows with chunk_rows=2 spans three chunks
 /// (2 + 2 + 1). Exercises the `.chunks(...)` loop in
@@ -80,75 +82,87 @@ async fn test_insert_chunked_with_multi_chunk_happy_path() -> Result<()> {
         .collect();
 
     let new_rates: Vec<NewDbTokenRate> = expected.iter().map(|r| r.to_new_db()).collect();
-
-    let conn = connection_pool::get_test_only().await?;
-    conn.interact(move |conn| {
-        let chunk_rows = crate::batch::chunk_rows_with_budget(
-            NonZeroUsize::new(NewDbTokenRate::COLS.get() * 2).expect("non-zero budget"),
-            NewDbTokenRate::COLS,
-        );
-        NewDbTokenRate::insert_chunked_with(new_rates, chunk_rows, conn)
-    })
-    .await
-    .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-
     let base_strs: Vec<String> = expected.iter().map(|r| r.base.to_string()).collect();
-    let rows: Vec<DbTokenRate> = {
+
+    let result = AssertUnwindSafe(async {
         let conn = connection_pool::get_test_only().await?;
-        let base_strs = base_strs.clone();
         conn.interact(move |conn| {
-            token_rates::table
-                .filter(token_rates::base_token.eq_any(&base_strs))
-                .select(DbTokenRate::as_select())
-                .load::<DbTokenRate>(conn)
+            let chunk_rows = crate::batch::chunk_rows_with_budget(
+                NonZeroUsize::new(NewDbTokenRate::COLS.get() * 2).expect("non-zero budget"),
+                NewDbTokenRate::COLS,
+            );
+            NewDbTokenRate::insert_chunked_with(new_rates, chunk_rows, conn)
         })
         .await
-        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??
-    };
-    assert_eq!(
-        rows.len(),
-        expected.len(),
-        "expected {} rows visible after multi-chunk insert, got {}",
-        expected.len(),
-        rows.len()
-    );
+        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
 
-    let by_base: std::collections::HashMap<String, DbTokenRate> = rows
-        .into_iter()
-        .map(|r| (r.base_token.clone(), r))
-        .collect();
-    for want in &expected {
-        let got = by_base
-            .get(&want.base.to_string())
-            .unwrap_or_else(|| panic!("base={} not visible after multi-chunk insert", want.base));
+        let rows: Vec<DbTokenRate> = {
+            let conn = connection_pool::get_test_only().await?;
+            let base_strs = base_strs.clone();
+            conn.interact(move |conn| {
+                token_rates::table
+                    .filter(token_rates::base_token.eq_any(&base_strs))
+                    .select(DbTokenRate::as_select())
+                    .load::<DbTokenRate>(conn)
+            })
+            .await
+            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??
+        };
         assert_eq!(
-            got.rate,
-            *want.exchange_rate.raw_rate(),
-            "rate mismatch at base={}",
-            want.base
+            rows.len(),
+            expected.len(),
+            "expected {} rows visible after multi-chunk insert, got {}",
+            expected.len(),
+            rows.len()
         );
-        assert_eq!(
-            got.decimals,
-            want.exchange_rate.decimals() as i16,
-            "decimals mismatch at base={}",
-            want.base
-        );
-        assert_eq!(
-            got.rate_calc_near, want.rate_calc_near,
-            "rate_calc_near mismatch at base={}",
-            want.base
-        );
-        let got_swap_path: Option<SwapPath> = got
-            .swap_path
-            .as_ref()
-            .map(|v| serde_json::from_value(v.clone()).expect("decode swap_path"));
-        assert_eq!(
-            got_swap_path, want.swap_path,
-            "swap_path mismatch at base={}",
-            want.base
-        );
+
+        let by_base: std::collections::HashMap<String, DbTokenRate> = rows
+            .into_iter()
+            .map(|r| (r.base_token.clone(), r))
+            .collect();
+        for want in &expected {
+            let got = by_base.get(&want.base.to_string()).unwrap_or_else(|| {
+                panic!("base={} not visible after multi-chunk insert", want.base)
+            });
+            assert_eq!(
+                got.rate,
+                *want.exchange_rate.raw_rate(),
+                "rate mismatch at base={}",
+                want.base
+            );
+            assert_eq!(
+                got.decimals,
+                want.exchange_rate.decimals() as i16,
+                "decimals mismatch at base={}",
+                want.base
+            );
+            assert_eq!(
+                got.rate_calc_near, want.rate_calc_near,
+                "rate_calc_near mismatch at base={}",
+                want.base
+            );
+            let got_swap_path: Option<SwapPath> = got
+                .swap_path
+                .as_ref()
+                .map(|v| serde_json::from_value(v.clone()).expect("decode swap_path"));
+            assert_eq!(
+                got_swap_path, want.swap_path,
+                "swap_path mismatch at base={}",
+                want.base
+            );
+        }
+        Ok::<(), anyhow::Error>(())
+    })
+    .catch_unwind()
+    .await;
+
+    let cleanup = clean_table().await;
+
+    match result {
+        Err(panic) => std::panic::resume_unwind(panic),
+        Ok(inner) => {
+            cleanup?;
+            inner
+        }
     }
-
-    clean_table().await?;
-    Ok(())
 }
