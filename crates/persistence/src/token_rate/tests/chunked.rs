@@ -8,14 +8,19 @@ use std::num::NonZeroUsize;
 /// `Self::CHUNK_ROWS` → `insert_chunked_with`) with **field-level
 /// positional assertions** after the round-trip.
 ///
-/// Each row carries a distinct `rate`, `rate_calc_near`, and a
-/// `Some`/`None`-mixed `swap_path` so that a chunk-boundary swap — where
-/// `base_token` X ends up paired with token Y's `rate` JSONB or
-/// `swap_path` JSONB — would surface as a mismatched assertion rather
-/// than silently passing on equal-valued rows. This mirrors the
-/// drain-path canary on `trade_transaction` and closes the regression
-/// gap that count-only assertions leave open against Diesel
-/// `Insertable for &[T]` / PG wire-protocol changes.
+/// Each row carries a distinct `rate`, `decimals`, `rate_calc_near`, and
+/// a `Some`/`None`-mixed `swap_path` so that a chunk-boundary swap —
+/// where `base_token` X ends up paired with token Y's `rate` JSONB,
+/// `decimals`, or `swap_path` JSONB — would surface as a mismatched
+/// assertion rather than silently passing on equal-valued rows. Asserting
+/// `decimals` positionally is load-bearing: `ExchangeRate::from_raw_rate`
+/// pairs `rate` and `decimals` to reconstruct the spot rate, so a silent
+/// swap on the `decimals` column would propagate through
+/// `to_spot_rate_with_fallback` as an incorrect magnitude with no error
+/// path to detect it. This mirrors the drain-path canary on
+/// `trade_transaction` and closes the regression gap that count-only
+/// assertions leave open against Diesel `Insertable for &[T]` /
+/// PG wire-protocol changes.
 ///
 /// `token_rates` has no UNIQUE or CHECK constraints that the in-process
 /// build can violate cheaply, so a chunk-boundary rollback test is omitted
@@ -63,7 +68,10 @@ async fn test_insert_chunked_with_multi_chunk_happy_path() -> Result<()> {
             TokenRate {
                 base: b.clone(),
                 quote: quote.clone(),
-                exchange_rate: make_rate(1000 + i as i64),
+                exchange_rate: ExchangeRate::from_raw_rate(
+                    BigDecimal::from(1000 + i as i64),
+                    6 + i as u8,
+                ),
                 timestamp: ts,
                 rate_calc_near: 10 + (i as i64) * 3,
                 swap_path,
@@ -117,6 +125,12 @@ async fn test_insert_chunked_with_multi_chunk_happy_path() -> Result<()> {
             got.rate,
             *want.exchange_rate.raw_rate(),
             "rate mismatch at base={}",
+            want.base
+        );
+        assert_eq!(
+            got.decimals,
+            want.exchange_rate.decimals() as i16,
+            "decimals mismatch at base={}",
             want.base
         );
         assert_eq!(
