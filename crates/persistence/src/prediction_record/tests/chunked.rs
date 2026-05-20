@@ -11,8 +11,17 @@ fn base_time() -> NaiveDateTime {
 /// (2 + 2 + 1). Exercises the `.chunks(...)` loop in
 /// `NewPredictionRecord::insert_chunked_with` past the off-by-one boundary
 /// and verifies the production-side wiring (`PredictionRecord::batch_insert`
-/// → `Self::CHUNK_ROWS` → `insert_chunked_with`) so that a regression in any
-/// of those layers — not just the slice logic itself — would be caught.
+/// → `Self::CHUNK_ROWS` → `insert_chunked_with`) with **field-level
+/// positional assertions** after the round-trip.
+///
+/// Each row carries a distinct `predicted_price`, `data_cutoff_time`,
+/// `target_time`, and `created_at` per `token`, so that a chunk-boundary
+/// swap — where token X ends up paired with token Y's `predicted_price`
+/// — would surface as a mismatched assertion rather than silently passing.
+/// `predicted_price ↔ token` corruption is the primary data-leakage
+/// path here: the optimizer that consumes these rows would learn an
+/// incorrect target for the wrong token, so this canary closes the
+/// regression gap that count-only assertions leave open.
 #[tokio::test]
 #[serial(persistence_chunked)]
 async fn test_insert_chunked_with_multi_chunk_happy_path() -> Result<()> {
@@ -22,19 +31,43 @@ async fn test_insert_chunked_with_multi_chunk_happy_path() -> Result<()> {
     let quote = "wrap.near".to_string();
     let tokens: Vec<String> = (0..5).map(|i| format!("happy_{i}.near")).collect();
 
-    let rows: Vec<NewPredictionRecord> = tokens
+    struct Expected {
+        token: String,
+        quote_token: String,
+        predicted_price: BigDecimal,
+        data_cutoff_time: NaiveDateTime,
+        target_time: NaiveDateTime,
+        created_at: NaiveDateTime,
+    }
+
+    let expected: Vec<Expected> = tokens
         .iter()
         .enumerate()
         .map(|(i, token)| {
             let data_cutoff = base + chrono::TimeDelta::seconds(i as i64);
-            let target = data_cutoff + chrono::TimeDelta::hours(1);
+            let target = data_cutoff + chrono::TimeDelta::hours(1 + i as i64);
+            let created = data_cutoff + chrono::TimeDelta::milliseconds(i as i64);
+            Expected {
+                token: token.clone(),
+                quote_token: quote.clone(),
+                predicted_price: BigDecimal::from(100_000 + (i as i64) * 37),
+                data_cutoff_time: data_cutoff,
+                target_time: target,
+                created_at: created,
+            }
+        })
+        .collect();
+
+    let rows: Vec<NewPredictionRecord> = expected
+        .iter()
+        .map(|e| {
             NewPredictionRecord::try_new(
-                token.clone(),
-                quote.clone(),
-                BigDecimal::from(100 + i as i64),
-                data_cutoff,
-                target,
-                data_cutoff,
+                e.token.clone(),
+                e.quote_token.clone(),
+                e.predicted_price.clone(),
+                e.data_cutoff_time,
+                e.target_time,
+                e.created_at,
             )
             .expect("valid record")
         })
@@ -51,22 +84,58 @@ async fn test_insert_chunked_with_multi_chunk_happy_path() -> Result<()> {
     .await
     .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;
 
-    let inserted_count = {
+    let inserted: Vec<DbPredictionRecord> = {
         let tokens = tokens.clone();
         let conn = connection_pool::get_test_only().await?;
         conn.interact(move |conn| {
             prediction_records::table
                 .filter(prediction_records::token.eq_any(&tokens))
-                .count()
-                .get_result::<i64>(conn)
+                .select(DbPredictionRecord::as_select())
+                .load::<DbPredictionRecord>(conn)
         })
         .await
         .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??
     };
     assert_eq!(
-        inserted_count, 5,
-        "expected 5 rows visible after multi-chunk insert, got {inserted_count}"
+        inserted.len(),
+        expected.len(),
+        "expected {} rows visible after multi-chunk insert, got {}",
+        expected.len(),
+        inserted.len()
     );
+
+    let by_token: std::collections::HashMap<String, DbPredictionRecord> =
+        inserted.into_iter().map(|r| (r.token.clone(), r)).collect();
+    for want in &expected {
+        let got = by_token
+            .get(&want.token)
+            .unwrap_or_else(|| panic!("token={} not visible after multi-chunk insert", want.token));
+        assert_eq!(
+            got.quote_token, want.quote_token,
+            "quote_token mismatch at token={}",
+            want.token
+        );
+        assert_eq!(
+            got.predicted_price, want.predicted_price,
+            "predicted_price mismatch at token={}",
+            want.token
+        );
+        assert_eq!(
+            got.data_cutoff_time, want.data_cutoff_time,
+            "data_cutoff_time mismatch at token={}",
+            want.token
+        );
+        assert_eq!(
+            got.target_time, want.target_time,
+            "target_time mismatch at token={}",
+            want.token
+        );
+        assert_eq!(
+            got.created_at, want.created_at,
+            "created_at mismatch at token={}",
+            want.token
+        );
+    }
 
     clean_table().await?;
     Ok(())
