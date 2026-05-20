@@ -5,6 +5,7 @@ use crate::portfolio_state::{
 };
 use bigdecimal::BigDecimal;
 use chrono::{TimeZone, Utc};
+use common::algorithm::portfolio::PredErrDiagonalMode;
 use common::types::{TokenAccount, TokenAmount, YoctoValue};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -172,7 +173,6 @@ fn performance_empty_snapshots() {
         initial_capital: 100.0,
         snapshots: &[],
         realized_pnl: 0,
-        trade_count: 0,
         liquidation_count: 0,
         rebalance_interval_days: 1,
         swap_stats: SwapStats::default(),
@@ -191,7 +191,6 @@ fn performance_single_snapshot() {
         initial_capital: 100.0,
         snapshots: &snapshots,
         realized_pnl: 0,
-        trade_count: 0,
         liquidation_count: 0,
         rebalance_interval_days: 1,
         swap_stats: SwapStats::default(),
@@ -209,7 +208,6 @@ fn performance_zero_initial_capital() {
         initial_capital: 0.0,
         snapshots: &snapshots,
         realized_pnl: 0,
-        trade_count: 0,
         liquidation_count: 0,
         rebalance_interval_days: 1,
         swap_stats: SwapStats::default(),
@@ -231,7 +229,6 @@ fn performance_win_rate() {
         initial_capital: 100.0,
         snapshots: &snapshots,
         realized_pnl: 0,
-        trade_count: 0,
         liquidation_count: 0,
         rebalance_interval_days: 1,
         swap_stats: SwapStats::default(),
@@ -250,7 +247,6 @@ fn performance_total_return_loss() {
         initial_capital: 100.0,
         snapshots: &snapshots,
         realized_pnl: 0,
-        trade_count: 0,
         liquidation_count: 0,
         rebalance_interval_days: 1,
         swap_stats: SwapStats::default(),
@@ -275,6 +271,12 @@ fn make_cli(start: &str, end: &str) -> RunArgs {
         output: PathBuf::from("test.json"),
         sweep: None,
         generate_predictions: false,
+        bias_correction: true,
+        pred_err_diagonal: true,
+        pred_err_diagonal_k: 1.0,
+        pred_err_diagonal_mode: PredErrDiagonalMode::Max,
+        cost_aware_return: true,
+        cost_iterations_max: 3,
     }
 }
 
@@ -356,6 +358,12 @@ fn from_state_config_reflects_cli_params() {
         output: PathBuf::from("out.json"),
         sweep: None,
         generate_predictions: false,
+        bias_correction: true,
+        pred_err_diagonal: true,
+        pred_err_diagonal_k: 1.0,
+        pred_err_diagonal_mode: PredErrDiagonalMode::Max,
+        cost_aware_return: true,
+        cost_iterations_max: 3,
     };
     let state = PortfolioState::new(yocto(200_000_000_000_000_000_000_000_000));
 
@@ -441,7 +449,6 @@ fn performance_includes_new_fields() {
         initial_capital: 100.0,
         snapshots: &snapshots,
         realized_pnl,
-        trade_count: 10,
         liquidation_count: 3,
         rebalance_interval_days: 1,
         swap_stats: SwapStats::default(),
@@ -456,7 +463,6 @@ fn performance_includes_new_fields() {
         "realized pnl: {}",
         perf.total_realized_pnl_near
     );
-    assert_eq!(perf.trade_count, 10);
     assert_eq!(perf.liquidation_count, 3);
 }
 
@@ -483,6 +489,14 @@ fn from_state_maps_realized_pnl_on_trade() {
 // --- swap event and fallback stats ---
 
 fn make_swap_event(method: SwapMethod, pool_ids: Vec<u32>) -> SwapEvent {
+    make_swap_event_with_impact(method, pool_ids, None)
+}
+
+fn make_swap_event_with_impact(
+    method: SwapMethod,
+    pool_ids: Vec<u32>,
+    price_impact_ratio: Option<f64>,
+) -> SwapEvent {
     let token_a: TokenAccount = "token_a.near".parse().unwrap();
     let token_b: TokenAccount = "token_b.near".parse().unwrap();
     SwapEvent {
@@ -493,6 +507,7 @@ fn make_swap_event(method: SwapMethod, pool_ids: Vec<u32>) -> SwapEvent {
         amount_out: TokenAmount::from_smallest_units(BigDecimal::from(500_000u64), 24),
         swap_method: method,
         pool_ids,
+        price_impact_ratio,
     }
 }
 
@@ -588,6 +603,7 @@ fn from_state_swap_event_entry_mapping() {
         amount_out: TokenAmount::from_smallest_units(BigDecimal::from(500_000u64), 24),
         swap_method: SwapMethod::PoolBased,
         pool_ids: vec![42, 99],
+        price_impact_ratio: Some(0.0125),
     });
 
     let result = SimulationResult::from_state(&cli, &state).unwrap();
@@ -599,6 +615,7 @@ fn from_state_swap_event_entry_mapping() {
     assert_eq!(entry.amount_out_raw, 500_000);
     assert_eq!(entry.swap_method, SwapMethod::PoolBased);
     assert_eq!(entry.pool_ids, vec![42, 99]);
+    assert_eq!(entry.price_impact_ratio, Some(0.0125));
 }
 
 #[test]
@@ -608,7 +625,6 @@ fn performance_includes_non_default_swap_stats() {
         initial_capital: 100.0,
         snapshots: &snapshots,
         realized_pnl: 0,
-        trade_count: 5,
         liquidation_count: 0,
         rebalance_interval_days: 1,
         swap_stats: SwapStats {
@@ -616,10 +632,83 @@ fn performance_includes_non_default_swap_stats() {
             pool_based_swaps: 7,
             fallback_swaps: 3,
             fallback_rate: 0.3,
+            mean_price_impact: 0.0,
+            max_price_impact: 0.0,
+            high_impact_swaps: 0,
         },
     });
     assert_eq!(perf.swap_stats.total_swaps, 10);
     assert_eq!(perf.swap_stats.pool_based_swaps, 7);
     assert_eq!(perf.swap_stats.fallback_swaps, 3);
     assert!((perf.swap_stats.fallback_rate - 0.3).abs() < 1e-10);
+}
+
+// --- price impact aggregation in SwapStats ---
+
+#[test]
+fn swap_stats_no_impact_observations() {
+    // All events lack a price_impact_ratio (e.g. all DbRate fallbacks).
+    let events = vec![
+        make_swap_event(SwapMethod::DbRate, vec![]),
+        make_swap_event(SwapMethod::DbRate, vec![]),
+    ];
+    let stats = SwapStats::from_events(&events);
+    assert_eq!(stats.mean_price_impact, 0.0);
+    assert_eq!(stats.max_price_impact, 0.0);
+    assert_eq!(stats.high_impact_swaps, 0);
+}
+
+#[test]
+fn swap_stats_aggregates_observed_impacts() {
+    // Three pool-based swaps with impact ratios + one fallback (ignored).
+    let events = vec![
+        make_swap_event_with_impact(SwapMethod::PoolBased, vec![1], Some(0.005)),
+        make_swap_event_with_impact(SwapMethod::PoolBased, vec![2], Some(0.020)),
+        make_swap_event_with_impact(SwapMethod::PoolBased, vec![3], Some(0.030)),
+        make_swap_event_with_impact(SwapMethod::DbRate, vec![], None),
+    ];
+    let stats = SwapStats::from_events(&events);
+    let expected_mean = (0.005 + 0.020 + 0.030) / 3.0;
+    assert!(
+        (stats.mean_price_impact - expected_mean).abs() < 1e-12,
+        "mean: got {}, expected {}",
+        stats.mean_price_impact,
+        expected_mean
+    );
+    assert!(
+        (stats.max_price_impact - 0.030).abs() < 1e-12,
+        "max: got {}",
+        stats.max_price_impact
+    );
+    // High-impact threshold = 0.01 (100 BPS); 0.020 and 0.030 exceed it.
+    assert_eq!(stats.high_impact_swaps, 2);
+}
+
+#[test]
+fn swap_stats_filters_non_finite_impacts() {
+    let events = vec![
+        make_swap_event_with_impact(SwapMethod::PoolBased, vec![1], Some(0.01)),
+        make_swap_event_with_impact(SwapMethod::PoolBased, vec![2], Some(f64::NAN)),
+        make_swap_event_with_impact(SwapMethod::PoolBased, vec![3], Some(f64::INFINITY)),
+    ];
+    let stats = SwapStats::from_events(&events);
+    assert!((stats.mean_price_impact - 0.01).abs() < 1e-12);
+    assert!((stats.max_price_impact - 0.01).abs() < 1e-12);
+    // 0.01 is exactly at the threshold — not strictly greater.
+    assert_eq!(stats.high_impact_swaps, 0);
+}
+
+#[test]
+fn swap_stats_preserves_negative_impact_observations() {
+    // Sign-preserving: a slightly negative ratio (numerical noise) flows
+    // through as-is, so consumers can still see it in the mean.
+    let events = vec![
+        make_swap_event_with_impact(SwapMethod::PoolBased, vec![1], Some(-1e-9)),
+        make_swap_event_with_impact(SwapMethod::PoolBased, vec![2], Some(0.001)),
+    ];
+    let stats = SwapStats::from_events(&events);
+    let expected_mean = (-1e-9 + 0.001) / 2.0;
+    assert!((stats.mean_price_impact - expected_mean).abs() < 1e-12);
+    assert!((stats.max_price_impact - 0.001).abs() < 1e-12);
+    assert_eq!(stats.high_impact_swaps, 0);
 }

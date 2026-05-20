@@ -1,3 +1,4 @@
+use crate::batch;
 use crate::connection_pool;
 use crate::schema::trade_transactions;
 use anyhow::{Context, Result};
@@ -5,7 +6,9 @@ use bigdecimal::BigDecimal;
 use chrono::NaiveDateTime;
 use common::types::TokenSmallestUnits;
 use diesel::prelude::*;
+use logging::*;
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroUsize;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Queryable, Selectable, Insertable, AsChangeset)]
 #[diesel(table_name = trade_transactions)]
@@ -29,6 +32,16 @@ pub struct TradeTransaction {
 }
 
 impl TradeTransaction {
+    /// Bind-parameter count per row for the chunked batch insert. SSoT for
+    /// `chunk_rows` budgeting (`crate::batch`); the structural test in
+    /// `tests::cols_matches_struct_fields` enforces field-count alignment.
+    const COLS: NonZeroUsize = NonZeroUsize::new(9).expect("COLS must be non-zero");
+
+    /// Maximum rows per INSERT statement under the PostgreSQL 65535
+    /// bind-parameter limit. Co-located with `COLS` so the SSoT pair lives
+    /// next to the struct definition.
+    const CHUNK_ROWS: NonZeroUsize = batch::chunk_rows(Self::COLS);
+
     pub fn insert(self, conn: &mut PgConnection) -> QueryResult<TradeTransaction> {
         diesel::insert_into(trade_transactions::table)
             .values(self)
@@ -46,13 +59,66 @@ impl TradeTransaction {
         result.context("Failed to insert trade transaction")
     }
 
+    /// Chunked INSERT into `trade_transactions` within a single transaction,
+    /// returning every inserted row via `RETURNING *`.
+    ///
+    /// Acts as the test DI point: production callers pass `Self::CHUNK_ROWS`
+    /// (via [`insert_batch`]), while tests use [`batch::chunk_rows_with_budget`]
+    /// to shrink chunks to 2-3 rows for atomicity / off-by-one verification.
+    ///
+    /// `TradeTransaction` doubles as the read model (`Queryable`/`Selectable`)
+    /// and the insert model (`Insertable`), and the
+    /// `#[diesel(serialize_as = BigDecimal)]` attributes on the amount fields
+    /// force diesel to require owned values — there is no
+    /// `Insertable for &TradeTransaction` derive available, so `.values(chunk)`
+    /// with a slice (as the other three batch_insert paths do) does not
+    /// compile. Move chunks out of `transactions` via `Vec::drain` instead of
+    /// cloning: the heap fields (`String`s, `BigDecimal`s, `Option<BigDecimal>`)
+    /// are transferred by move per element, avoiding the ~7 per-row allocations
+    /// the previous `chunk.to_vec()` paid. The owned `Vec<Self>` argument is
+    /// reused as the working buffer. Splitting a dedicated
+    /// `NewDbTradeTransaction` insert model would let this drop down to a
+    /// slice-by-reference call and is left for a future PR.
+    fn insert_chunked_with(
+        mut transactions: Vec<Self>,
+        chunk_rows: NonZeroUsize,
+        conn: &mut PgConnection,
+    ) -> QueryResult<Vec<TradeTransaction>> {
+        let total = transactions.len();
+        conn.transaction::<_, diesel::result::Error, _>(|conn| {
+            let mut inserted = Vec::with_capacity(total);
+            while !transactions.is_empty() {
+                let take = transactions.len().min(chunk_rows.get());
+                let chunk = transactions.drain(..take).collect::<Vec<_>>();
+                let rows = diesel::insert_into(trade_transactions::table)
+                    .values(chunk)
+                    .get_results(conn)?;
+                inserted.extend(rows);
+            }
+            Ok(inserted)
+        })
+    }
+
     pub fn insert_batch(
         transactions: Vec<Self>,
         conn: &mut PgConnection,
     ) -> QueryResult<Vec<TradeTransaction>> {
-        diesel::insert_into(trade_transactions::table)
-            .values(transactions)
-            .get_results(conn)
+        if transactions.is_empty() {
+            return Ok(Vec::new());
+        }
+        let chunk_rows = Self::CHUNK_ROWS;
+        let total = transactions.len();
+        if total > chunk_rows.get() {
+            let log = DEFAULT.new(o!("function" => "TradeTransaction::insert_batch"));
+            let chunks = total.div_ceil(chunk_rows.get());
+            debug!(log, "batch chunked";
+                "rows" => total,
+                "chunk_rows" => chunk_rows.get(),
+                "chunks" => chunks,
+            );
+        }
+
+        Self::insert_chunked_with(transactions, chunk_rows, conn)
     }
 
     pub async fn insert_batch_async(transactions: Vec<Self>) -> Result<Vec<TradeTransaction>> {

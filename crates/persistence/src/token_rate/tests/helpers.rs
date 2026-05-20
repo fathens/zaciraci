@@ -94,7 +94,7 @@ macro_rules! assert_token_rate_eq {
 
 // テーブルからすべてのレコードを削除する補助関数
 pub async fn clean_table() -> Result<()> {
-    let conn = connection_pool::get().await?;
+    let conn = connection_pool::get_test_only().await?;
     conn.interact(|conn| diesel::delete(token_rates::table).execute(conn))
         .await
         .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;

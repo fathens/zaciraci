@@ -1,4 +1,5 @@
 use crate::Result;
+use crate::batch;
 use crate::connection_pool;
 use crate::schema::pool_info;
 use anyhow::anyhow;
@@ -9,6 +10,7 @@ use dex::{PoolInfo, PoolInfoBared, PoolInfoList};
 use diesel::prelude::*;
 use logging::*;
 use serde_json::Value as JsonValue;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 // データベース用モデル
@@ -39,6 +41,40 @@ struct NewDbPoolInfo {
     pub shares_total_supply: JsonValue,
     pub amp: i64,
     pub timestamp: NaiveDateTime,
+}
+
+impl NewDbPoolInfo {
+    /// Bind-parameter count per row for the chunked batch insert. SSoT for
+    /// `chunk_rows` budgeting (`crate::batch`); the structural test in
+    /// `tests::cols_matches_struct_fields` enforces field-count alignment.
+    const COLS: NonZeroUsize = NonZeroUsize::new(8).expect("COLS must be non-zero");
+
+    /// Maximum rows per INSERT statement under the PostgreSQL 65535
+    /// bind-parameter limit. Co-located with `COLS` so the SSoT pair lives
+    /// next to the struct definition.
+    const CHUNK_ROWS: NonZeroUsize = batch::chunk_rows(Self::COLS);
+
+    /// Chunked INSERT into `pool_info` within a single transaction.
+    ///
+    /// Acts as the test DI point: production callers pass `Self::CHUNK_ROWS`
+    /// (via [`batch_insert`]), while tests use [`batch::chunk_rows_with_budget`]
+    /// to shrink chunks to 2-3 rows for atomicity / off-by-one verification.
+    /// All chunks execute inside one `conn.transaction`, so a failure in
+    /// any chunk rolls back every preceding chunk.
+    fn insert_chunked_with(
+        rows: Vec<NewDbPoolInfo>,
+        chunk_rows: NonZeroUsize,
+        conn: &mut PgConnection,
+    ) -> QueryResult<()> {
+        conn.transaction::<_, diesel::result::Error, _>(|conn| {
+            for chunk in rows.chunks(chunk_rows.get()) {
+                diesel::insert_into(pool_info::table)
+                    .values(chunk)
+                    .execute(conn)?;
+            }
+            Ok(())
+        })
+    }
 }
 
 // DbPoolInfoからPoolInfoへの変換
@@ -84,7 +120,6 @@ pub async fn batch_insert(pool_infos: &[Arc<PoolInfo>], cfg: &impl ConfigAccess)
         "pool_infos" => pool_infos.len(),
     ));
     trace!(log, "start");
-    use diesel::RunQueryDsl;
 
     if pool_infos.is_empty() {
         return Ok(());
@@ -95,15 +130,22 @@ pub async fn batch_insert(pool_infos: &[Arc<PoolInfo>], cfg: &impl ConfigAccess)
 
     let new_pools = new_pools?;
     {
+        let chunk_rows = NewDbPoolInfo::CHUNK_ROWS;
+        let total = new_pools.len();
+        if total > chunk_rows.get() {
+            let chunks = total.div_ceil(chunk_rows.get());
+            debug!(log, "batch chunked";
+                "rows" => total,
+                "chunk_rows" => chunk_rows.get(),
+                "chunks" => chunks,
+            );
+        }
+
         let conn = connection_pool::get().await?;
 
-        conn.interact(move |conn| {
-            diesel::insert_into(pool_info::table)
-                .values(&new_pools)
-                .execute(conn)
-        })
-        .await
-        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+        conn.interact(move |conn| NewDbPoolInfo::insert_chunked_with(new_pools, chunk_rows, conn))
+            .await
+            .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
     }
 
     // 古いレコードをバックグラウンドでクリーンアップ

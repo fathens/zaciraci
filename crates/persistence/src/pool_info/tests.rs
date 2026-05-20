@@ -66,7 +66,7 @@ async fn test_pool_info_latest() -> Result<()> {
 
     let new_pool = to_new_db(&pool_info)?;
     {
-        let conn = connection_pool::get().await?;
+        let conn = connection_pool::get_test_only().await?;
         conn.interact(move |conn| {
             diesel::insert_into(pool_info::table)
                 .values(&new_pool)
@@ -85,7 +85,7 @@ async fn test_pool_info_latest() -> Result<()> {
 
     let new_pool = to_new_db(&updated_pool_info)?;
     {
-        let conn = connection_pool::get().await?;
+        let conn = connection_pool::get_test_only().await?;
         conn.interact(move |conn| {
             diesel::insert_into(pool_info::table)
                 .values(&new_pool)
@@ -113,7 +113,7 @@ async fn test_pool_info_get_latest_before() -> Result<()> {
     use diesel::Connection;
     use diesel::prelude::*;
 
-    let conn = connection_pool::get().await?;
+    let conn = connection_pool::get_test_only().await?;
 
     match conn
         .interact(|conn| conn.transaction(|conn| diesel::delete(pool_info::table).execute(conn)))
@@ -214,7 +214,7 @@ async fn test_pool_info_get_all_unique_between() -> Result<()> {
     use diesel::Connection;
     use diesel::prelude::*;
 
-    let conn = connection_pool::get().await?;
+    let conn = connection_pool::get_test_only().await?;
 
     match conn
         .interact(|conn| conn.transaction(|conn| diesel::delete(pool_info::table).execute(conn)))
@@ -335,7 +335,7 @@ async fn test_cleanup_old_records_by_days() -> Result<()> {
     use diesel::Connection;
     use diesel::prelude::*;
 
-    let conn = connection_pool::get().await?;
+    let conn = connection_pool::get_test_only().await?;
 
     match conn
         .interact(|conn| conn.transaction(|conn| diesel::delete(pool_info::table).execute(conn)))
@@ -390,7 +390,7 @@ async fn test_cleanup_old_records_by_days() -> Result<()> {
 
     // pool_id_1: 40日前が削除され、20日前・10日前・1日前の3件が残る
     let count_pool_1 = {
-        let conn = connection_pool::get().await?;
+        let conn = connection_pool::get_test_only().await?;
         conn.interact(move |conn| {
             use diesel::dsl::count;
             pool_info::table
@@ -409,7 +409,7 @@ async fn test_cleanup_old_records_by_days() -> Result<()> {
 
     // pool_id_2: 50日前が削除され、5日前の1件が残る
     let count_pool_2 = {
-        let conn = connection_pool::get().await?;
+        let conn = connection_pool::get_test_only().await?;
         conn.interact(move |conn| {
             use diesel::dsl::count;
             pool_info::table
@@ -428,7 +428,7 @@ async fn test_cleanup_old_records_by_days() -> Result<()> {
 
     // 最古のタイムスタンプが20日前であることを確認
     let oldest_timestamp = {
-        let conn = connection_pool::get().await?;
+        let conn = connection_pool::get_test_only().await?;
         conn.interact(move |conn| {
             use diesel::dsl::min;
             pool_info::table
@@ -460,7 +460,7 @@ async fn test_cleanup_old_records_boundary() -> Result<()> {
     use diesel::Connection;
     use diesel::prelude::*;
 
-    let conn = connection_pool::get().await?;
+    let conn = connection_pool::get_test_only().await?;
 
     match conn
         .interact(|conn| conn.transaction(|conn| diesel::delete(pool_info::table).execute(conn)))
@@ -514,7 +514,7 @@ async fn test_cleanup_old_records_boundary() -> Result<()> {
     cleanup_old_records(30).await?;
 
     let count = {
-        let conn = connection_pool::get().await?;
+        let conn = connection_pool::get_test_only().await?;
         conn.interact(move |conn| {
             use diesel::dsl::count;
             pool_info::table
@@ -541,7 +541,7 @@ async fn test_cleanup_old_records_minimum_retention() -> Result<()> {
     use diesel::Connection;
     use diesel::prelude::*;
 
-    let conn = connection_pool::get().await?;
+    let conn = connection_pool::get_test_only().await?;
 
     match conn
         .interact(|conn| conn.transaction(|conn| diesel::delete(pool_info::table).execute(conn)))
@@ -592,7 +592,7 @@ async fn test_cleanup_old_records_minimum_retention() -> Result<()> {
     cleanup_old_records(1).await?;
 
     let count = {
-        let conn = connection_pool::get().await?;
+        let conn = connection_pool::get_test_only().await?;
         conn.interact(move |conn| {
             use diesel::dsl::count;
             pool_info::table
@@ -611,3 +611,6 @@ async fn test_cleanup_old_records_minimum_retention() -> Result<()> {
 
     Ok(())
 }
+
+mod chunked;
+mod structural;

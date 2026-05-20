@@ -13,25 +13,35 @@ fn default_sim_day() -> Arc<Mutex<DateTime<Utc>>> {
     ))
 }
 
-fn make_client_with_holdings(cash: u128, holdings: Vec<(&str, u128, u8)>) -> SimulationClient {
+async fn make_client_with_holdings(
+    cash: u128,
+    holdings: Vec<(&str, u128, u8)>,
+) -> SimulationClient {
     let mut state = PortfolioState::new(YoctoValue::from_yocto(BigDecimal::from(cash)));
+    let mut registered: Vec<TokenAccount> = Vec::new();
+    if cash > 0 {
+        registered.push(blockchain::ref_finance::token_account::WNEAR_TOKEN.clone());
+    }
     for (token, amount, decimals) in holdings {
         let token_account: TokenAccount = token.parse().unwrap();
+        registered.push(token_account.clone());
         state.holdings.insert(
             token_account,
             TokenAmount::from_smallest_units(BigDecimal::from(amount), decimals),
         );
     }
     let portfolio = Arc::new(Mutex::new(state));
-    SimulationClient::new(
+    let client = SimulationClient::new(
         portfolio,
         YoctoValue::from_yocto(BigDecimal::from(cash)),
         default_sim_day(),
-    )
+    );
+    client.pre_register(registered).await;
+    client
 }
 
-fn make_client(cash: u128) -> SimulationClient {
-    make_client_with_holdings(cash, vec![])
+async fn make_client(cash: u128) -> SimulationClient {
+    make_client_with_holdings(cash, vec![]).await
 }
 
 fn make_client_with_portfolio(portfolio: Arc<Mutex<PortfolioState>>) -> SimulationClient {
@@ -55,7 +65,8 @@ fn wnear_str() -> String {
 #[tokio::test]
 async fn view_contract_get_deposits_returns_cash_and_holdings() {
     let cash = 50_000_000_000_000_000_000_000_000u128; // 50 NEAR
-    let client = make_client_with_holdings(cash, vec![("usdt.tether-token.near", 1_000_000, 6)]);
+    let client =
+        make_client_with_holdings(cash, vec![("usdt.tether-token.near", 1_000_000, 6)]).await;
 
     let receiver: AccountId = "v2.ref-finance.near".parse().unwrap();
     let result = client
@@ -81,8 +92,161 @@ async fn view_contract_get_deposits_returns_cash_and_holdings() {
 }
 
 #[tokio::test]
+async fn view_contract_get_deposits_truncates_fractional_yocto() {
+    // Reproduces the case where `--initial-capital 12.6` made
+    // `cash_balance.as_bigdecimal()` carry scale=1, producing a string like
+    // "12600000000000000000000000.0" that fails U128 deserialization.
+    let near_to_yocto = BigDecimal::from(10u128.pow(24));
+    let fractional_capital = "12.6".parse::<BigDecimal>().unwrap() * &near_to_yocto;
+    assert!(
+        fractional_capital.fractional_digit_count() > 0,
+        "test setup must produce a non-integer-scaled BigDecimal",
+    );
+
+    let cash_value = YoctoValue::from_yocto(fractional_capital);
+    let mut state = PortfolioState::new(cash_value.clone());
+    // Token holdings can also accumulate scale via BigDecimal arithmetic;
+    // simulate that here.
+    let token_account: TokenAccount = "usdt.tether-token.near".parse().unwrap();
+    let fractional_amount = "1234567.89".parse::<BigDecimal>().unwrap();
+    state.holdings.insert(
+        token_account.clone(),
+        TokenAmount::from_smallest_units(fractional_amount, 6),
+    );
+
+    let portfolio = Arc::new(Mutex::new(state));
+    let client = SimulationClient::new(portfolio, cash_value, default_sim_day());
+    client
+        .pre_register([
+            blockchain::ref_finance::token_account::WNEAR_TOKEN.clone(),
+            token_account,
+        ])
+        .await;
+
+    let receiver: AccountId = "v2.ref-finance.near".parse().unwrap();
+    let result = client
+        .view_contract(&receiver, "get_deposits", &serde_json::json!({}))
+        .await
+        .unwrap();
+
+    // Round-trip through `U128` to mirror what the production parser does.
+    let deposits: std::collections::BTreeMap<String, U128> =
+        serde_json::from_slice(&result.result).unwrap();
+
+    let wnear = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
+    assert_eq!(deposits[&wnear].0, 12_600_000_000_000_000_000_000_000u128);
+    assert_eq!(deposits["usdt.tether-token.near"].0, 1_234_567u128);
+}
+
+#[tokio::test]
+async fn get_deposits_is_empty_until_register_tokens() {
+    // Reproduces the bug where the mock unconditionally listed wnear in
+    // `get_deposits`, forcing the production storage planner onto the
+    // `Normal` path with cap-checked top-up. With an empty initial deposit
+    // set, the planner takes `Plan::InitialRegister` instead, which matches
+    // production for a fresh account.
+    let cash = 100_000_000_000_000_000_000_000_000u128;
+    let portfolio = Arc::new(Mutex::new(PortfolioState::new(YoctoValue::from_yocto(
+        BigDecimal::from(cash),
+    ))));
+    let client = SimulationClient::new(
+        Arc::clone(&portfolio),
+        YoctoValue::from_yocto(BigDecimal::from(cash)),
+        default_sim_day(),
+    );
+
+    let ref_contract: AccountId = "v2.ref-finance.near".parse().unwrap();
+
+    // Day 1: nothing registered yet — deposits must be empty.
+    let result = client
+        .view_contract(&ref_contract, "get_deposits", &serde_json::json!({}))
+        .await
+        .unwrap();
+    let deposits: std::collections::BTreeMap<String, serde_json::Value> =
+        serde_json::from_slice(&result.result).unwrap();
+    assert!(
+        deposits.is_empty(),
+        "fresh account must report empty deposits, got: {deposits:?}",
+    );
+
+    // Strategy registers tokens — they should appear with amount=0.
+    let signer = test_signer();
+    let tokens = ["a.token.near", "b.token.near"];
+    let args = serde_json::json!({ "token_ids": tokens });
+    client
+        .exec_contract(
+            &signer,
+            &ref_contract,
+            "register_tokens",
+            &args,
+            NearToken::from_yoctonear(1),
+        )
+        .await
+        .unwrap();
+    let result = client
+        .view_contract(&ref_contract, "get_deposits", &serde_json::json!({}))
+        .await
+        .unwrap();
+    let deposits: std::collections::BTreeMap<String, U128> =
+        serde_json::from_slice(&result.result).unwrap();
+    assert_eq!(deposits.len(), 2);
+    assert_eq!(deposits["a.token.near"].0, 0);
+    assert_eq!(deposits["b.token.near"].0, 0);
+
+    // ft_transfer_call to REF deposits wnear → wnear becomes registered with
+    // the cash balance as its amount.
+    let wnear_account: AccountId = blockchain::ref_finance::token_account::WNEAR_TOKEN
+        .as_account_id()
+        .clone();
+    let deposit_args = serde_json::json!({
+        "receiver_id": ref_contract,
+        "amount": U128(cash),
+        "msg": "",
+    });
+    client
+        .exec_contract(
+            &signer,
+            &wnear_account,
+            "ft_transfer_call",
+            &deposit_args,
+            NearToken::from_yoctonear(1),
+        )
+        .await
+        .unwrap();
+    let result = client
+        .view_contract(&ref_contract, "get_deposits", &serde_json::json!({}))
+        .await
+        .unwrap();
+    let deposits: std::collections::BTreeMap<String, U128> =
+        serde_json::from_slice(&result.result).unwrap();
+    let wnear_key = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
+    assert_eq!(deposits[&wnear_key].0, cash);
+
+    // unregister_tokens removes them.
+    let unreg_args = serde_json::json!({ "token_ids": ["a.token.near"] });
+    client
+        .exec_contract(
+            &signer,
+            &ref_contract,
+            "unregister_tokens",
+            &unreg_args,
+            NearToken::from_yoctonear(1),
+        )
+        .await
+        .unwrap();
+    let result = client
+        .view_contract(&ref_contract, "get_deposits", &serde_json::json!({}))
+        .await
+        .unwrap();
+    let deposits: std::collections::BTreeMap<String, U128> =
+        serde_json::from_slice(&result.result).unwrap();
+    assert!(!deposits.contains_key("a.token.near"));
+    assert!(deposits.contains_key("b.token.near"));
+}
+
+#[tokio::test]
 async fn view_contract_ft_metadata_returns_decimals() {
-    let client = make_client(0);
+    let client = make_client(0).await;
 
     let receiver: AccountId = "usdt.tether-token.near".parse().unwrap();
     let result = client
@@ -98,7 +262,7 @@ async fn view_contract_ft_metadata_returns_decimals() {
 
 #[tokio::test]
 async fn view_contract_ft_metadata_returns_stored_decimals() {
-    let client = make_client_with_holdings(0, vec![("usdt.tether-token.near", 1_000_000, 6)]);
+    let client = make_client_with_holdings(0, vec![("usdt.tether-token.near", 1_000_000, 6)]).await;
 
     let receiver: AccountId = "usdt.tether-token.near".parse().unwrap();
     let result = client
@@ -113,7 +277,7 @@ async fn view_contract_ft_metadata_returns_stored_decimals() {
 
 #[tokio::test]
 async fn view_contract_ft_balance_of_returns_large_value() {
-    let client = make_client(0);
+    let client = make_client(0).await;
 
     let receiver: AccountId = "usdt.tether-token.near".parse().unwrap();
     let result = client
@@ -131,7 +295,7 @@ async fn view_contract_ft_balance_of_returns_large_value() {
 
 #[tokio::test]
 async fn view_contract_storage_balance_of_returns_some() {
-    let client = make_client(0);
+    let client = make_client(0).await;
 
     let receiver: AccountId = "v2.ref-finance.near".parse().unwrap();
     let result = client
@@ -148,9 +312,62 @@ async fn view_contract_storage_balance_of_returns_some() {
     assert!(info.get("total").is_some());
 }
 
+/// `storage_balance_of.total` must scale with `registered.len()` so that the
+/// production storage planner derives a sane `per_token` and the cap-check
+/// does not erroneously reject `register_tokens`. Until this scaled, a fresh
+/// simulation with one registered token (wnear) computed `per_token ≈ 0.1
+/// NEAR` and rejected 10-token registration as exceeding the 0.5 NEAR cap.
+#[tokio::test]
+async fn view_contract_storage_balance_of_scales_with_registered_count() {
+    let cash = 12_600_000_000_000_000_000_000_000u128; // 12.6 NEAR
+    let client = make_client_with_holdings(cash, vec![]).await;
+
+    let receiver: AccountId = "v2.ref-finance.near".parse().unwrap();
+    let info_one: serde_json::Value = serde_json::from_slice(
+        &client
+            .view_contract(
+                &receiver,
+                "storage_balance_of",
+                &serde_json::json!({"account_id": "sim.near"}),
+            )
+            .await
+            .unwrap()
+            .result,
+    )
+    .unwrap();
+    // Account header (1 slot) + wnear (1 slot) = 2 slots × bounds.min.
+    let total_one: U128 = serde_json::from_value(info_one["total"].clone()).unwrap();
+    assert_eq!(total_one.0, STORAGE_BOUND_MIN_YOCTO * 2);
+
+    // Register 10 more tokens (matching production storage planner ceiling).
+    let extra: Vec<TokenAccount> = (0..10)
+        .map(|i| {
+            format!("token{i}.test.near")
+                .parse::<TokenAccount>()
+                .unwrap()
+        })
+        .collect();
+    client.pre_register(extra).await;
+
+    let info_eleven: serde_json::Value = serde_json::from_slice(
+        &client
+            .view_contract(
+                &receiver,
+                "storage_balance_of",
+                &serde_json::json!({"account_id": "sim.near"}),
+            )
+            .await
+            .unwrap()
+            .result,
+    )
+    .unwrap();
+    let total_eleven: U128 = serde_json::from_value(info_eleven["total"].clone()).unwrap();
+    assert_eq!(total_eleven.0, STORAGE_BOUND_MIN_YOCTO * 12);
+}
+
 #[tokio::test]
 async fn view_contract_unknown_method_returns_empty() {
-    let client = make_client(0);
+    let client = make_client(0).await;
 
     let receiver: AccountId = "some.near".parse().unwrap();
     let result = client
@@ -165,7 +382,7 @@ async fn view_contract_unknown_method_returns_empty() {
 #[tokio::test]
 async fn get_native_amount_returns_initial_capital() {
     let initial = 100_000_000_000_000_000_000_000_000u128; // 100 NEAR
-    let client = make_client(initial);
+    let client = make_client(initial).await;
 
     let account: AccountId = "sim.near".parse().unwrap();
     let amount = client.get_native_amount(&account).await.unwrap();
@@ -178,7 +395,7 @@ async fn get_native_amount_returns_initial_capital() {
 
 #[tokio::test]
 async fn get_gas_price_returns_fixed_value() {
-    let client = make_client(0);
+    let client = make_client(0).await;
     let gas_price = client.get_gas_price(None).await.unwrap();
     // Should return the fixed 100_000_000 yoctoNEAR gas price
     assert!(gas_price.to_balance() > 0);
@@ -190,7 +407,7 @@ async fn get_gas_price_returns_fixed_value() {
 
 #[tokio::test]
 async fn transfer_native_token_returns_ok() {
-    let client = make_client(0);
+    let client = make_client(0).await;
     let signer = test_signer();
     let receiver: AccountId = "receiver.near".parse().unwrap();
     let result = client
@@ -201,7 +418,7 @@ async fn transfer_native_token_returns_ok() {
 
 #[tokio::test]
 async fn send_tx_returns_ok() {
-    let client = make_client(0);
+    let client = make_client(0).await;
     let signer = test_signer();
     let receiver: AccountId = "receiver.near".parse().unwrap();
     let result = client.send_tx(&signer, &receiver, vec![]).await;
@@ -675,4 +892,203 @@ fn estimate_swap_multi_hop_second_pool_missing_returns_none() {
         result.is_none(),
         "should return None when second hop pool is missing"
     );
+}
+
+// ---------------------------------------------------------------------------
+// estimate_no_impact_swap_via_pools (marginal/spot-rate reference)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn no_impact_single_hop_matches_marginal_rate() {
+    // Pool: 1000 NEAR / 5000 USDT, 0.3% fee. Marginal rate (NEAR→USDT) is
+    // (1 - 0.003) × 5000/1000 = 4.985 USDT per NEAR. Input = 1 NEAR (10^24
+    // yocto) → expected ≈ 4.985 USDT (4_985_000 in 6 decimals).
+    let pool = make_simple_pool(
+        1,
+        "wrap.near",
+        "usdt.tether-token.near",
+        1_000_000_000_000_000_000_000_000_000, // 1000 NEAR
+        5_000_000_000,                         // 5000 USDT
+        30,
+    );
+    let pools = dex::PoolInfoList::new(vec![pool]);
+
+    let actions = vec![SwapAction {
+        pool_id: 1,
+        token_in: "wrap.near".parse().unwrap(),
+        amount_in: Some(U128(1_000_000_000_000_000_000_000_000)),
+        token_out: "usdt.tether-token.near".parse().unwrap(),
+        min_amount_out: U128(0),
+    }];
+
+    let no_impact =
+        estimate_no_impact_swap_via_pools(&pools, &actions, 1_000_000_000_000_000_000_000_000)
+            .expect("no_impact output");
+
+    // Tight bound on 4.985 USDT.
+    assert_eq!(no_impact, 4_985_000, "marginal rate should be 4.985 USDT");
+}
+
+#[test]
+fn no_impact_strictly_above_actual_for_nontrivial_input() {
+    // For any amount_in > 0, AMM output is strictly less than marginal
+    // (no-impact) output because reserves shift against the trader.
+    let pool = make_simple_pool(
+        1,
+        "wrap.near",
+        "usdt.tether-token.near",
+        1_000_000_000_000_000_000_000_000_000,
+        5_000_000_000,
+        30,
+    );
+    let pools = dex::PoolInfoList::new(vec![pool]);
+
+    let actions = vec![SwapAction {
+        pool_id: 1,
+        token_in: "wrap.near".parse().unwrap(),
+        amount_in: Some(U128(1_000_000_000_000_000_000_000_000)),
+        token_out: "usdt.tether-token.near".parse().unwrap(),
+        min_amount_out: U128(0),
+    }];
+
+    let actual =
+        estimate_swap_via_pools(&pools, &actions, 1_000_000_000_000_000_000_000_000).unwrap();
+    let no_impact =
+        estimate_no_impact_swap_via_pools(&pools, &actions, 1_000_000_000_000_000_000_000_000)
+            .unwrap();
+
+    assert!(
+        no_impact > actual,
+        "marginal output {no_impact} must exceed actual {actual}"
+    );
+}
+
+#[test]
+fn no_impact_multi_hop_compounds_marginal_rates() {
+    // Hop 1: 1000 NEAR / 10_000 tokenA, 0.3% fee → marginal NEAR→A = 9.97
+    // Hop 2: 5000 tokenA / 2000 tokenB, 0.3% fee → marginal A→B = 0.3988
+    // Combined marginal NEAR→B = 9.97 × 0.3988 ≈ 3.9760
+    // Input 1 NEAR → expected ≈ 3.976000 tokenB (6 decimals → 3_976_036)
+    let pool1 = make_simple_pool(
+        1,
+        "wrap.near",
+        "token-a.near",
+        1_000_000_000_000_000_000_000_000_000,
+        10_000_000_000_000_000_000_000_000_000,
+        30,
+    );
+    let pool2 = make_simple_pool(
+        2,
+        "token-a.near",
+        "token-b.near",
+        5_000_000_000_000_000_000_000_000_000,
+        2_000_000_000,
+        30,
+    );
+    let pools = dex::PoolInfoList::new(vec![pool1, pool2]);
+
+    let actions = vec![
+        SwapAction {
+            pool_id: 1,
+            token_in: "wrap.near".parse().unwrap(),
+            amount_in: Some(U128(1_000_000_000_000_000_000_000_000)),
+            token_out: "token-a.near".parse().unwrap(),
+            min_amount_out: U128(0),
+        },
+        SwapAction {
+            pool_id: 2,
+            token_in: "token-a.near".parse().unwrap(),
+            amount_in: None,
+            token_out: "token-b.near".parse().unwrap(),
+            min_amount_out: U128(0),
+        },
+    ];
+
+    let no_impact =
+        estimate_no_impact_swap_via_pools(&pools, &actions, 1_000_000_000_000_000_000_000_000)
+            .unwrap();
+
+    // Compounded fee of 0.3% × 2 hops = 0.997² × 5000/1000 × 2000/5000
+    //   = 0.994009 × 5 × 0.4 = 1.988018
+    // Wait: pool1 amount_in (NEAR) = 1000 NEAR, amount_out (A) = 10_000 A
+    //   marginal NEAR→A = 0.997 × 10_000/1000 = 9.97
+    // pool2 amount_in (A) = 5000 A, amount_out (B) = 2000 B
+    //   marginal A→B = 0.997 × 2000/5000 = 0.3988
+    // 1 NEAR → 9.97 A → 9.97 × 0.3988 = 3.976036 B
+    // 6 decimals → 3_976_036.
+    assert_eq!(
+        no_impact, 3_976_036,
+        "compounded marginal rate output mismatch"
+    );
+}
+
+#[test]
+fn no_impact_zero_liquidity_returns_none() {
+    let pool = make_simple_pool(
+        1,
+        "wrap.near",
+        "usdt.tether-token.near",
+        0,
+        5_000_000_000,
+        30,
+    );
+    let pools = dex::PoolInfoList::new(vec![pool]);
+
+    let actions = vec![SwapAction {
+        pool_id: 1,
+        token_in: "wrap.near".parse().unwrap(),
+        amount_in: Some(U128(1_000_000_000_000_000_000_000_000)),
+        token_out: "usdt.tether-token.near".parse().unwrap(),
+        min_amount_out: U128(0),
+    }];
+
+    let result =
+        estimate_no_impact_swap_via_pools(&pools, &actions, 1_000_000_000_000_000_000_000_000);
+    assert!(
+        result.is_none(),
+        "zero liquidity should yield no marginal rate"
+    );
+}
+
+#[test]
+fn no_impact_zero_amount_in_returns_none() {
+    let pool = make_simple_pool(
+        1,
+        "wrap.near",
+        "usdt.tether-token.near",
+        1_000_000_000_000_000_000_000_000_000,
+        5_000_000_000,
+        30,
+    );
+    let pools = dex::PoolInfoList::new(vec![pool]);
+
+    let actions = vec![SwapAction {
+        pool_id: 1,
+        token_in: "wrap.near".parse().unwrap(),
+        amount_in: Some(U128(0)),
+        token_out: "usdt.tether-token.near".parse().unwrap(),
+        min_amount_out: U128(0),
+    }];
+
+    let result = estimate_no_impact_swap_via_pools(&pools, &actions, 0);
+    assert!(
+        result.is_none(),
+        "zero input should not yield a marginal rate"
+    );
+}
+
+#[test]
+fn no_impact_missing_pool_returns_none() {
+    let pools = dex::PoolInfoList::new(vec![]);
+
+    let actions = vec![SwapAction {
+        pool_id: 1,
+        token_in: "wrap.near".parse().unwrap(),
+        amount_in: Some(U128(1_000_000)),
+        token_out: "usdt.tether-token.near".parse().unwrap(),
+        min_amount_out: U128(0),
+    }];
+
+    let result = estimate_no_impact_swap_via_pools(&pools, &actions, 1_000_000);
+    assert!(result.is_none(), "missing pool should return None");
 }

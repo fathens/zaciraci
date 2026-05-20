@@ -1,7 +1,7 @@
 use crate::portfolio_state::{
     self, DEFAULT_DECIMALS, PortfolioState, SwapEvent, SwapMethod, SwapResult, to_u128_or_warn,
 };
-use bigdecimal::BigDecimal;
+use bigdecimal::{BigDecimal, RoundingMode};
 use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx, ViewContract};
 use blockchain::ref_finance::swap::SwapAction;
 use blockchain::types::gas_price::GasPrice;
@@ -17,6 +17,7 @@ use near_primitives::views::{
 use near_sdk::json_types::U128;
 use near_sdk::{AccountId, NearToken};
 use serde_json::json;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -29,6 +30,27 @@ pub struct SimulationClient {
     portfolio: Arc<Mutex<PortfolioState>>,
     initial_native: YoctoValue,
     sim_day: Arc<Mutex<DateTime<Utc>>>,
+    /// Tokens currently registered in the simulated REF Finance account,
+    /// mirroring the on-chain `get_deposits` key set. Empty initially so
+    /// the first `ensure_ref_storage_setup` takes the `InitialRegister`
+    /// path (which bypasses the storage cap), matching production behavior
+    /// on a fresh account.
+    registered: Arc<Mutex<BTreeSet<TokenAccount>>>,
+}
+
+/// REF Finance `storage_balance_bounds.min` value used as the per-token
+/// storage unit (matches the testnet/mainnet contract). Both the bounds
+/// view and the `storage_balance_of.total` derivation depend on this
+/// constant — share a single literal so the storage planner's per-token
+/// assumption stays internally consistent.
+const STORAGE_BOUND_MIN_YOCTO: u128 = 1_250_000_000_000_000_000_000;
+
+/// On-chain `U128` values are always integer strings. Yocto cannot be
+/// fractional, so any non-zero scale on a simulate-side `BigDecimal` is an
+/// arithmetic artifact that must be truncated before mimicking the chain
+/// response — otherwise downstream `U128` deserialization fails on the dot.
+fn yocto_bigdecimal_to_u128_string(value: &BigDecimal) -> String {
+    value.with_scale_round(0, RoundingMode::Down).to_string()
 }
 
 fn decimals_for(token: &TokenAccount) -> u8 {
@@ -50,8 +72,27 @@ impl SimulationClient {
             portfolio,
             initial_native,
             sim_day,
+            registered: Arc::new(Mutex::new(BTreeSet::new())),
         }
     }
+
+    /// Pre-populate the registered token set. Used by tests that bootstrap a
+    /// portfolio with holdings (which logically implies the tokens are already
+    /// deposited in REF Finance). Production simulate code reaches the same
+    /// state organically via `register_tokens` / `ft_transfer_call`.
+    #[cfg(test)]
+    pub(crate) async fn pre_register(&self, tokens: impl IntoIterator<Item = TokenAccount>) {
+        self.registered.lock().await.extend(tokens);
+    }
+}
+
+fn parse_token_ids(args_value: &serde_json::Value) -> Vec<TokenAccount> {
+    let Some(ids) = args_value.get("token_ids").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    ids.iter()
+        .filter_map(|v| v.as_str()?.parse().ok())
+        .collect()
 }
 
 /// Estimate swap output by walking SwapAction hops through pool `estimate_return`.
@@ -93,21 +134,80 @@ fn estimate_swap_via_pools(
     Some(current_amount)
 }
 
+/// Estimate swap output along the same path under the no-price-impact
+/// (marginal) AMM rate.
+///
+/// At each hop, the output is the limit of `estimate_return` as the input
+/// approaches zero — i.e., the spot/marginal rate which still applies the
+/// pool fee but ignores the size-dependent reserve shift:
+///
+/// ```text
+/// out = amount_in × (FEE_DIVISOR - total_fee) × out_balance
+///                   ─────────────────────────────────────────
+///                                    FEE_DIVISOR × in_balance
+/// ```
+///
+/// This gives the no-impact reference output that `handle_swap` can compare
+/// against the actual `estimate_swap_via_pools` output to surface a
+/// `price_impact_ratio` for observation.
+///
+/// Returns `None` under the same conditions as `estimate_swap_via_pools`,
+/// plus when an in/out reserve is zero (no marginal rate exists).
+fn estimate_no_impact_swap_via_pools(
+    pools: &dex::PoolInfoList,
+    swap_actions: &[SwapAction],
+    amount_in: u128,
+) -> Option<u128> {
+    use bigdecimal::{ToPrimitive, Zero};
+    debug_assert!(
+        swap_actions
+            .array_windows::<2>()
+            .all(|[a, b]| a.token_out == b.token_in),
+        "swap action chain is not connected"
+    );
+    let mut current_amount = BigDecimal::from(amount_in);
+    let fee_divisor = BigDecimal::from(dex::FEE_DIVISOR);
+    for action in swap_actions {
+        let pool = pools.get(action.pool_id).ok()?;
+        let in_idx = pool
+            .tokens()
+            .position(|t| t.as_account_id() == &action.token_in)?;
+        let out_idx = pool
+            .tokens()
+            .position(|t| t.as_account_id() == &action.token_out)?;
+        let in_balance = BigDecimal::from(pool.amount(dex::TokenIn::from(in_idx).as_index()).ok()?);
+        let out_balance =
+            BigDecimal::from(pool.amount(dex::TokenOut::from(out_idx).as_index()).ok()?);
+        if in_balance.is_zero() || out_balance.is_zero() || current_amount.is_zero() {
+            return None;
+        }
+        let amount_with_fee =
+            &current_amount * BigDecimal::from(dex::FEE_DIVISOR - pool.bare.total_fee);
+        current_amount = &amount_with_fee * &out_balance / (&fee_divisor * &in_balance);
+    }
+    current_amount.to_u128()
+}
+
 impl SimulationClient {
-    /// Calculate swap output by walking SwapAction hops through pool estimate_return.
-    /// Falls back to DB rate conversion if pool data is unavailable.
-    async fn calculate_swap_output_via_pools(
+    /// Calculate the actual and no-impact swap outputs from a single sim_day
+    /// pool snapshot. Returns `None` if pool data is unavailable or the actual
+    /// output cannot be computed; the no-impact reference is best-effort and
+    /// surfaces as `Option<u128>` in the second slot.
+    async fn calculate_swap_outputs_via_pools(
         &self,
         swap_actions: &[SwapAction],
         amount_in: u128,
         sim_day: DateTime<Utc>,
-    ) -> Option<u128> {
-        let log = DEFAULT.new(o!("function" => "calculate_swap_output_via_pools"));
+    ) -> Option<(u128, Option<u128>)> {
+        let log = DEFAULT.new(o!("function" => "calculate_swap_outputs_via_pools"));
         let pools = persistence::pool_info::read_from_db(Some(sim_day.naive_utc()))
             .await
             .inspect_err(|e| warn!(log, "failed to read pool data from DB"; "error" => %e))
             .ok()?;
-        estimate_swap_via_pools(&pools, swap_actions, amount_in)
+        let actual = estimate_swap_via_pools(&pools, swap_actions, amount_in)?;
+        let no_impact =
+            estimate_no_impact_swap_via_pools(&pools, swap_actions, amount_in).filter(|&n| n > 0);
+        Some((actual, no_impact))
     }
 
     /// Fallback: calculate swap output using DB rates (no fee/slippage).
@@ -178,11 +278,9 @@ impl SimulationClient {
                 return Ok(0);
             }
         };
-        let Some(first) = swap_actions.first() else {
+        let (Some(first), Some(last)) = (swap_actions.first(), swap_actions.last()) else {
             return Ok(0);
         };
-        // Safety: last() is always Some when first() is Some (non-empty slice).
-        let last = swap_actions.last().expect("non-empty after first() check");
         let token_in_account = TokenAccount::from(first.token_in.clone());
         let token_out_account = TokenAccount::from(last.token_out.clone());
         let amount_in = first.amount_in.map(u128::from).unwrap_or(0);
@@ -190,12 +288,38 @@ impl SimulationClient {
             return Ok(0);
         }
 
-        // Try pool-based estimate_return first (fee + slippage aware)
-        let (amount_out, swap_method) = match self
-            .calculate_swap_output_via_pools(&swap_actions, amount_in, sim_day)
+        // Try pool-based estimate_return first (fee + slippage aware). The
+        // same sim_day pool snapshot also feeds the no-impact reference used
+        // for `price_impact_ratio`; the DbRate fallback skips it because
+        // mixing DB rates with pool reserves would muddle the ratio's
+        // semantics.
+        let (amount_out, swap_method, price_impact_ratio) = match self
+            .calculate_swap_outputs_via_pools(&swap_actions, amount_in, sim_day)
             .await
         {
-            Some(out) => (out, SwapMethod::PoolBased),
+            Some((out, no_impact)) => {
+                // Compute the ratio as (n - out) / n via i128 subtraction so the
+                // small AMM impact survives f64 quantization. Doing `1.0 - out/n`
+                // directly cancels at most-significant digits — for u128 inputs
+                // near 1e24 yocto, the relative precision drops to ~10^-8 when
+                // the true ratio is near zero. Promoting to i128 keeps the
+                // subtraction exact; the final f64 division then preserves the
+                // sign (negative noise just below zero remains visible to
+                // consumers, per SwapEvent::price_impact_ratio docs).
+                //
+                // u128 → i128 is `try_from` rather than `as`: pool reserves above
+                // i128::MAX (~1.7e38) are off-spec — would require e.g. a
+                // 24-decimals × 100T-supply token fully concentrated in one
+                // pool — and `as` would silently wrap to a negative i128,
+                // producing a bogus positive ratio. fail-closed to `None` so
+                // hostile sim snapshots cannot quietly skew observation stats.
+                let ratio = no_impact.and_then(|n| {
+                    let n_i128 = i128::try_from(n).ok()?;
+                    let out_i128 = i128::try_from(out).ok()?;
+                    Some((n_i128 - out_i128) as f64 / n as f64)
+                });
+                (out, SwapMethod::PoolBased, ratio)
+            }
             None => {
                 // Fallback to DB rate conversion (no fee/slippage)
                 warn!(log, "pool data unavailable, falling back to DB rate";
@@ -209,7 +333,7 @@ impl SimulationClient {
                         sim_day,
                     )
                     .await;
-                (out, SwapMethod::DbRate)
+                (out, SwapMethod::DbRate, None)
             }
         };
 
@@ -220,6 +344,12 @@ impl SimulationClient {
             return Ok(0);
         }
 
+        // Resolve decimals before mutating state so the new holding entry's
+        // decimals match the rate provider's view (both read from the same
+        // cache populated by `token_cache::load_from_db`).
+        let decimals_in = decimals_for(&token_in_account);
+        let decimals_out = decimals_for(&token_out_account);
+
         // sim_day was acquired at the top of handle_swap. Only portfolio
         // needs locking here.
         let mut state = self.portfolio.lock().await;
@@ -228,6 +358,7 @@ impl SimulationClient {
             amount_in,
             &token_out_account,
             amount_out,
+            decimals_out,
         );
 
         let Some(SwapResult {
@@ -240,9 +371,6 @@ impl SimulationClient {
             );
             return Ok(0);
         };
-
-        let decimals_in = decimals_for(&token_in_account);
-        let decimals_out = decimals_for(&token_out_account);
         state.swap_events.push(SwapEvent {
             timestamp: sim_day,
             token_in: token_in_account.clone(),
@@ -254,6 +382,7 @@ impl SimulationClient {
             ),
             swap_method,
             pool_ids: swap_actions.iter().map(|a| a.pool_id).collect(),
+            price_impact_ratio,
         });
 
         trace!(log, "simulated swap";
@@ -300,7 +429,7 @@ impl SendTx for SimulationClient {
     async fn exec_contract<T>(
         &self,
         _signer: &InMemorySigner,
-        _receiver: &AccountId,
+        receiver: &AccountId,
         method_name: &str,
         args: T,
         _deposit: NearToken,
@@ -312,6 +441,48 @@ impl SendTx for SimulationClient {
             let args_value = serde_json::to_value(&args)?;
             let output_amount = self.handle_swap(args_value).await?;
             return Ok(MockSentTx { output_amount });
+        }
+
+        // The mock has to model the on-chain "registered tokens" set so that
+        // the production storage planner sees a faithful `get_deposits` shape.
+        // Without this, a fresh simulation would either spuriously hit the
+        // `Normal` cap-checked path (and reject 10-token registration) or
+        // skip registration entirely, both of which diverge from production.
+        let ref_contract = &*blockchain::ref_finance::CONTRACT_ADDRESS;
+        match method_name {
+            "register_tokens" if receiver == ref_contract => {
+                let args_value = serde_json::to_value(&args)?;
+                let tokens = parse_token_ids(&args_value);
+                self.registered.lock().await.extend(tokens);
+            }
+            "unregister_tokens" if receiver == ref_contract => {
+                let args_value = serde_json::to_value(&args)?;
+                let tokens = parse_token_ids(&args_value);
+                let mut set = self.registered.lock().await;
+                for token in &tokens {
+                    set.remove(token);
+                }
+            }
+            "ft_transfer_call" => {
+                // Depositing a token to REF (`receiver_id == REF`) implicitly
+                // registers it on the user's REF account — production never
+                // calls `register_tokens` for wnear before the initial deposit.
+                let args_value = serde_json::to_value(&args)?;
+                let target = args_value
+                    .get("receiver_id")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.parse::<AccountId>().ok());
+                if target.as_ref() == Some(ref_contract) {
+                    let token = TokenAccount::from(receiver.clone());
+                    self.registered.lock().await.insert(token);
+                }
+            }
+            "storage_deposit" if receiver == ref_contract => {
+                // No-op: account-level storage deposit doesn't add tokens to
+                // `get_deposits`; the mock's `storage_balance_of` already
+                // returns a registered account state.
+            }
+            _ => {}
         }
 
         Ok(MockSentTx { output_amount: 0 })
@@ -339,24 +510,28 @@ impl ViewContract for SimulationClient {
     {
         let result = match method_name {
             "get_deposits" => {
-                // Only portfolio is needed here (no sim_day dependency), so a
-                // single lock is fine — no lock-ordering concern.
+                // Production `get_deposits` returns exactly the tokens the
+                // account is registered for, with their current balance
+                // (zero entries are kept until `unregister_tokens`). The mock
+                // mirrors that: only `registered` tokens appear, with cash
+                // balance for wnear and `holdings` for everything else.
+                let registered = self.registered.lock().await;
                 let state = self.portfolio.lock().await;
                 let mut deposits = serde_json::Map::new();
 
-                // cash balance as wrap.near
-                let wnear_token = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_string();
-                deposits.insert(
-                    wnear_token,
-                    serde_json::Value::String(state.cash_balance.as_bigdecimal().to_string()),
-                );
-
-                // token holdings
-                for (token_account, amount) in &state.holdings {
-                    deposits.insert(
-                        token_account.to_string(),
-                        serde_json::Value::String(amount.smallest_units().to_string()),
-                    );
+                let wnear_account = &*blockchain::ref_finance::token_account::WNEAR_TOKEN;
+                for token in registered.iter() {
+                    let amount = if token == wnear_account {
+                        yocto_bigdecimal_to_u128_string(state.cash_balance.as_bigdecimal())
+                    } else {
+                        match state.holdings.get(token) {
+                            Some(holding) => {
+                                yocto_bigdecimal_to_u128_string(holding.smallest_units())
+                            }
+                            None => "0".to_string(),
+                        }
+                    };
+                    deposits.insert(token.to_string(), serde_json::Value::String(amount));
                 }
 
                 serde_json::to_vec(&deposits)?
@@ -403,16 +578,27 @@ impl ViewContract for SimulationClient {
                 serde_json::to_vec(&supply)?
             }
             "storage_balance_of" => {
+                // The on-chain `storage_balance_of.total` scales with the number
+                // of registered tokens (each adds at least `bounds.min` worth of
+                // storage cost; the account header itself also costs `bounds.min`).
+                // A static total ignores the registered count and inflates
+                // `per_token` in the storage planner, which then mis-estimates
+                // top-up at cap-check time and blocks `register_tokens`. Mirror
+                // production's accounting by deriving total from `registered.len()`.
+                let registered = self.registered.lock().await;
+                let account_slots =
+                    u128::try_from(registered.len().saturating_add(1)).unwrap_or(u128::MAX);
+                let total = STORAGE_BOUND_MIN_YOCTO.saturating_mul(account_slots);
                 let account_info = json!({
-                    "total": U128(100_000_000_000_000_000_000_000u128),
+                    "total": U128(total),
                     "available": U128(0),
                 });
                 serde_json::to_vec(&account_info)?
             }
             "storage_balance_bounds" => {
                 let bounds = json!({
-                    "min": U128(1_250_000_000_000_000_000_000u128),
-                    "max": U128(1_250_000_000_000_000_000_000u128),
+                    "min": U128(STORAGE_BOUND_MIN_YOCTO),
+                    "max": U128(STORAGE_BOUND_MIN_YOCTO),
                 });
                 serde_json::to_vec(&bounds)?
             }

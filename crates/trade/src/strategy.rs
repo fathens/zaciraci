@@ -25,7 +25,7 @@
 use crate::Result;
 use crate::predict::PredictionService;
 use crate::swap;
-use bigdecimal::{BigDecimal, ToPrimitive};
+use bigdecimal::{BigDecimal, ToPrimitive, Zero};
 use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, ViewContract};
 use blockchain::wallet::Wallet;
 use common::algorithm::{
@@ -52,6 +52,7 @@ use super::market_data::{
     calculate_enhanced_liquidity_score, calculate_volatility_from_history,
     estimate_market_cap_async,
 };
+use super::portfolio_cost::{CostAwareOutcome, collect_cost_inputs, run_cost_aware_optimization};
 
 pub async fn start<C, W>(
     client: &C,
@@ -146,10 +147,27 @@ where
     let is_new_period = result.is_new_period;
     let existing_tokens = result.existing_tokens;
 
+    // pool_info を 1 サイクルにつき 1 度だけ snapshot し、以降の処理は
+    // すべてこの Arc を共有することで TOCTOU を排除する
+    // （F008 / F025）。同じスナップショットを `select_top_volatility_tokens`
+    // と `execute_portfolio_strategy` に渡すことで、ボラティリティ判定と
+    // コスト見積りが同一プール状態を観測することを保証する。
+    //
+    // `current_time` を渡すことで simulate でも当日のプール状態を読み、
+    // production も `Utc::now()` 同等の最新スナップショットを読む。
+    // 旧コードの `None` は production では「最新」を意味して問題なかったが、
+    // simulate では「最新」がテスト DB に流入した sim 期間外のデータを指して
+    // しまい、コスト推定と swap 実行（mock_client.rs::handle_swap で
+    // `Some(sim_day)` を使用）の時刻が乖離する原因になっていた。
+    let pool_snapshot =
+        persistence::pool_info::read_from_db(Some(current_time.naive_utc())).await?;
+
     // Step 4: トークン選定 (評価期間に応じて処理を分岐)
     let selected_tokens = if is_new_period {
         // 新規期間: 新しくトークンを選定
-        let tokens = select_top_volatility_tokens(&prediction_service, current_time, cfg).await?;
+        let tokens =
+            select_top_volatility_tokens(&prediction_service, current_time, cfg, &pool_snapshot)
+                .await?;
 
         // 選定したトークンをデータベースに保存
         if !tokens.is_empty() {
@@ -187,8 +205,17 @@ where
         .collect();
 
     debug!(log, "ensuring REF Finance storage setup"; "token_count" => token_accounts.len());
-    blockchain::ref_finance::storage::ensure_ref_storage_setup(client, wallet, &token_accounts)
-        .await?;
+    // keep: ポートフォリオ運用中のトークンは次サイクルで使う可能性があるため解除しない
+    let keep = blockchain::ref_finance::storage::keep_with_portfolio(&token_accounts);
+    let max_top_up = blockchain::ref_finance::storage::max_top_up_from_config(cfg);
+    blockchain::ref_finance::storage::ensure_ref_storage_setup(
+        client,
+        wallet,
+        &token_accounts,
+        &keep,
+        max_top_up,
+    )
+    .await?;
     debug!(log, "REF Finance storage setup completed");
 
     // Step 5: 投資額全額を REF Finance にデポジット (新規期間のみ)
@@ -219,6 +246,7 @@ where
         period_id: &period_id,
         end_date: current_time,
         cfg,
+        pools: &pool_snapshot,
     };
     let (actions, expected_returns) =
         match execute_portfolio_strategy(&params, client, wallet).await {
@@ -321,13 +349,17 @@ where
 }
 
 /// トップボラティリティトークンの選定 (PredictionServiceを使用)
+///
+/// `pools` は呼び出し側で取得した pool_info snapshot を共有する。
+/// 同一サイクル内で `pool_info` を二重に読まない (TOCTOU 解消) ため。
 pub async fn select_top_volatility_tokens(
     prediction_service: &PredictionService,
     end_date: chrono::DateTime<chrono::Utc>,
     cfg: &impl ConfigAccess,
+    pools: &Arc<dex::PoolInfoList>,
 ) -> Result<Vec<AccountId>> {
     let limit = cfg.trade_top_tokens() as usize;
-    select_volatility_tokens_inner(prediction_service, end_date, cfg, Some(limit)).await
+    select_volatility_tokens_inner(prediction_service, end_date, cfg, Some(limit), pools).await
 }
 
 /// 全対象トークンの予測用リストを生成（流動性フィルタ適用、上限なし）
@@ -335,23 +367,30 @@ pub async fn select_top_volatility_tokens(
 /// `select_top_volatility_tokens()` と同じフィルタ（ボラティリティ＋流動性＋グラフ到達性）
 /// を適用するが、上位N個への切り詰めを行わず全対象を返す。
 /// 予測フェーズで全対象トークンの価格予測を実行するために使用。
+///
+/// `pools` は呼び出し側で取得した pool_info snapshot を共有する。
 pub(crate) async fn select_prediction_target_tokens(
     prediction_service: &PredictionService,
     end_date: chrono::DateTime<chrono::Utc>,
     cfg: &impl ConfigAccess,
+    pools: &Arc<dex::PoolInfoList>,
 ) -> Result<Vec<AccountId>> {
-    select_volatility_tokens_inner(prediction_service, end_date, cfg, None).await
+    select_volatility_tokens_inner(prediction_service, end_date, cfg, None, pools).await
 }
 
 /// ボラティリティトークン選定の共通ロジック
 ///
 /// ボラティリティ順にトークンを取得し、流動性フィルタ＋グラフ到達性フィルタを適用。
 /// `limit` が `Some(n)` なら上位N個に切り詰め、`None` なら全件返す。
+///
+/// `pools` は呼び出し側で 1 サイクル中に 1 度だけ取得した snapshot。
+/// 内部で再度 `pool_info::read_from_db` を呼ばず、TOCTOU を排除する。
 async fn select_volatility_tokens_inner(
     prediction_service: &PredictionService,
     end_date: chrono::DateTime<chrono::Utc>,
     cfg: &impl ConfigAccess,
     limit: Option<usize>,
+    pools: &Arc<dex::PoolInfoList>,
 ) -> Result<Vec<AccountId>> {
     let log = DEFAULT.new(o!("function" => "select_volatility_tokens"));
 
@@ -377,7 +416,6 @@ async fn select_volatility_tokens_inner(
 
     debug!(log, "volatility tokens selected"; "count" => tokens.len(), "limit" => ?limit);
 
-    let pools = persistence::pool_info::read_from_db(None).await?;
     let min_liquidity = NearValue::from_near(BigDecimal::from(cfg.trade_min_pool_liquidity()));
     let wnear = blockchain::ref_finance::token_account::WNEAR_TOKEN.clone();
     let wnear_in: TokenInAccount = wnear.to_in();
@@ -385,7 +423,7 @@ async fn select_volatility_tokens_inner(
 
     apply_liquidity_filter_and_select(
         tokens,
-        &pools,
+        pools,
         &latest_rates,
         &wnear,
         &wnear_in,
@@ -403,6 +441,10 @@ pub(crate) struct PortfolioStrategyParams<'a, Cfg: ConfigAccess> {
     pub(crate) period_id: &'a str,
     pub(crate) end_date: chrono::DateTime<chrono::Utc>,
     pub(crate) cfg: &'a Cfg,
+    /// 1 サイクル中に 1 度だけ取得した pool_info snapshot。
+    /// `select_top_volatility_tokens` と `collect_cost_inputs` で同一 snapshot を
+    /// 共有することで TOCTOU を排除する（F008 / F025）。
+    pub(crate) pools: &'a Arc<dex::PoolInfoList>,
 }
 
 /// ポートフォリオ戦略の実行
@@ -674,6 +716,60 @@ where
         }
     };
 
+    // バイアス補正（フラグ on のとき適用、3 層 defense-in-depth）
+    if cfg.trade_bias_correction_enabled() {
+        let biases = match super::prediction_accuracy::calculate_per_token_bias(
+            &token_out_for_confidence,
+            cfg,
+        )
+        .await
+        {
+            Ok(b) => b,
+            Err(e) => {
+                warn!(log, "bias calculation failed, holding"; "error" => %e);
+                return Ok((vec![TradingAction::Hold], BTreeMap::new()));
+            }
+        };
+
+        // 補正に失敗した（factor<=0、ゼロ等）銘柄は最適化対象から除外し、
+        // weight=0 経由の Sell trigger 発火を構造的に防ぐ
+        let mut bias_excluded: Vec<TokenOutAccount> = Vec::new();
+        for (token, bias) in &biases {
+            let Some(predicted) = predictions.get(token) else {
+                continue;
+            };
+            match super::prediction_accuracy::correct_prediction(predicted, *bias) {
+                Some(corrected) => {
+                    debug!(log, "bias correction applied";
+                        "token" => %token,
+                        "bias" => format!("{:.4}", bias),
+                        "before" => %predicted,
+                        "after" => %corrected);
+                    predictions.insert(token.clone(), corrected);
+                }
+                None => {
+                    debug!(log, "bias correction failed, excluding token";
+                        "token" => %token, "bias" => format!("{:.4}", bias));
+                    bias_excluded.push(token.clone());
+                }
+            }
+        }
+        if !bias_excluded.is_empty() {
+            let bias_excluded_set: HashSet<&TokenOutAccount> = bias_excluded.iter().collect();
+            predictions.retain(|k, _| !bias_excluded_set.contains(k));
+            token_data.retain(|t| !bias_excluded_set.contains(&t.symbol));
+            historical_prices.retain(|k, _| !bias_excluded_set.contains(k));
+            debug!(log, "tokens excluded by bias correction failure";
+                "count" => bias_excluded.len());
+        }
+
+        // 全銘柄が補正失敗した場合は Hold
+        if token_data.is_empty() {
+            warn!(log, "all tokens excluded by bias correction, holding");
+            return Ok((vec![TradingAction::Hold], BTreeMap::new()));
+        }
+    }
+
     // 低 confidence トークンを除外（予測は既に実行済み → MAPE は更新される）
     let min_confidence = cfg.trade_min_token_confidence();
     let original_count = token_data.len();
@@ -728,11 +824,42 @@ where
         .filter(|(k, _)| remaining_symbols.contains(k))
         .collect();
 
+    // 予測誤差分散ベース対角合成（フラグ on のとき）
+    let pred_err_diagonal = if cfg.portfolio_pred_err_diagonal_enabled() {
+        let token_out_for_var: Vec<TokenOutAccount> =
+            token_data.iter().map(|t| t.symbol.clone()).collect();
+        match super::prediction_accuracy::calculate_per_token_pred_err_variance(
+            &token_out_for_var,
+            cfg,
+        )
+        .await
+        {
+            Ok(variances) => {
+                // typed config returns the enum directly — typo'd values
+                // would have panicked at startup in `ConfigResolve`.
+                let mode = cfg.portfolio_pred_err_diagonal_mode();
+                Some(common::algorithm::portfolio::PredErrDiagonal {
+                    k: cfg.portfolio_pred_err_diagonal_k(),
+                    variances,
+                    mode,
+                })
+            }
+            Err(e) => {
+                warn!(log, "pred_err_variance calculation failed, holding"; "error" => %e);
+                return Ok((vec![TradingAction::Hold], BTreeMap::new()));
+            }
+        }
+    } else {
+        None
+    };
+
     let portfolio_data = PortfolioData {
         tokens: token_data,
         predictions,
         historical_prices,
         prediction_confidences: filtered_confidences,
+        pred_err_diagonal,
+        cost_deductions: BTreeMap::new(),
     };
 
     // 既存ポジションの取得と WalletInfo の構築
@@ -805,12 +932,85 @@ where
     };
 
     // ポートフォリオ最適化の実行
-    let execution_report = execute_portfolio_optimization(
-        &wallet_info,
-        portfolio_data,
-        cfg.portfolio_rebalance_threshold(),
-    )
-    .await?;
+    let execution_report = if cfg.trade_cost_aware_return_enabled() {
+        // 反復コスト考慮最適化: total_value=0 なら早期 Hold
+        if wallet_info.total_value.as_bigdecimal() <= &BigDecimal::zero() {
+            warn!(log, "total value is zero, holding");
+            return Ok((vec![TradingAction::Hold], BTreeMap::new()));
+        }
+
+        let cost_inputs = match collect_cost_inputs(
+            client,
+            wallet.account_id(),
+            &portfolio_data.tokens,
+            params.pools,
+            cfg,
+        )
+        .await
+        {
+            Ok(inputs) => inputs,
+            Err(e) => {
+                warn!(log, "cost inputs collection failed, holding"; "error" => %e);
+                return Ok((vec![TradingAction::Hold], BTreeMap::new()));
+            }
+        };
+
+        // path 不在 token を最適化対象から除外（A2: upstream filter）。
+        // INFINITY 注入は `box_maximize_sharpe` の Cholesky 後段で NaN 連鎖を
+        // 起こすため使えない（cost.rs:to_cost_deduction の docstring 参照）。
+        let mut portfolio_data = portfolio_data;
+        if !cost_inputs.failed_tokens.is_empty() {
+            let unreachable: HashSet<TokenOutAccount> =
+                cost_inputs.failed_tokens.iter().cloned().collect();
+            warn!(log, "excluding tokens with no swap path";
+                "count" => unreachable.len(),
+                "remaining" => portfolio_data.tokens.len().saturating_sub(unreachable.len()));
+            portfolio_data.retain_excluding(&unreachable);
+        }
+        if portfolio_data.tokens.is_empty() {
+            warn!(log, "no tokens with valid swap paths, holding");
+            return Ok((vec![TradingAction::Hold], BTreeMap::new()));
+        }
+
+        let total_value_yocto = wallet_info.total_value.to_yocto();
+        let max_iter = cfg.portfolio_cost_iterations_max() as usize;
+        // Defense-in-depth: `portfolio_cost_iteration_damping` is already clamped
+        // to `[LOWER, UPPER]` (with `NaN → 0.5`) at the typed-config read
+        // boundary, and `damp_and_diff` clamps internally as well. This third
+        // clamp guards against future regressions where the typed-config layer
+        // might be bypassed (e.g. a direct `cfg.read("...")` call). Idempotent —
+        // no-op when both upstream guards are intact. The bounds are imported
+        // from `common::config` so the three layers stay in sync if the values
+        // are tightened (e.g. raising `LOWER` to block silent disable modes).
+        let damping = cfg.portfolio_cost_iteration_damping().clamp(
+            common::config::PORTFOLIO_COST_ITERATION_DAMPING_LOWER,
+            common::config::PORTFOLIO_COST_ITERATION_DAMPING_UPPER,
+        );
+
+        match run_cost_aware_optimization(
+            &wallet_info,
+            portfolio_data,
+            &cost_inputs,
+            total_value_yocto.as_bigdecimal(),
+            max_iter,
+            damping,
+            cfg.portfolio_rebalance_threshold(),
+        )
+        .await?
+        {
+            CostAwareOutcome::Optimized(report) => report,
+            CostAwareOutcome::Hold => {
+                return Ok((vec![TradingAction::Hold], BTreeMap::new()));
+            }
+        }
+    } else {
+        execute_portfolio_optimization(
+            &wallet_info,
+            portfolio_data,
+            cfg.portfolio_rebalance_threshold(),
+        )
+        .await?
+    };
 
     info!(log, "portfolio optimization completed";
         "actions" => execution_report.actions.len(),

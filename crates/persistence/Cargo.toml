@@ -18,9 +18,15 @@ diesel = { version = "2.2", features = ["postgres", "numeric", "chrono", "serde_
 deadpool-diesel = { version = "0.6", features = ["postgres"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 slog = { workspace = true }
+thiserror = { workspace = true }
 
 [features]
 mock = []
+# Exposes raw fixture helpers (raw insert / delete / wipe) under
+# `authorized_users::test_helpers` so downstream crates can seed the
+# table from their own integration tests without taking a direct
+# dependency on diesel and the schema.
+test-helpers = []
 
 [dev-dependencies]
 futures = { workspace = true }

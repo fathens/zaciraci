@@ -13,6 +13,7 @@ fn test_startup() -> StartupConfig {
         root_mnemonic: String::new(),
         root_hdpath: "m/44'/397'/0'".to_string(),
         instance_id: "*".to_string(),
+        google_client_id: String::new(),
     }
 }
 

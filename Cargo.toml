@@ -5,6 +5,8 @@ members = [
     "crates/blockchain",
     "crates/common",
     "crates/dex",
+    "crates/google_auth",
+    "crates/grpc_auth",
     "crates/logging",
     "crates/persistence",
     "crates/simulate",
@@ -14,7 +16,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "1.4.1"
+version = "1.4.2"
 edition = "2024"
 
 [workspace.dependencies]
@@ -40,6 +42,7 @@ futures-util = "0.3"
 nalgebra = "0.33"
 rand = "0.9"
 humantime = "2.2"
+itertools = "0.14"
 reqwest = { version = "0.12", features = ["json"] }
 near-account-id = { version = "2.5", features = ["serde"] }
 predictor = { git = "https://github.com/fathens/zcrc-chronos-rs", tag = "0.1.6" }

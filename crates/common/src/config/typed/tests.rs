@@ -39,6 +39,50 @@ fn test_trade_unwrap_on_stop_default() {
     assert!(!typed().trade_unwrap_on_stop());
 }
 
+// ── reverted flags (commit 3597acf): default false until follow-up PRs ──
+//
+// `TRADE_BIAS_CORRECTION_ENABLED` / `PORTFOLIO_PRED_ERR_DIAGONAL_ENABLED` /
+// `TRADE_COST_AWARE_RETURN_ENABLED` were flipped from `default: true` back to
+// `default: false` because the cost-aware / pred-err-diagonal pipeline ships
+// with two known numerical limitations (Entry-from-cash exit-token under-
+// pricing, Additive `k=0.1` collapsing diversification on low-volatility
+// regimes). These tests pin the default to `false` so an accidental re-flip
+// is caught at CI time rather than silently re-enabling the partially-shipped
+// pipeline.
+
+#[test]
+#[serial]
+fn test_trade_bias_correction_enabled_default_false() {
+    let _env = EnvGuard::remove("TRADE_BIAS_CORRECTION_ENABLED");
+    crate::config::store::remove("TRADE_BIAS_CORRECTION_ENABLED");
+    assert!(
+        !typed().trade_bias_correction_enabled(),
+        "TRADE_BIAS_CORRECTION_ENABLED must default to false until the follow-up Δw-based cost accounting lands"
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_pred_err_diagonal_enabled_default_false() {
+    let _env = EnvGuard::remove("PORTFOLIO_PRED_ERR_DIAGONAL_ENABLED");
+    crate::config::store::remove("PORTFOLIO_PRED_ERR_DIAGONAL_ENABLED");
+    assert!(
+        !typed().portfolio_pred_err_diagonal_enabled(),
+        "PORTFOLIO_PRED_ERR_DIAGONAL_ENABLED must default to false until correlation-preserving rescaling lands"
+    );
+}
+
+#[test]
+#[serial]
+fn test_trade_cost_aware_return_enabled_default_false() {
+    let _env = EnvGuard::remove("TRADE_COST_AWARE_RETURN_ENABLED");
+    crate::config::store::remove("TRADE_COST_AWARE_RETURN_ENABLED");
+    assert!(
+        !typed().trade_cost_aware_return_enabled(),
+        "TRADE_COST_AWARE_RETURN_ENABLED must default to false until Δw-based cost accounting lands"
+    );
+}
+
 // ── u32 keys ──
 
 #[test]
@@ -560,7 +604,7 @@ fn test_value_type_result_string() {
 #[test]
 fn test_key_definitions_count() {
     // define_typed_config! に定義されたキーの数と一致すること
-    assert_eq!(KEY_DEFINITIONS.len(), 47);
+    assert_eq!(KEY_DEFINITIONS.len(), 56);
 }
 
 #[test]
@@ -721,4 +765,496 @@ fn test_resolve_all_without_db_harvest_account_id_unset() {
         .expect("HARVEST_ACCOUNT_ID should exist");
     assert_eq!(info.value_type, ConfigValueType::String);
     assert_eq!(info.resolved_value, "(未設定)");
+}
+
+// ── PredErrDiagonalMode (typed enum config) ──
+
+#[test]
+#[serial]
+fn test_portfolio_pred_err_diagonal_mode_default_is_additive() {
+    use crate::algorithm::portfolio::PredErrDiagonalMode;
+
+    let _env = EnvGuard::remove("PORTFOLIO_PRED_ERR_DIAGONAL_MODE");
+    crate::config::store::remove("PORTFOLIO_PRED_ERR_DIAGONAL_MODE");
+    assert_eq!(
+        typed().portfolio_pred_err_diagonal_mode(),
+        PredErrDiagonalMode::Additive,
+        "F008 Phase 1: default should be Additive (correlation-preserving)"
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_pred_err_diagonal_mode_override_max() {
+    use crate::algorithm::portfolio::PredErrDiagonalMode;
+
+    let _guard = ConfigGuard::new("PORTFOLIO_PRED_ERR_DIAGONAL_MODE", "max");
+    assert_eq!(
+        typed().portfolio_pred_err_diagonal_mode(),
+        PredErrDiagonalMode::Max
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_pred_err_diagonal_mode_override_additive_case_insensitive() {
+    use crate::algorithm::portfolio::PredErrDiagonalMode;
+
+    let _guard = ConfigGuard::new("PORTFOLIO_PRED_ERR_DIAGONAL_MODE", "ADDITIVE");
+    assert_eq!(
+        typed().portfolio_pred_err_diagonal_mode(),
+        PredErrDiagonalMode::Additive
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_pred_err_diagonal_mode_typo_falls_back_to_default_in_resolve() {
+    use crate::algorithm::portfolio::PredErrDiagonalMode;
+    // CRITICAL-2 (cron crash loop DoS) 対策: `resolve` 経路 (cron tick 毎に
+    // 呼ばれる) は typo で panic させず default fallback する。startup-only
+    // パス (`resolve_without_db`) では panic を維持する非対称設計の確認。
+    let _guard = ConfigGuard::new("PORTFOLIO_PRED_ERR_DIAGONAL_MODE", "addative");
+    let v = typed().portfolio_pred_err_diagonal_mode();
+    assert_eq!(v, PredErrDiagonalMode::Additive);
+}
+
+#[test]
+fn test_validate_db_configs_rejects_typo_pred_err_diagonal_mode() {
+    // Layer 0: 不正な enum 値が DB_STORE に流入する前に排除されることを確認。
+    let mut configs = std::collections::HashMap::new();
+    configs.insert(
+        "PORTFOLIO_PRED_ERR_DIAGONAL_MODE".to_string(),
+        "addative".to_string(),
+    );
+    configs.insert("PORTFOLIO_COST_ITERATIONS_MAX".to_string(), "5".to_string());
+
+    let invalid = crate::config::validate_db_configs(&mut configs);
+
+    assert_eq!(invalid.len(), 1);
+    assert_eq!(invalid[0].0, "PORTFOLIO_PRED_ERR_DIAGONAL_MODE");
+    // reason は input value を含まない (log forwarding 経由漏洩防御)。
+    assert!(!invalid[0].1.contains("addative"));
+    assert!(invalid[0].1.contains("additive"));
+    assert!(invalid[0].1.contains("max"));
+
+    // configs から不正値だけ remove されている。
+    assert!(!configs.contains_key("PORTFOLIO_PRED_ERR_DIAGONAL_MODE"));
+    assert!(configs.contains_key("PORTFOLIO_COST_ITERATIONS_MAX"));
+}
+
+/// 網羅性テスト: 既知の enum 型 typed config キーは全て validate_db_configs で
+/// 検証されること。
+///
+/// 検出原理: 各 enum キーに対して **そのキーの enum で絶対に成立しない値**
+/// (token が `__definitely_invalid__`) を流し込み、`invalid` リストに含まれる
+/// ことを確認する。新規 enum 型 config を追加した場合は本リストにも追加し、
+/// `validate_db_configs` への登録を強制する。
+///
+/// 軽量代替: 完全なマクロベースの自動登録 (architecture S2) は中規模リファクタ
+/// のため follow-up とし、本 PR では「キーを追加し忘れたら CI で気づける」
+/// 最低限のリストとして機能させる。
+const KNOWN_ENUM_CONFIG_KEYS: &[&str] = &[
+    // 新規 enum 型 typed config を追加したら本リストに追加し、
+    // validate_db_configs にも検証ロジックを追加すること。
+    "PORTFOLIO_PRED_ERR_DIAGONAL_MODE",
+];
+
+#[test]
+fn test_validate_db_configs_handles_all_known_enum_keys() {
+    for key in KNOWN_ENUM_CONFIG_KEYS {
+        let mut configs = std::collections::HashMap::new();
+        configs.insert(key.to_string(), "__definitely_invalid__".to_string());
+        let invalid = crate::config::validate_db_configs(&mut configs);
+        assert!(
+            invalid.iter().any(|(k, _)| k == key),
+            "validate_db_configs missed enum key {key}; \
+             register validation in `validate_db_configs` (typed.rs)"
+        );
+        assert!(
+            !configs.contains_key(*key),
+            "invalid value for {key} must be removed from configs"
+        );
+    }
+}
+
+#[test]
+fn test_validate_db_configs_reason_redacts_attacker_controlled_value() {
+    // Property: 各既知 enum 型 typed config に対して攻撃者制御 canary 値を
+    // 流し込んだとき、`validate_db_configs` が返す reason 文字列に canary
+    // 値そのものが含まれてはならない (log forwarding 経由漏洩防御)。
+    //
+    // 現状 `PredErrDiagonalMode::validate_string` は固定文字列のみを返すため
+    // 安全だが、新規 enum 型 typed config を追加する開発者が
+    // `format!("invalid: {}", s)` のようなナイーブ実装を書いた場合に
+    // CI で検出するためのカナリアテスト。
+    //
+    // canary は以下を満たす:
+    //   - 期待バリアント名 ("additive" / "max" 等) と部分一致しない
+    //   - reason 中に出現する一般的な英単語 ("expected", "one of") と一致しない
+    //   - 視認しやすい unique sentinel
+    const PROBE: &str = "__attacker_controlled_canary_42__";
+    for key in KNOWN_ENUM_CONFIG_KEYS {
+        let mut configs = std::collections::HashMap::new();
+        configs.insert(key.to_string(), PROBE.to_string());
+        let invalid = crate::config::validate_db_configs(&mut configs);
+        let entry = invalid
+            .iter()
+            .find(|(k, _)| k == key)
+            .unwrap_or_else(|| panic!("validate_db_configs must reject {key} = {PROBE}"));
+        assert!(
+            !entry.1.contains(PROBE),
+            "reason for {key} leaked attacker-controlled value `{PROBE}`: {}",
+            entry.1
+        );
+    }
+}
+
+#[test]
+fn test_validate_db_configs_accepts_valid_pred_err_diagonal_mode() {
+    let mut configs = std::collections::HashMap::new();
+    configs.insert(
+        "PORTFOLIO_PRED_ERR_DIAGONAL_MODE".to_string(),
+        "max".to_string(),
+    );
+
+    let invalid = crate::config::validate_db_configs(&mut configs);
+
+    assert!(invalid.is_empty());
+    assert_eq!(
+        configs
+            .get("PORTFOLIO_PRED_ERR_DIAGONAL_MODE")
+            .map(|s| s.as_str()),
+        Some("max")
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_pred_err_diagonal_k_default_is_point_one() {
+    let _env = EnvGuard::remove("PORTFOLIO_PRED_ERR_DIAGONAL_K");
+    crate::config::store::remove("PORTFOLIO_PRED_ERR_DIAGONAL_K");
+    assert_eq!(typed().portfolio_pred_err_diagonal_k(), 0.1);
+}
+
+// ── F016: defense-in-depth clamps ──
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iterations_max_default_is_within_bounds() {
+    let _env = EnvGuard::remove("PORTFOLIO_COST_ITERATIONS_MAX");
+    crate::config::store::remove("PORTFOLIO_COST_ITERATIONS_MAX");
+    let v = typed().portfolio_cost_iterations_max();
+    assert!(
+        (PORTFOLIO_COST_ITERATIONS_MAX_LOWER..=PORTFOLIO_COST_ITERATIONS_MAX_UPPER).contains(&v),
+        "default {v} should already lie within [{}, {}]",
+        PORTFOLIO_COST_ITERATIONS_MAX_LOWER,
+        PORTFOLIO_COST_ITERATIONS_MAX_UPPER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iterations_max_clamped_above_upper() {
+    let _guard = ConfigGuard::new("PORTFOLIO_COST_ITERATIONS_MAX", "4294967295"); // u32::MAX
+    assert_eq!(
+        typed().portfolio_cost_iterations_max(),
+        PORTFOLIO_COST_ITERATIONS_MAX_UPPER,
+        "u32::MAX must be clamped to the upper bound to prevent DoS"
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iterations_max_clamped_below_lower() {
+    let _guard = ConfigGuard::new("PORTFOLIO_COST_ITERATIONS_MAX", "0");
+    assert_eq!(
+        typed().portfolio_cost_iterations_max(),
+        PORTFOLIO_COST_ITERATIONS_MAX_LOWER,
+        "0 must be clamped to the lower bound so optimization runs at least once"
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iterations_max_passthrough_in_range() {
+    let _guard = ConfigGuard::new("PORTFOLIO_COST_ITERATIONS_MAX", "5");
+    assert_eq!(typed().portfolio_cost_iterations_max(), 5);
+}
+
+#[test]
+#[serial]
+fn test_portfolio_pred_err_diagonal_k_clamped_above_upper() {
+    let _guard = ConfigGuard::new("PORTFOLIO_PRED_ERR_DIAGONAL_K", "1000.0");
+    assert_eq!(
+        typed().portfolio_pred_err_diagonal_k(),
+        PORTFOLIO_PRED_ERR_DIAGONAL_K_UPPER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_pred_err_diagonal_k_clamped_below_lower() {
+    let _guard = ConfigGuard::new("PORTFOLIO_PRED_ERR_DIAGONAL_K", "-1.0");
+    assert_eq!(
+        typed().portfolio_pred_err_diagonal_k(),
+        PORTFOLIO_PRED_ERR_DIAGONAL_K_LOWER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_pred_err_diagonal_k_clamps_infinity_to_upper() {
+    let _guard = ConfigGuard::new("PORTFOLIO_PRED_ERR_DIAGONAL_K", "inf");
+    assert_eq!(
+        typed().portfolio_pred_err_diagonal_k(),
+        PORTFOLIO_PRED_ERR_DIAGONAL_K_UPPER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_pred_err_diagonal_k_clamps_neg_infinity_to_lower() {
+    let _guard = ConfigGuard::new("PORTFOLIO_PRED_ERR_DIAGONAL_K", "-inf");
+    assert_eq!(
+        typed().portfolio_pred_err_diagonal_k(),
+        PORTFOLIO_PRED_ERR_DIAGONAL_K_LOWER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_pred_err_diagonal_k_maps_nan_to_lower() {
+    let _guard = ConfigGuard::new("PORTFOLIO_PRED_ERR_DIAGONAL_K", "NaN");
+    let v = typed().portfolio_pred_err_diagonal_k();
+    assert_eq!(
+        v, PORTFOLIO_PRED_ERR_DIAGONAL_K_LOWER,
+        "NaN must map to the lower bound (0.0) instead of poisoning the optimizer"
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_pred_err_diagonal_k_passthrough_in_range() {
+    let _guard = ConfigGuard::new("PORTFOLIO_PRED_ERR_DIAGONAL_K", "0.5");
+    let v = typed().portfolio_pred_err_diagonal_k();
+    assert!((v - 0.5).abs() < f64::EPSILON);
+}
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iterations_max_mock_override_is_clamped() {
+    // MockConfig should also apply the clamp on the override path so that
+    // the typed-config invariant holds regardless of which ConfigAccess
+    // implementation a test uses.
+    let mut mock = MockConfig::new();
+    mock.portfolio_cost_iterations_max = Some(u32::MAX);
+    assert_eq!(
+        mock.portfolio_cost_iterations_max(),
+        PORTFOLIO_COST_ITERATIONS_MAX_UPPER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_pred_err_diagonal_k_mock_override_is_clamped() {
+    let mut mock = MockConfig::new();
+    mock.portfolio_pred_err_diagonal_k = Some(f64::NAN);
+    assert_eq!(
+        mock.portfolio_pred_err_diagonal_k(),
+        PORTFOLIO_PRED_ERR_DIAGONAL_K_LOWER,
+    );
+}
+
+#[test]
+fn test_clamp_portfolio_cost_iterations_max_is_idempotent() {
+    let once = clamp_portfolio_cost_iterations_max(u32::MAX);
+    let twice = clamp_portfolio_cost_iterations_max(once);
+    assert_eq!(once, twice);
+}
+
+#[test]
+fn test_clamp_portfolio_pred_err_diagonal_k_is_idempotent() {
+    let once = clamp_portfolio_pred_err_diagonal_k(1e9);
+    let twice = clamp_portfolio_pred_err_diagonal_k(once);
+    assert_eq!(once, twice);
+    let nan_once = clamp_portfolio_pred_err_diagonal_k(f64::NAN);
+    let nan_twice = clamp_portfolio_pred_err_diagonal_k(nan_once);
+    assert_eq!(nan_once, nan_twice);
+}
+
+// ── F003: portfolio_cost_iteration_damping clamp ──
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iteration_damping_default_is_within_bounds() {
+    let _env = EnvGuard::remove("PORTFOLIO_COST_ITERATION_DAMPING");
+    crate::config::store::remove("PORTFOLIO_COST_ITERATION_DAMPING");
+    let v = typed().portfolio_cost_iteration_damping();
+    assert!(
+        (PORTFOLIO_COST_ITERATION_DAMPING_LOWER..=PORTFOLIO_COST_ITERATION_DAMPING_UPPER)
+            .contains(&v),
+        "default {v} should already lie within [{}, {}]",
+        PORTFOLIO_COST_ITERATION_DAMPING_LOWER,
+        PORTFOLIO_COST_ITERATION_DAMPING_UPPER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iteration_damping_clamped_above_upper() {
+    let _guard = ConfigGuard::new("PORTFOLIO_COST_ITERATION_DAMPING", "10.0");
+    assert_eq!(
+        typed().portfolio_cost_iteration_damping(),
+        PORTFOLIO_COST_ITERATION_DAMPING_UPPER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iteration_damping_clamped_below_lower() {
+    let _guard = ConfigGuard::new("PORTFOLIO_COST_ITERATION_DAMPING", "-1.0");
+    assert_eq!(
+        typed().portfolio_cost_iteration_damping(),
+        PORTFOLIO_COST_ITERATION_DAMPING_LOWER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iteration_damping_clamps_infinity_to_upper() {
+    let _guard = ConfigGuard::new("PORTFOLIO_COST_ITERATION_DAMPING", "inf");
+    assert_eq!(
+        typed().portfolio_cost_iteration_damping(),
+        PORTFOLIO_COST_ITERATION_DAMPING_UPPER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iteration_damping_clamps_neg_infinity_to_lower() {
+    let _guard = ConfigGuard::new("PORTFOLIO_COST_ITERATION_DAMPING", "-inf");
+    assert_eq!(
+        typed().portfolio_cost_iteration_damping(),
+        PORTFOLIO_COST_ITERATION_DAMPING_LOWER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iteration_damping_maps_nan_to_fallback() {
+    let _guard = ConfigGuard::new("PORTFOLIO_COST_ITERATION_DAMPING", "NaN");
+    let v = typed().portfolio_cost_iteration_damping();
+    assert_eq!(
+        v, PORTFOLIO_COST_ITERATION_DAMPING_NAN_FALLBACK,
+        "NaN must map to the fallback (0.5) instead of poisoning damp_and_diff"
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iteration_damping_passthrough_in_range() {
+    let _guard = ConfigGuard::new("PORTFOLIO_COST_ITERATION_DAMPING", "0.25");
+    let v = typed().portfolio_cost_iteration_damping();
+    assert!((v - 0.25).abs() < f64::EPSILON);
+}
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iteration_damping_zero_clamped_to_lower() {
+    // Defense-in-depth: damping=0.0 freezes damp_and_diff (next = 1·prev + 0·candidate)
+    // and run_cost_aware_optimization breaks at iter 1 via max_diff < CONVERGENCE_TOLERANCE,
+    // silently disabling cost-aware return. The lower bound is 0.1 to block this.
+    let _guard = ConfigGuard::new("PORTFOLIO_COST_ITERATION_DAMPING", "0.0");
+    let v = typed().portfolio_cost_iteration_damping();
+    assert_eq!(
+        v, PORTFOLIO_COST_ITERATION_DAMPING_LOWER,
+        "damping=0.0 must be clamped up to LOWER (={PORTFOLIO_COST_ITERATION_DAMPING_LOWER}) to prevent silent cost-aware no-op"
+    );
+}
+
+#[test]
+#[serial]
+fn test_portfolio_cost_iteration_damping_mock_override_is_clamped() {
+    let mut mock = MockConfig::new();
+    mock.portfolio_cost_iteration_damping = Some(f64::NAN);
+    assert_eq!(
+        mock.portfolio_cost_iteration_damping(),
+        PORTFOLIO_COST_ITERATION_DAMPING_NAN_FALLBACK,
+    );
+
+    let mut mock = MockConfig::new();
+    mock.portfolio_cost_iteration_damping = Some(2.0);
+    assert_eq!(
+        mock.portfolio_cost_iteration_damping(),
+        PORTFOLIO_COST_ITERATION_DAMPING_UPPER,
+    );
+}
+
+#[test]
+fn test_clamp_portfolio_cost_iteration_damping_is_idempotent() {
+    let once = clamp_portfolio_cost_iteration_damping(2.0);
+    let twice = clamp_portfolio_cost_iteration_damping(once);
+    assert_eq!(once, twice);
+    let nan_once = clamp_portfolio_cost_iteration_damping(f64::NAN);
+    let nan_twice = clamp_portfolio_cost_iteration_damping(nan_once);
+    assert_eq!(nan_once, nan_twice);
+}
+
+// ── F004: prediction_accuracy_min_samples clamp ──
+
+#[test]
+#[serial]
+fn test_prediction_accuracy_min_samples_default_is_above_lower() {
+    let _env = EnvGuard::remove("PREDICTION_ACCURACY_MIN_SAMPLES");
+    crate::config::store::remove("PREDICTION_ACCURACY_MIN_SAMPLES");
+    let v = typed().prediction_accuracy_min_samples();
+    assert!(
+        v >= PREDICTION_ACCURACY_MIN_SAMPLES_LOWER,
+        "default {v} must be >= {PREDICTION_ACCURACY_MIN_SAMPLES_LOWER}"
+    );
+}
+
+#[test]
+#[serial]
+fn test_prediction_accuracy_min_samples_zero_clamped_to_lower() {
+    let _guard = ConfigGuard::new("PREDICTION_ACCURACY_MIN_SAMPLES", "0");
+    assert_eq!(
+        typed().prediction_accuracy_min_samples(),
+        PREDICTION_ACCURACY_MIN_SAMPLES_LOWER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_prediction_accuracy_min_samples_passthrough_above_lower() {
+    let _guard = ConfigGuard::new("PREDICTION_ACCURACY_MIN_SAMPLES", "7");
+    assert_eq!(typed().prediction_accuracy_min_samples(), 7);
+}
+
+#[test]
+fn test_prediction_accuracy_min_samples_mock_override_is_clamped() {
+    let mut mock = MockConfig::new();
+    mock.prediction_accuracy_min_samples = Some(0);
+    assert_eq!(
+        mock.prediction_accuracy_min_samples(),
+        PREDICTION_ACCURACY_MIN_SAMPLES_LOWER,
+    );
+
+    let mut mock = MockConfig::new();
+    mock.prediction_accuracy_min_samples = Some(12);
+    assert_eq!(mock.prediction_accuracy_min_samples(), 12);
+}
+
+#[test]
+fn test_clamp_min_samples_is_idempotent() {
+    for v in [0usize, 1, 5, 1000] {
+        let once = clamp_min_samples(v);
+        let twice = clamp_min_samples(once);
+        assert_eq!(
+            once, twice,
+            "clamp_min_samples must be idempotent (input={v})"
+        );
+        assert!(once >= PREDICTION_ACCURACY_MIN_SAMPLES_LOWER);
+    }
 }

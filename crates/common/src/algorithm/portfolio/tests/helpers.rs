@@ -156,7 +156,7 @@ pub fn create_high_volatility_portfolio_data() -> super::PortfolioData {
         tokens,
         predictions,
         historical_prices,
-        prediction_confidences: BTreeMap::new(),
+        ..Default::default()
     }
 }
 
@@ -176,7 +176,7 @@ pub fn create_low_volatility_portfolio_data() -> super::PortfolioData {
         tokens,
         predictions,
         historical_prices,
-        prediction_confidences: BTreeMap::new(),
+        ..Default::default()
     }
 }
 

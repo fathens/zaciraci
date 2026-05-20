@@ -55,7 +55,7 @@ async fn test_sort_order_by_target_time_desc() -> Result<()> {
     // r1 (oldest target) → evaluated_at = base + 10h (newest)
     // r2 (middle target) → evaluated_at = base + 5h (middle)
     // r3 (newest target) → evaluated_at = base + 3h (oldest)
-    let conn = connection_pool::get().await?;
+    let conn = connection_pool::get_test_only().await?;
     let r1_id = r1.id;
     let r2_id = r2.id;
     let r3_id = r3.id;
@@ -295,14 +295,17 @@ async fn test_fresh_predictions_returns_latest_per_token() -> Result<()> {
     let token = "token_a.near";
     let quote = "wrap.near";
 
-    // 同一トークン、同一 target_time だが data_cutoff_time が異なる
+    // 同一トークン、同一 target_time だが data_cutoff_time が異なる。
+    // 両レコードの created_at が as_of 以前になるよう as_of を base+1h に設定し、
+    // `created_at <= as_of` フィルタが両方を許可した状態で
+    // distinct_on の最新化ロジックが newer を選ぶことを確認する。
     let target = base + chrono::TimeDelta::hours(24);
     let older_prediction = base - chrono::TimeDelta::hours(2);
     let newer_prediction = base;
     insert_unevaluated_record(token, quote, 100, older_prediction, target).await?;
     insert_unevaluated_record(token, quote, 200, newer_prediction, target).await?;
 
-    let as_of = base - chrono::TimeDelta::hours(1);
+    let as_of = base + chrono::TimeDelta::hours(1);
     let results = PredictionRecord::get_latest_fresh_predictions(&[tok(token)], as_of).await?;
 
     assert_eq!(
@@ -369,6 +372,68 @@ async fn test_fresh_predictions_empty_tokens() -> Result<()> {
     Ok(())
 }
 
+/// 因果性チェック: `created_at` が `as_of` より新しいレコードは除外されること。
+///
+/// production では `as_of = NOW` のため自動的に成立するが、シミュレーションで
+/// 過去日付の `as_of` を使ったときに「未来に作成された予測」が漏れ込むのを
+/// 防ぐ。これがないと、3/28 のシミュレーション日で、4/7 に生成された予測
+/// (target_time も 4/7 以降) が "latest" として選ばれ、optimizer が未来知識
+/// で動いてしまう (period 21 の simulate 乖離の原因)。
+#[tokio::test]
+#[serial]
+async fn test_fresh_predictions_filters_by_created_at() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let token = "token_a.near";
+    let quote = "wrap.near";
+
+    // 過去に作成された予測 (`as_of` 時点で既知): created_at = base - 1h
+    let visible_dc = base - chrono::TimeDelta::hours(1);
+    let visible_target = base + chrono::TimeDelta::hours(12);
+    insert_unevaluated_record_at(
+        token,
+        quote,
+        100,
+        visible_dc,
+        visible_target,
+        base - chrono::TimeDelta::hours(1),
+    )
+    .await?;
+
+    // 未来に作成された予測 (`as_of` 時点では未だ存在しない): created_at = base + 1h
+    // target_time は visible 版より遠い (= 通常なら distinct_on で勝つはず) こと
+    // で、created_at フィルタが無いと簡単に「より新しい予測」として選ばれてしまう
+    // 状況を再現する。
+    let leaked_dc = base + chrono::TimeDelta::minutes(30);
+    let leaked_target = base + chrono::TimeDelta::hours(48);
+    insert_unevaluated_record_at(
+        token,
+        quote,
+        999,
+        leaked_dc,
+        leaked_target,
+        base + chrono::TimeDelta::hours(1),
+    )
+    .await?;
+
+    let as_of = base;
+    let results = PredictionRecord::get_latest_fresh_predictions(&[tok(token)], as_of).await?;
+
+    assert_eq!(
+        results.len(),
+        1,
+        "leaked record (created_at > as_of) must be filtered out",
+    );
+    assert_eq!(
+        results[0].predicted_price,
+        BigDecimal::from(100),
+        "should return the prediction visible at as_of, not the future-created one",
+    );
+
+    Ok(())
+}
+
 /// 境界値: target_time が as_of ちょうどのレコードは除外されること（gt の確認）
 #[tokio::test]
 #[serial]
@@ -389,6 +454,150 @@ async fn test_fresh_predictions_boundary_excluded() -> Result<()> {
         results.is_empty(),
         "Record with target_time == as_of should be excluded (gt, not gte)"
     );
+
+    Ok(())
+}
+
+// ── earliest_fresh_visible_in ──
+
+/// 区間内に複数の予測がある場合、最早の `created_at` が返ること
+#[tokio::test]
+#[serial]
+async fn test_earliest_fresh_visible_returns_min_created_at() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let token = "token_a.near";
+    let quote = "wrap.near";
+    let day_end = base + chrono::TimeDelta::days(1);
+
+    // 区間内の 2 件 (target_time は区間より先 = "fresh")
+    let target = base + chrono::TimeDelta::hours(36);
+    let earlier_created = base + chrono::TimeDelta::minutes(10);
+    let later_created = base + chrono::TimeDelta::minutes(45);
+    insert_unevaluated_record_at(token, quote, 100, earlier_created, target, earlier_created)
+        .await?;
+    insert_unevaluated_record_at(token, quote, 200, later_created, target, later_created).await?;
+
+    let result = PredictionRecord::earliest_fresh_visible_in(base, day_end).await?;
+
+    assert_eq!(result, Some(earlier_created));
+
+    Ok(())
+}
+
+/// 区間内に予測が存在しない場合は `None` が返ること
+#[tokio::test]
+#[serial]
+async fn test_earliest_fresh_visible_empty_returns_none() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let token = "token_a.near";
+    let quote = "wrap.near";
+
+    // 区間外 (前日) のレコード
+    let outside_created = base - chrono::TimeDelta::hours(2);
+    let target = base + chrono::TimeDelta::hours(24);
+    insert_unevaluated_record_at(token, quote, 100, outside_created, target, outside_created)
+        .await?;
+
+    let day_end = base + chrono::TimeDelta::days(1);
+    let result = PredictionRecord::earliest_fresh_visible_in(base, day_end).await?;
+
+    assert_eq!(result, None);
+
+    Ok(())
+}
+
+/// `target_time <= created_at` のレコード (= 自分より過去を予測) は除外されること
+#[tokio::test]
+#[serial]
+async fn test_earliest_fresh_visible_filters_stale_target() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let token = "token_a.near";
+    let quote = "wrap.near";
+    let day_end = base + chrono::TimeDelta::days(1);
+
+    // 過去予測 (target_time が created_at と同時刻 → fresh ではない)
+    // `target_time > created_at` 不変条件を意図的に違反するため raw 挿入を使う。
+    // SQL filter が caller-side assertion の defense-in-depth として機能することを確認する。
+    let stale_created = base + chrono::TimeDelta::minutes(5);
+    let stale_target = stale_created;
+    insert_invariant_violating_record(
+        token,
+        quote,
+        100,
+        stale_created,
+        stale_target,
+        stale_created,
+    )
+    .await?;
+
+    // 真に fresh な予測
+    let fresh_created = base + chrono::TimeDelta::minutes(20);
+    let fresh_target = fresh_created + chrono::TimeDelta::hours(24);
+    insert_unevaluated_record_at(
+        token,
+        quote,
+        200,
+        fresh_created,
+        fresh_target,
+        fresh_created,
+    )
+    .await?;
+
+    let result = PredictionRecord::earliest_fresh_visible_in(base, day_end).await?;
+
+    assert_eq!(
+        result,
+        Some(fresh_created),
+        "stale (target<=created) record must be ignored even if its created_at is earlier"
+    );
+
+    Ok(())
+}
+
+/// 区間境界: `since` ちょうどは含む、`until` ちょうどは含まない (半開区間)
+#[tokio::test]
+#[serial]
+async fn test_earliest_fresh_visible_boundary_half_open() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let token = "token_a.near";
+    let quote = "wrap.near";
+    let day_end = base + chrono::TimeDelta::days(1);
+    let target = base + chrono::TimeDelta::hours(36);
+
+    // since ちょうど: 含まれるべき
+    insert_unevaluated_record_at(token, quote, 100, base, target, base).await?;
+
+    // until ちょうど: 除外されるべき
+    insert_unevaluated_record_at(token, quote, 200, day_end, target, day_end).await?;
+
+    let result = PredictionRecord::earliest_fresh_visible_in(base, day_end).await?;
+
+    assert_eq!(result, Some(base));
+
+    Ok(())
+}
+
+/// `since >= until` の不正な範囲は `None` を返す (panic しない)
+#[tokio::test]
+#[serial]
+async fn test_earliest_fresh_visible_invalid_range_returns_none() -> Result<()> {
+    let base = base_time();
+
+    let result = PredictionRecord::earliest_fresh_visible_in(base, base).await?;
+    assert_eq!(result, None, "since == until should yield None");
+
+    let result =
+        PredictionRecord::earliest_fresh_visible_in(base + chrono::TimeDelta::hours(1), base)
+            .await?;
+    assert_eq!(result, None, "since > until should yield None");
 
     Ok(())
 }
@@ -513,6 +722,218 @@ async fn test_delete_by_target_time_range_inclusive_boundary() -> Result<()> {
     let prices: Vec<_> = remaining.iter().map(|r| &r.predicted_price).collect();
     assert!(prices.contains(&&BigDecimal::from(10)));
     assert!(prices.contains(&&BigDecimal::from(300)));
+
+    Ok(())
+}
+
+// ── Layer 3: DB CHECK constraint `created_at >= data_cutoff_time` ──
+
+/// Layer 3 (DB CHECK) 直接検証: `created_at < data_cutoff_time` 違反 INSERT が
+/// CheckViolation で reject されること。
+///
+/// `try_new` (Layer 1) と private field (Layer 2) は caller-side で弾くが、DB
+/// 直接書き込み (psql / DBA / migration backfill) でも data leakage を防ぐ
+/// 最終ガードが Layer 3 の `created_at_geq_data_cutoff` CHECK 制約。本テストは
+/// `new_unchecked` で Layer 1/2 をバイパスし、DB レイヤが想定通り違反を弾くことを
+/// run_test 環境で検証する。
+#[tokio::test]
+#[serial]
+async fn test_layer3_check_rejects_created_at_before_data_cutoff() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let token = "token_layer3.near";
+    let quote = "wrap.near";
+
+    // 違反パターン: created_at < data_cutoff_time (data leakage シナリオ)
+    let data_cutoff_time = base;
+    let target_time = base + chrono::TimeDelta::hours(24);
+    let created_at = base - chrono::TimeDelta::hours(1); // < data_cutoff_time
+
+    // new_unchecked で Layer 1/2 をバイパスし、Layer 3 (DB CHECK) のみを試験する
+    let new_record = NewPredictionRecord::new_unchecked(
+        token.to_string(),
+        quote.to_string(),
+        BigDecimal::from(100),
+        data_cutoff_time,
+        target_time,
+        created_at,
+    );
+
+    let conn = connection_pool::get_test_only().await?;
+    let result = conn
+        .interact(move |conn| {
+            diesel::insert_into(prediction_records::table)
+                .values(&new_record)
+                .execute(conn)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))?;
+
+    let err = result.expect_err("Layer 3 CHECK must reject created_at < data_cutoff_time");
+    let msg = err.to_string();
+    assert!(
+        msg.contains(CREATED_AT_GEQ_DATA_CUTOFF_CONSTRAINT) || msg.contains("check"),
+        "expected CHECK violation referencing {CREATED_AT_GEQ_DATA_CUTOFF_CONSTRAINT}, got: {msg}"
+    );
+
+    Ok(())
+}
+
+// ── Layer 4: read-time SQL filter `created_at >= data_cutoff_time` ──
+
+/// Layer 4 直接検証: CHECK 制約 (Layer 3) が剥がれた状態で違反行が DB に存在しても、
+/// `get_latest_fresh_predictions` が Layer 4 SQL filter で除外することを確認する。
+///
+/// 運用シナリオ: `down.sql` rollback 期間、`NOT VALID` + `VALIDATE` 二段移行の
+/// 移行期間、DBA 直接 INSERT / raw SQL bypass、migration 前レガシーデータ。
+/// `insert_data_leakage_violator` で CHECK を一時的に外して違反行を持ち込み、
+/// Layer 4 filter (`prediction_records::created_at.ge(prediction_records::data_cutoff_time)`)
+/// が optimizer に「データ取得時刻より古い予測」を fresh と誤認させない経路を pin する。
+#[tokio::test]
+#[serial]
+async fn test_layer4_get_latest_fresh_excludes_violator_row() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let token = "token_layer4.near";
+    let quote = "wrap.near";
+
+    // 違反行: created_at < data_cutoff_time (data leakage / look-ahead bias)
+    // target_time / created_at は as_of より過去だと get_latest_fresh の
+    // target_time > as_of 不変条件で他フィルタに当たって除外され、Layer 4 が
+    // 効いているのか他フィルタが効いているのか切り分けられない。そのため
+    // target_time は as_of より未来、created_at は as_of 以前に置き、
+    // 「Layer 4 を取り除けば成立する fresh prediction」を構築する。
+    let violator_data_cutoff = base + chrono::TimeDelta::hours(2); // 未来
+    let violator_target = base + chrono::TimeDelta::hours(48);
+    let violator_created = base - chrono::TimeDelta::hours(1); // < data_cutoff_time
+    insert_data_leakage_violator(
+        token,
+        quote,
+        999,
+        violator_data_cutoff,
+        violator_target,
+        violator_created,
+    )
+    .await?;
+
+    // 正常行: 同一 token に対して有効な予測。Layer 4 filter が違反行のみを
+    // 除外することを確認するためのアンカー (両方除外なら filter が広すぎる
+    // 可能性、両方残るなら Layer 4 が効いていない)。
+    let valid_data_cutoff = base - chrono::TimeDelta::hours(2);
+    let valid_target = base + chrono::TimeDelta::hours(36);
+    let valid_created = base - chrono::TimeDelta::hours(1);
+    insert_unevaluated_record_at(
+        token,
+        quote,
+        100,
+        valid_data_cutoff,
+        valid_target,
+        valid_created,
+    )
+    .await?;
+
+    let as_of = base;
+    let results = PredictionRecord::get_latest_fresh_predictions(&[tok(token)], as_of).await?;
+
+    assert_eq!(
+        results.len(),
+        1,
+        "violator row (created_at < data_cutoff_time) must be filtered by Layer 4 read-time SQL"
+    );
+    assert_eq!(
+        results[0].predicted_price,
+        BigDecimal::from(100),
+        "must return the valid (non-violator) prediction"
+    );
+
+    clean_table().await?;
+    restore_layer3_check_validity().await?;
+    Ok(())
+}
+
+/// Layer 4 直接検証: `earliest_fresh_visible_in` も同じ filter で違反行を除外する。
+///
+/// 違反行の `created_at` を区間内に置きつつ data_cutoff_time をその後に置くことで、
+/// Layer 4 filter が無ければ MIN(created_at) として違反行が選ばれてしまう状況を
+/// 再現する。
+#[tokio::test]
+#[serial]
+async fn test_layer4_earliest_fresh_visible_excludes_violator_row() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let token = "token_layer4_earliest.near";
+    let quote = "wrap.near";
+    let day_end = base + chrono::TimeDelta::days(1);
+
+    // 違反行: 区間内の早い created_at + target_time も fresh だが
+    // created_at < data_cutoff_time という data leakage パターン。
+    // Layer 4 filter が無ければ MIN(created_at) で先に出現する。
+    let violator_data_cutoff = base + chrono::TimeDelta::hours(3);
+    let violator_target = base + chrono::TimeDelta::hours(48);
+    let violator_created = base + chrono::TimeDelta::minutes(5);
+    insert_data_leakage_violator(
+        token,
+        quote,
+        999,
+        violator_data_cutoff,
+        violator_target,
+        violator_created,
+    )
+    .await?;
+
+    // 正常行: 違反行より遅い created_at で fresh。Layer 4 が効いていれば
+    // こちらが earliest として選ばれる。
+    let valid_data_cutoff = base + chrono::TimeDelta::minutes(10);
+    let valid_target = base + chrono::TimeDelta::hours(36);
+    let valid_created = base + chrono::TimeDelta::minutes(30);
+    insert_unevaluated_record_at(
+        token,
+        quote,
+        100,
+        valid_data_cutoff,
+        valid_target,
+        valid_created,
+    )
+    .await?;
+
+    let result = PredictionRecord::earliest_fresh_visible_in(base, day_end).await?;
+
+    assert_eq!(
+        result,
+        Some(valid_created),
+        "Layer 4 must skip violator and pick the next-earliest valid created_at"
+    );
+
+    clean_table().await?;
+    restore_layer3_check_validity().await?;
+    Ok(())
+}
+
+/// Layer 3 境界値: `created_at == data_cutoff_time` は許可されること (>=)。
+#[tokio::test]
+#[serial]
+async fn test_layer3_check_allows_created_at_equal_data_cutoff() -> Result<()> {
+    clean_table().await?;
+
+    let base = base_time();
+    let token = "token_layer3_eq.near";
+    let quote = "wrap.near";
+
+    // 境界条件: created_at == data_cutoff_time (>= で許可されるべき)
+    let data_cutoff_time = base;
+    let target_time = base + chrono::TimeDelta::hours(24);
+    insert_unevaluated_record_at(token, quote, 100, data_cutoff_time, target_time, base).await?;
+
+    // INSERT が成功して 1 件取得できること (as_of は created_at 以降を指定)
+    let results = PredictionRecord::get_latest_fresh_predictions(
+        &[tok(token)],
+        base + chrono::TimeDelta::hours(1),
+    )
+    .await?;
+    assert_eq!(results.len(), 1);
 
     Ok(())
 }

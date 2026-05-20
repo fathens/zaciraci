@@ -322,7 +322,7 @@ fn test_execute_portfolio_optimization() {
         tokens,
         predictions,
         historical_prices,
-        prediction_confidences: BTreeMap::new(),
+        ..Default::default()
     };
 
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1353,7 +1353,7 @@ async fn test_portfolio_optimization_with_selection_vs_without() {
         tokens: tokens.clone(),
         predictions: predictions.clone(),
         historical_prices: full_history,
-        prediction_confidences: BTreeMap::new(),
+        ..Default::default()
     };
 
     // トークン選択ありで最適化を実行
@@ -1592,5 +1592,314 @@ fn test_market_volatility_and_dynamic_position_size() {
             .abs()
             < 1e-10,
         "最高ボラ → MAX_POSITION_SIZE * 0.7"
+    );
+}
+
+// ==================== retain_tokens テスト ====================
+
+fn pd_with_three_tokens() -> PortfolioData {
+    use super::PredErrDiagonal;
+    use super::PredErrDiagonalMode;
+    use std::collections::BTreeMap;
+
+    let mut predictions = BTreeMap::new();
+    predictions.insert(token_out("token-a"), price(0.011));
+    predictions.insert(token_out("token-b"), price(0.022));
+    predictions.insert(token_out("token-c"), price(0.0055));
+
+    let historical_prices = create_sample_price_history();
+
+    let mut prediction_confidences = BTreeMap::new();
+    prediction_confidences.insert(token_out("token-a"), 0.7);
+    prediction_confidences.insert(token_out("token-b"), 0.5);
+    prediction_confidences.insert(token_out("token-c"), 0.3);
+
+    let mut variances = BTreeMap::new();
+    variances.insert(token_out("token-a"), 0.0009);
+    variances.insert(token_out("token-b"), 0.0016);
+    variances.insert(token_out("token-c"), 0.0004);
+
+    let mut cost_deductions = BTreeMap::new();
+    cost_deductions.insert(token_out("token-a"), 0.005);
+    cost_deductions.insert(token_out("token-b"), 0.006);
+    cost_deductions.insert(token_out("token-c"), 0.003);
+
+    PortfolioData {
+        tokens: create_sample_tokens(),
+        predictions,
+        historical_prices,
+        prediction_confidences,
+        pred_err_diagonal: Some(PredErrDiagonal {
+            k: 1.0,
+            variances,
+            mode: PredErrDiagonalMode::Additive,
+        }),
+        cost_deductions,
+    }
+}
+
+#[test]
+fn retain_tokens_drops_all_indexed_fields() {
+    use std::collections::HashSet;
+
+    let mut pd = pd_with_three_tokens();
+
+    let mut keep = HashSet::new();
+    keep.insert(token_out("token-a"));
+
+    pd.retain_tokens(&keep);
+
+    assert_eq!(pd.tokens.len(), 1);
+    assert_eq!(pd.tokens[0].symbol, token_out("token-a"));
+    assert_eq!(pd.predictions.len(), 1);
+    assert!(pd.predictions.contains_key(&token_out("token-a")));
+    assert_eq!(pd.historical_prices.len(), 1);
+    assert!(pd.historical_prices.contains_key(&token_out("token-a")));
+    assert_eq!(pd.prediction_confidences.len(), 1);
+    assert!(
+        pd.prediction_confidences
+            .contains_key(&token_out("token-a"))
+    );
+    let ped = pd.pred_err_diagonal.as_ref().expect("diagonal preserved");
+    assert_eq!(ped.variances.len(), 1);
+    assert!(ped.variances.contains_key(&token_out("token-a")));
+    assert_eq!(pd.cost_deductions.len(), 1);
+    assert!(pd.cost_deductions.contains_key(&token_out("token-a")));
+}
+
+#[test]
+fn retain_tokens_handles_pred_err_diagonal_variants() {
+    use std::collections::HashSet;
+
+    // None variant: should not panic, other fields still filtered
+    let mut pd = pd_with_three_tokens();
+    pd.pred_err_diagonal = None;
+
+    let mut keep = HashSet::new();
+    keep.insert(token_out("token-b"));
+
+    pd.retain_tokens(&keep);
+
+    assert_eq!(pd.tokens.len(), 1);
+    assert!(pd.pred_err_diagonal.is_none());
+    assert_eq!(pd.cost_deductions.len(), 1);
+
+    // Some variant: variances filtered
+    let mut pd = pd_with_three_tokens();
+    let mut keep = HashSet::new();
+    keep.insert(token_out("token-c"));
+    pd.retain_tokens(&keep);
+    let ped = pd.pred_err_diagonal.as_ref().unwrap();
+    assert_eq!(ped.variances.len(), 1);
+    assert!(ped.variances.contains_key(&token_out("token-c")));
+}
+
+#[test]
+fn retain_tokens_with_empty_set_clears_all() {
+    use std::collections::HashSet;
+
+    let mut pd = pd_with_three_tokens();
+
+    pd.retain_tokens(&HashSet::new());
+
+    assert!(pd.tokens.is_empty());
+    assert!(pd.predictions.is_empty());
+    assert!(pd.historical_prices.is_empty());
+    assert!(pd.prediction_confidences.is_empty());
+    assert!(pd.pred_err_diagonal.as_ref().unwrap().variances.is_empty());
+    assert!(pd.cost_deductions.is_empty());
+}
+
+// ==================== retain_excluding テスト ====================
+
+#[test]
+fn retain_excluding_drops_indicated_tokens_only() {
+    use std::collections::HashSet;
+
+    let mut pd = pd_with_three_tokens();
+
+    let mut exclude = HashSet::new();
+    exclude.insert(token_out("token-b"));
+    exclude.insert(token_out("token-c"));
+
+    pd.retain_excluding(&exclude);
+
+    // token-a だけ残る
+    assert_eq!(pd.tokens.len(), 1);
+    assert_eq!(pd.tokens[0].symbol, token_out("token-a"));
+    assert_eq!(pd.predictions.len(), 1);
+    assert!(pd.predictions.contains_key(&token_out("token-a")));
+    assert_eq!(pd.historical_prices.len(), 1);
+    assert!(pd.historical_prices.contains_key(&token_out("token-a")));
+    assert_eq!(pd.prediction_confidences.len(), 1);
+    let ped = pd.pred_err_diagonal.as_ref().expect("diagonal preserved");
+    assert_eq!(ped.variances.len(), 1);
+    assert!(ped.variances.contains_key(&token_out("token-a")));
+    assert_eq!(pd.cost_deductions.len(), 1);
+}
+
+#[test]
+fn retain_excluding_with_empty_set_keeps_all() {
+    use std::collections::HashSet;
+
+    let mut pd = pd_with_three_tokens();
+    let original_token_count = pd.tokens.len();
+    let original_predictions_count = pd.predictions.len();
+
+    pd.retain_excluding(&HashSet::new());
+
+    // 何も除外しなければ完全に維持される
+    assert_eq!(pd.tokens.len(), original_token_count);
+    assert_eq!(pd.predictions.len(), original_predictions_count);
+    assert_eq!(pd.cost_deductions.len(), 3);
+}
+
+#[test]
+fn retain_excluding_handles_none_pred_err_diagonal() {
+    use std::collections::HashSet;
+
+    let mut pd = pd_with_three_tokens();
+    pd.pred_err_diagonal = None;
+
+    let mut exclude = HashSet::new();
+    exclude.insert(token_out("token-a"));
+
+    pd.retain_excluding(&exclude);
+
+    // None でも panic せず、他フィールドは正しく filter される
+    assert_eq!(pd.tokens.len(), 2);
+    assert!(pd.pred_err_diagonal.is_none());
+    assert!(!pd.predictions.contains_key(&token_out("token-a")));
+}
+
+#[test]
+fn retain_excluding_is_inverse_of_retain_tokens() {
+    use std::collections::HashSet;
+
+    // 同じ集合が「残るもの」になる呼び出しは結果が一致するはず
+    let mut pd1 = pd_with_three_tokens();
+    let mut pd2 = pd_with_three_tokens();
+
+    let mut keep = HashSet::new();
+    keep.insert(token_out("token-a"));
+
+    let mut exclude = HashSet::new();
+    exclude.insert(token_out("token-b"));
+    exclude.insert(token_out("token-c"));
+
+    pd1.retain_tokens(&keep);
+    pd2.retain_excluding(&exclude);
+
+    assert_eq!(pd1.tokens.len(), pd2.tokens.len());
+    assert_eq!(pd1.tokens[0].symbol, pd2.tokens[0].symbol);
+    assert_eq!(pd1.predictions.len(), pd2.predictions.len());
+    assert_eq!(pd1.cost_deductions.len(), pd2.cost_deductions.len());
+}
+
+#[test]
+fn pred_err_diagonal_mode_from_str_known_values() {
+    use std::str::FromStr;
+
+    assert_eq!(
+        PredErrDiagonalMode::from_str("additive").unwrap(),
+        PredErrDiagonalMode::Additive
+    );
+    assert_eq!(
+        PredErrDiagonalMode::from_str("max").unwrap(),
+        PredErrDiagonalMode::Max
+    );
+}
+
+#[test]
+fn pred_err_diagonal_mode_from_str_is_case_insensitive_and_trims() {
+    use std::str::FromStr;
+
+    assert_eq!(
+        PredErrDiagonalMode::from_str("  ADDITIVE\n").unwrap(),
+        PredErrDiagonalMode::Additive
+    );
+    assert_eq!(
+        PredErrDiagonalMode::from_str("Max").unwrap(),
+        PredErrDiagonalMode::Max
+    );
+}
+
+#[test]
+fn pred_err_diagonal_mode_from_str_rejects_typos() {
+    use std::str::FromStr;
+
+    let err = PredErrDiagonalMode::from_str("addative").unwrap_err();
+    let msg = err.to_string();
+    // attacker-controlled input は Display には含めない（型レベルで redact 済み）。
+    assert!(!msg.contains("addative"), "input must be redacted: {msg}");
+    assert!(msg.contains("redacted"), "actual: {msg}");
+    assert!(msg.contains("additive"), "actual: {msg}");
+    assert!(msg.contains("max"), "actual: {msg}");
+}
+
+#[test]
+fn pred_err_diagonal_mode_as_str_round_trips() {
+    use std::str::FromStr;
+
+    for mode in [
+        PredErrDiagonalMode::Additive,
+        PredErrDiagonalMode::Max,
+        PredErrDiagonalMode::Rescale,
+    ] {
+        let s = mode.as_str();
+        assert_eq!(PredErrDiagonalMode::from_str(s).unwrap(), mode);
+    }
+}
+
+#[test]
+fn pred_err_diagonal_mode_string_round_trips_three_ways() {
+    // serde / FromStr / as_str の 3 経路で同じ表現を扱うことを保証する。
+    // ここが drift すると CLI / sweep / config / persistence の 4 経路で
+    // 認識が食い違い debug が困難になる。
+    use std::str::FromStr;
+
+    for mode in [
+        PredErrDiagonalMode::Additive,
+        PredErrDiagonalMode::Max,
+        PredErrDiagonalMode::Rescale,
+    ] {
+        let s = mode.as_str();
+        // FromStr が as_str() の出力を受理する
+        assert_eq!(PredErrDiagonalMode::from_str(s).unwrap(), mode);
+        // serde が as_str() の出力を quoted JSON 文字列としてデシリアライズできる
+        let json = format!("\"{s}\"");
+        let from_serde: PredErrDiagonalMode = serde_json::from_str(&json).unwrap();
+        assert_eq!(from_serde, mode);
+        // serde シリアライズが as_str() と一致する
+        let serialized = serde_json::to_string(&mode).unwrap();
+        assert_eq!(serialized, json);
+    }
+}
+
+#[test]
+fn pred_err_diagonal_mode_variants_doc_lists_all_variants() {
+    // variants_doc は `as_str` の SSoT を含む quoted リスト。新規 variant が
+    // 追加された際に variants_doc 更新を強制するため、各 variant の
+    // `as_str()` が含まれることを確認する。
+    let doc = PredErrDiagonalMode::variants_doc();
+    for mode in [
+        PredErrDiagonalMode::Additive,
+        PredErrDiagonalMode::Max,
+        PredErrDiagonalMode::Rescale,
+    ] {
+        let token = format!("\"{}\"", mode.as_str());
+        assert!(
+            doc.contains(&token),
+            "variants_doc must list `{token}`, got: {doc}"
+        );
+    }
+}
+
+#[test]
+fn pred_err_diagonal_mode_default_is_additive() {
+    // F008 Phase 1: 安全側のデフォルト（相関構造を最も歪めない方）。
+    assert_eq!(
+        PredErrDiagonalMode::default(),
+        PredErrDiagonalMode::Additive
     );
 }

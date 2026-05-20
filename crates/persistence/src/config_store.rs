@@ -223,8 +223,31 @@ pub async fn delete(instance_id: &str, key: &str) -> Result<()> {
 ///
 /// `instance_id` は起動時設定から取得する。DB 接続に依存するキーは
 /// DB からは取得しない前提。
+///
+/// # Layer 0 検証
+///
+/// `common::config::validate_db_configs` で DB 由来の値を事前検証し、enum 型
+/// などの不正値 (typo / 未対応バリアント) を `DB_STORE` に流入させずに排除
+/// する。排除された key/reason は slog `error!` ログとして出力し、運用検知を
+/// 担保する (`common` クレートは `logging` 循環依存を避けるため structured
+/// log 出力は本関数 = persistence 層が担う)。
+///
+/// これにより `PredErrDiagonalMode::resolve` 等の cron tick 経路で不正値が
+/// 発火する経路を構造的に塞ぎ、CRITICAL-2 の persistent crash loop DoS を
+/// 阻止する。
 pub async fn reload_to_config(instance_id: &str) -> Result<()> {
-    let configs = get_all_for_instance(instance_id).await?;
+    let log = DEFAULT.new(o!("function" => "config_store::reload_to_config"));
+
+    let mut configs = get_all_for_instance(instance_id).await?;
+
+    let invalid = common::config::validate_db_configs(&mut configs);
+    for (key, reason) in &invalid {
+        // value 自体は redact 済 (validate_db_configs が attacker-controlled
+        // 文字列を reason に含めない契約)。log forwarding 経由漏洩リスクなし。
+        error!(log, "invalid DB config value, skipping";
+            "key" => key, "reason" => reason);
+    }
+
     common::config::store::load_db_config(configs);
     Ok(())
 }

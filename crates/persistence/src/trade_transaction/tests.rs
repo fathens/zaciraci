@@ -4,6 +4,20 @@ use common::types::TokenSmallestUnits;
 use futures::FutureExt;
 use std::panic::AssertUnwindSafe;
 
+fn make_tx(tx_id: String, period_id: String, batch_id: String) -> TradeTransaction {
+    TradeTransaction {
+        tx_id,
+        trade_batch_id: batch_id,
+        from_token: "wrap.near".to_string(),
+        from_amount: TokenSmallestUnits::from_u128(1),
+        to_token: "akaia.tkn.near".to_string(),
+        to_amount: TokenSmallestUnits::from_u128(1),
+        timestamp: chrono::Utc::now().naive_utc(),
+        evaluation_period_id: period_id,
+        actual_to_amount: None,
+    }
+}
+
 async fn create_test_evaluation_period() -> String {
     use crate::evaluation_period::NewEvaluationPeriod;
     let new_period = NewEvaluationPeriod::new(
@@ -333,3 +347,6 @@ async fn test_find_by_date_range() {
         std::panic::resume_unwind(e);
     }
 }
+
+mod chunked;
+mod structural;

@@ -3,9 +3,11 @@ use crate::proto::{
     GetEvaluationPeriodsRequest, GetEvaluationPeriodsResponse, GetPortfolioHoldingsRequest,
     GetPortfolioHoldingsResponse,
 };
+use crate::services::auth::require_reader;
 use common::types::near_units::YoctoValue;
 use common::types::token_account::{TokenAccount, TokenInAccount, TokenOutAccount};
 use common::types::token_types::ExchangeRate;
+use logging::{DEFAULT, o, warn};
 use persistence::evaluation_period::EvaluationPeriod;
 use persistence::portfolio_holding::{DbPortfolioHolding, PortfolioHolding};
 use persistence::token_rate::TokenRate;
@@ -106,9 +108,11 @@ async fn parse_and_fetch_rates(
     ),
     Status,
 > {
-    let parsed = holding
-        .parse_holdings()
-        .map_err(|e| Status::internal(format!("Failed to parse token holdings: {e}")))?;
+    let parsed = holding.parse_holdings().map_err(|e| {
+        let log = DEFAULT.new(o!("function" => "parse_and_fetch_rates"));
+        warn!(log, "failed to parse token holdings"; "error" => %e);
+        Status::internal("internal error")
+    })?;
     let tokens: Vec<TokenOutAccount> = parsed
         .iter()
         .filter(|th| th.token != *wnear)
@@ -120,7 +124,11 @@ async fn parse_and_fetch_rates(
     let wnear_in = TokenInAccount::from(wnear.clone());
     let rates = TokenRate::get_spot_rates_at_time(&tokens, &wnear_in, holding.timestamp)
         .await
-        .map_err(|e| Status::internal(format!("Failed to get rates: {e}")))?;
+        .map_err(|e| {
+            let log = DEFAULT.new(o!("function" => "parse_and_fetch_rates"));
+            warn!(log, "failed to get rates"; "error" => %e);
+            Status::internal("internal error")
+        })?;
     Ok((parsed, rates))
 }
 
@@ -135,6 +143,7 @@ impl PortfolioService for PortfolioServiceImpl {
         &self,
         request: Request<GetEvaluationPeriodsRequest>,
     ) -> Result<Response<GetEvaluationPeriodsResponse>, Status> {
+        require_reader(&request)?;
         let req = request.get_ref();
         let page = i64::from(req.page.max(0));
         let page_size = i64::from(req.page_size.clamp(1, 200));
@@ -143,7 +152,11 @@ impl PortfolioService for PortfolioServiceImpl {
             EvaluationPeriod::get_paginated_async(page, page_size),
             EvaluationPeriod::count_all_async(),
         )
-        .map_err(|e| Status::internal(format!("Failed to get evaluation periods: {e}")))?;
+        .map_err(|e| {
+            let log = DEFAULT.new(o!("function" => "get_evaluation_periods"));
+            warn!(log, "failed to get evaluation periods"; "error" => %e);
+            Status::internal("internal error")
+        })?;
 
         let periods = periods
             .into_iter()
@@ -160,6 +173,7 @@ impl PortfolioService for PortfolioServiceImpl {
         &self,
         request: Request<GetPortfolioHoldingsRequest>,
     ) -> Result<Response<GetPortfolioHoldingsResponse>, Status> {
+        require_reader(&request)?;
         let period_id = &request.get_ref().period_id;
 
         if period_id.is_empty() {
@@ -168,7 +182,11 @@ impl PortfolioService for PortfolioServiceImpl {
 
         let db_holdings = PortfolioHolding::get_by_period_async(period_id.clone())
             .await
-            .map_err(|e| Status::internal(format!("Failed to get portfolio holdings: {e}")))?;
+            .map_err(|e| {
+                let log = DEFAULT.new(o!("function" => "get_portfolio_holdings"));
+                warn!(log, "failed to get portfolio holdings"; "error" => %e);
+                Status::internal("internal error")
+            })?;
 
         let wnear = wnear_token();
 

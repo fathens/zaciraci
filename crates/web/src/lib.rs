@@ -7,7 +7,11 @@ pub mod proto {
 }
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 
+use anyhow::Context;
+use google_auth::GoogleAuthenticator;
+use grpc_auth::AuthInterceptor;
 use logging::*;
 use proto::config_service_server::ConfigServiceServer;
 use proto::health_service_server::HealthServiceServer;
@@ -15,15 +19,87 @@ use proto::portfolio_service_server::PortfolioServiceServer;
 use services::config::ConfigServiceImpl;
 use services::health::HealthServiceImpl;
 use services::portfolio::PortfolioServiceImpl;
+use tonic::service::interceptor::InterceptedService;
 
-pub async fn serve(port: u16) {
+/// Start the gRPC / grpc-web server.
+///
+/// # Transport security
+///
+/// This server is intentionally started **without TLS**. The process is
+/// expected to run behind a TLS-terminating reverse proxy (e.g. the
+/// ingress layer defined in `run_local/docker-compose.yml` or the
+/// production deployment). Every authenticated request carries a Google
+/// ID token as a `Bearer` credential; if this process is ever exposed
+/// directly to an untrusted network, those tokens will travel in
+/// plaintext. Operators must ensure:
+///
+/// 1. The listening socket is only reachable via a TLS-terminating
+///    proxy, or is bound to a loopback / Unix-domain socket.
+/// 2. `GOOGLE_CLIENT_ID` is configured when the server should accept
+///    authenticated requests. Leaving it empty is a supported fail-closed
+///    "auth disabled" mode: the server still boots, but every
+///    authenticated endpoint returns `Status::unauthenticated`. See
+///    [`google_auth::GoogleAuthenticator::new`] for the full contract.
+///
+/// # Threat model: token replay
+///
+/// This server validates Google ID tokens (signature, `iss`, `aud`, `exp`,
+/// `nbf`, `iat` max-age) but does **not** maintain a `jti` blacklist or a
+/// nonce cache. A leaked token can therefore be replayed by anyone who
+/// intercepts it until the earlier of:
+///
+/// - the token's `exp` (Google issues 1h `exp` for ID tokens), or
+/// - the application's `iat`-based max-age (also 1h, applied as a
+///   defense-in-depth ceiling in `google_auth::validator`).
+///
+/// This trade-off is accepted for the current Slint-client deployment
+/// because:
+///
+/// - The transport is HTTPS-terminated upstream, so passive interception
+///   requires a compromised intermediary.
+/// - Token lifetimes are short (1 hour) and tokens are not stored
+///   long-term on the client.
+/// - The user population is small and explicitly enrolled in
+///   `authorized_users`, so the blast radius of a replay is bounded by
+///   the role of the leaked principal.
+///
+/// A future enhancement would add a `jti` TTL cache (e.g. via the `moka`
+/// crate) so that any presented `jti` is recorded and a second use within
+/// the cache window is rejected. This is left as a follow-up; it should
+/// be revisited if the threat model changes (mobile clients, public
+/// network deployments, or higher-privilege roles).
+pub async fn serve(port: u16) -> anyhow::Result<()> {
     let log = DEFAULT.new(o!("module" => "web"));
 
     let addr = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], port));
 
+    // Bootstrap the Google authenticator. JWKS is fetched eagerly; a failed
+    // initial fetch leaves the cache empty and the background refresh task
+    // keeps trying — an empty cache causes `validate_id_token` to return
+    // `JwksUnavailable`, so the server is fail-closed until JWKS is known.
+    // UserCache is loaded from the DB with bounded retries inside bootstrap
+    // to tolerate a briefly-unavailable database. An empty `google_client_id`
+    // is a supported startup state (auth disabled, every request rejected —
+    // see `google_auth::GoogleAuthenticator::new`).
+    let startup = common::config::startup::get();
+    let authenticator = GoogleAuthenticator::bootstrap(startup.google_client_id.clone())
+        .await
+        .context("failed to bootstrap authenticator")?;
+    let auth_interceptor = AuthInterceptor::new(Arc::new(authenticator));
+
+    // Health is intentionally exempt from authentication so liveness probes
+    // can work without credentials.
     let health_svc = HealthServiceServer::new(HealthServiceImpl);
-    let config_svc = ConfigServiceServer::new(ConfigServiceImpl);
-    let portfolio_svc = PortfolioServiceServer::new(PortfolioServiceImpl);
+
+    // Authenticated services wrap the raw server in an InterceptedService.
+    let config_svc = InterceptedService::new(
+        ConfigServiceServer::new(ConfigServiceImpl),
+        auth_interceptor.clone(),
+    );
+    let portfolio_svc = InterceptedService::new(
+        PortfolioServiceServer::new(PortfolioServiceImpl),
+        auth_interceptor,
+    );
 
     info!(log, "gRPC server starting"; "addr" => %addr);
 
@@ -35,5 +111,7 @@ pub async fn serve(port: u16) {
         .add_service(portfolio_svc)
         .serve(addr)
         .await
-        .expect("gRPC server failed");
+        .context("gRPC server failed")?;
+
+    Ok(())
 }
