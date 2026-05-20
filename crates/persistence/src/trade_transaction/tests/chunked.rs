@@ -1,5 +1,6 @@
 use super::*;
 use bigdecimal::BigDecimal;
+use chrono::SubsecRound;
 use common::types::TokenSmallestUnits;
 use futures::FutureExt;
 use serial_test::serial;
@@ -101,7 +102,8 @@ async fn test_insert_chunked_with_rolls_back_chunk1_on_chunk2_collision() {
 async fn test_insert_chunked_with_multi_chunk_happy_path() {
     let period_id = create_test_evaluation_period().await;
     let batch_id_prefix = uuid::Uuid::new_v4().to_string();
-    let base_ts = chrono::Utc::now().naive_utc();
+    // PostgreSQL TIMESTAMP truncates to microseconds, so match that on input.
+    let base_ts = chrono::Utc::now().naive_utc().trunc_subsecs(6);
 
     let expected: Vec<TradeTransaction> = (0..5)
         .map(|i| {
