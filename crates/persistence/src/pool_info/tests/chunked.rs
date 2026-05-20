@@ -83,21 +83,52 @@ async fn test_insert_chunked_with_rolls_back_chunk1_on_chunk2_collision() {
 
 /// Multi-chunk happy path on the slice path: 5 rows with chunk_rows=2
 /// spans three chunks (2 + 2 + 1). Exercises `.chunks(...)` past the
-/// off-by-one boundary on `pool_info::insert_chunked_with`.
+/// off-by-one boundary on `pool_info::insert_chunked_with` and verifies
+/// **field-level positional correspondence** after the round-trip.
+///
+/// Each row carries a distinct `amounts` pair, `total_fee`, `amp`,
+/// `shares_total_supply`, `pool_kind`, and `token_account_ids` so that a
+/// chunk-boundary swap — where pool X's row ends up paired with pool Y's
+/// JSONB fields — would surface as a mismatched assertion instead of
+/// silently passing on equal-valued rows. This is the slice-path
+/// counterpart to the drain-path field-level assert on `trade_transaction`,
+/// closing the canary gap for Diesel `Insertable for &[T]` /
+/// PG wire-protocol regressions that count-only assertions miss.
 #[tokio::test]
 #[serial(pool_info, persistence_chunked)]
 async fn test_insert_chunked_with_multi_chunk_happy_path() {
     let ts = chrono::Utc::now().naive_utc();
     let pool_ids: Vec<i32> = vec![700, 701, 702, 703, 704];
 
-    let batch: Vec<NewDbPoolInfo> = pool_ids
+    let expected: Vec<PoolInfo> = pool_ids
         .iter()
-        .map(|id| {
-            let mut p = create_test_pool_info();
-            p.id = *id as u32;
-            p.timestamp = ts;
-            to_new_db(&p).expect("to_new_db")
+        .enumerate()
+        .map(|(i, id)| {
+            let token_a = TokenAccount::from_str(&format!("token_a_{i}.near")).unwrap();
+            let token_b = TokenAccount::from_str(&format!("token_b_{i}.near")).unwrap();
+            let kind = if i.is_multiple_of(2) {
+                "STABLE_SWAP"
+            } else {
+                "SIMPLE_POOL"
+            };
+            let bare = PoolInfoBared {
+                pool_kind: kind.to_string(),
+                token_account_ids: vec![token_a, token_b],
+                amounts: vec![
+                    U128(1_000_000 + i as u128),
+                    U128(2_000_000 + (i as u128) * 7),
+                ],
+                total_fee: 30 + i as u32,
+                shares_total_supply: U128(5_000_000 + (i as u128) * 11),
+                amp: 100 + i as u64,
+            };
+            PoolInfo::new(*id as u32, bare, ts)
         })
+        .collect();
+
+    let batch: Vec<NewDbPoolInfo> = expected
+        .iter()
+        .map(|p| to_new_db(p).expect("to_new_db"))
         .collect();
 
     let conn = connection_pool::get_test_only().await.unwrap();
@@ -112,11 +143,40 @@ async fn test_insert_chunked_with_multi_chunk_happy_path() {
     .unwrap()
     .unwrap();
 
-    for pool_id in &pool_ids {
-        let row = get_latest(*pool_id as u32).await.unwrap();
-        assert!(
-            row.is_some(),
-            "expected pool_id={pool_id} to be visible after multi-chunk insert"
+    for want in &expected {
+        let got = get_latest(want.id)
+            .await
+            .unwrap()
+            .unwrap_or_else(|| panic!("pool_id={} not visible after multi-chunk insert", want.id));
+        assert_eq!(
+            got.bare.pool_kind, want.bare.pool_kind,
+            "pool_kind mismatch at pool_id={}",
+            want.id
+        );
+        assert_eq!(
+            got.bare.token_account_ids, want.bare.token_account_ids,
+            "token_account_ids mismatch at pool_id={}",
+            want.id
+        );
+        assert_eq!(
+            got.bare.amounts, want.bare.amounts,
+            "amounts mismatch at pool_id={}",
+            want.id
+        );
+        assert_eq!(
+            got.bare.total_fee, want.bare.total_fee,
+            "total_fee mismatch at pool_id={}",
+            want.id
+        );
+        assert_eq!(
+            got.bare.shares_total_supply, want.bare.shares_total_supply,
+            "shares_total_supply mismatch at pool_id={}",
+            want.id
+        );
+        assert_eq!(
+            got.bare.amp, want.bare.amp,
+            "amp mismatch at pool_id={}",
+            want.id
         );
     }
 
