@@ -85,7 +85,7 @@ impl TradeTransaction {
         conn: &mut PgConnection,
     ) -> QueryResult<Vec<TradeTransaction>> {
         let total = transactions.len();
-        conn.transaction(|conn| {
+        conn.transaction::<_, diesel::result::Error, _>(|conn| {
             let mut inserted = Vec::with_capacity(total);
             while !transactions.is_empty() {
                 let take = transactions.len().min(chunk_rows.get());
