@@ -1,4 +1,5 @@
 use super::*;
+use bigdecimal::num_bigint::BigInt;
 use std::num::NonZeroUsize;
 
 fn base_time() -> NaiveDateTime {
@@ -22,6 +23,15 @@ fn base_time() -> NaiveDateTime {
 /// path here: the optimizer that consumes these rows would learn an
 /// incorrect target for the wrong token, so this canary closes the
 /// regression gap that count-only assertions leave open.
+///
+/// `predicted_price` is built via `BigDecimal::new(BigInt::from(mantissa),
+/// scale)` with `scale=8` to model the fractional values production uses.
+/// PG `NUMERIC` carries no typmod here, so the scale survives the
+/// round-trip; bigdecimal's `PartialEq` is representation-based
+/// (int_val × scale), so any chunk-boundary regression that shifts scale
+/// without changing the numeric magnitude also surfaces as a
+/// mismatched assertion. The prior canary used `BigDecimal::from(int)`
+/// which always produced `scale=0`, missing that class of bug.
 #[tokio::test]
 #[serial(persistence_chunked)]
 async fn test_insert_chunked_with_multi_chunk_happy_path() -> Result<()> {
@@ -50,7 +60,7 @@ async fn test_insert_chunked_with_multi_chunk_happy_path() -> Result<()> {
             Expected {
                 token: token.clone(),
                 quote_token: quote.clone(),
-                predicted_price: BigDecimal::from(100_000 + (i as i64) * 37),
+                predicted_price: BigDecimal::new(BigInt::from(12345 + (i as i64) * 37), 8),
                 data_cutoff_time: data_cutoff,
                 target_time: target,
                 created_at: created,
