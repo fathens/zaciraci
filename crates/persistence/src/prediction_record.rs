@@ -1,3 +1,4 @@
+use crate::batch;
 use crate::connection_pool;
 use crate::schema::prediction_records;
 use anyhow::Result;
@@ -6,6 +7,7 @@ use chrono::NaiveDateTime;
 use common::types::{TokenAccount, TokenOutAccount};
 use diesel::prelude::*;
 use logging::*;
+use std::num::NonZeroUsize;
 
 /// Layer 3 CHECK 制約名の Single Source of Truth。
 ///
@@ -153,6 +155,39 @@ pub enum NewPredictionRecordError {
 }
 
 impl NewPredictionRecord {
+    /// Bind-parameter count per row for the chunked batch insert. SSoT for
+    /// `chunk_rows` budgeting (`crate::batch`); the structural test in
+    /// `tests::cols_matches_struct_fields` enforces field-count alignment.
+    const COLS: NonZeroUsize = NonZeroUsize::new(6).expect("COLS must be non-zero");
+
+    /// Maximum rows per INSERT statement under the PostgreSQL 65535
+    /// bind-parameter limit. Co-located with `COLS` so the SSoT pair lives
+    /// next to the struct definition.
+    const CHUNK_ROWS: NonZeroUsize = batch::chunk_rows(Self::COLS);
+
+    /// Chunked INSERT into `prediction_records` within a single transaction.
+    ///
+    /// Acts as the test DI point: production callers pass `Self::CHUNK_ROWS`
+    /// (via [`PredictionRecord::batch_insert`]), while tests use
+    /// [`batch::chunk_rows_with_budget`] to shrink chunks to 2-3 rows for
+    /// atomicity / off-by-one verification. All chunks execute inside one
+    /// `conn.transaction`, so a failure in any chunk rolls back every
+    /// preceding chunk.
+    fn insert_chunked_with(
+        rows: Vec<NewPredictionRecord>,
+        chunk_rows: NonZeroUsize,
+        conn: &mut PgConnection,
+    ) -> QueryResult<()> {
+        conn.transaction::<_, diesel::result::Error, _>(|conn| {
+            for chunk in rows.chunks(chunk_rows.get()) {
+                diesel::insert_into(prediction_records::table)
+                    .values(chunk)
+                    .execute(conn)?;
+            }
+            Ok(())
+        })
+    }
+
     /// 予測レコード挿入用の値を構築する (唯一の構築経路)。
     ///
     /// `created_at >= data_cutoff_time` および `target_time > data_cutoff_time` を
@@ -252,13 +287,23 @@ impl PredictionRecord {
             return Ok(());
         }
 
+        let chunk_rows = NewPredictionRecord::CHUNK_ROWS;
+        let total = records.len();
+        if total > chunk_rows.get() {
+            let log = DEFAULT.new(o!("function" => "PredictionRecord::batch_insert"));
+            let chunks = total.div_ceil(chunk_rows.get());
+            debug!(log, "batch chunked";
+                "rows" => total,
+                "chunk_rows" => chunk_rows.get(),
+                "chunks" => chunks,
+            );
+        }
+
         let records = records.to_vec();
         let conn = connection_pool::get().await?;
 
         conn.interact(move |conn| {
-            diesel::insert_into(prediction_records::table)
-                .values(&records)
-                .execute(conn)
+            NewPredictionRecord::insert_chunked_with(records, chunk_rows, conn)
         })
         .await
         .map_err(|e| anyhow::anyhow!("Database interaction error: {:?}", e))??;

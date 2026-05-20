@@ -611,3 +611,6 @@ async fn test_cleanup_old_records_minimum_retention() -> Result<()> {
 
     Ok(())
 }
+
+mod chunked;
+mod structural;
