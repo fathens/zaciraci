@@ -285,6 +285,10 @@ fn make_cli(start: &str, end: &str) -> RunArgs {
         half_kelly: false,
         stop_loss: false,
         dd_circuit_breaker: false,
+        alpha_gate: false,
+        alpha_gate_multiplier: 2.0,
+        alpha_gate_hold_cycles: 1,
+        alpha_gate_min_pass_count: 5,
     }
 }
 
@@ -380,6 +384,10 @@ fn from_state_config_reflects_cli_params() {
         half_kelly: false,
         stop_loss: false,
         dd_circuit_breaker: false,
+        alpha_gate: false,
+        alpha_gate_multiplier: 2.0,
+        alpha_gate_hold_cycles: 1,
+        alpha_gate_min_pass_count: 5,
     };
     let state = PortfolioState::new(yocto(200_000_000_000_000_000_000_000_000));
 

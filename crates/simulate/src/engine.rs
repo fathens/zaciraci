@@ -254,6 +254,19 @@ pub(crate) fn apply_config(cli: &RunArgs) {
         "TRADE_DD_CIRCUIT_BREAKER_ENABLED",
         &cli.dd_circuit_breaker.to_string(),
     );
+    common::config::store::set("TRADE_ALPHA_GATE_ENABLED", &cli.alpha_gate.to_string());
+    common::config::store::set(
+        "TRADE_ALPHA_GATE_MULTIPLIER",
+        &cli.alpha_gate_multiplier.to_string(),
+    );
+    common::config::store::set(
+        "TRADE_ALPHA_GATE_HOLD_CYCLES",
+        &cli.alpha_gate_hold_cycles.to_string(),
+    );
+    common::config::store::set(
+        "TRADE_ALPHA_GATE_MIN_PASS_COUNT",
+        &cli.alpha_gate_min_pass_count.to_string(),
+    );
 }
 
 #[cfg(test)]
@@ -288,6 +301,10 @@ mod tests {
             half_kelly: false,
             stop_loss: false,
             dd_circuit_breaker: false,
+            alpha_gate: false,
+            alpha_gate_multiplier: 2.0,
+            alpha_gate_hold_cycles: 1,
+            alpha_gate_min_pass_count: 5,
         }
     }
 
@@ -329,6 +346,10 @@ mod tests {
             half_kelly: true,
             stop_loss: true,
             dd_circuit_breaker: true,
+            alpha_gate: true,
+            alpha_gate_multiplier: 3.0,
+            alpha_gate_hold_cycles: 4,
+            alpha_gate_min_pass_count: 6,
         };
 
         apply_config(&cli);
@@ -405,6 +426,22 @@ mod tests {
         assert_eq!(
             common::config::store::get("TRADE_DD_CIRCUIT_BREAKER_ENABLED").unwrap(),
             "true"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_ALPHA_GATE_ENABLED").unwrap(),
+            "true"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_ALPHA_GATE_MULTIPLIER").unwrap(),
+            "3"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_ALPHA_GATE_HOLD_CYCLES").unwrap(),
+            "4"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_ALPHA_GATE_MIN_PASS_COUNT").unwrap(),
+            "6"
         );
     }
 }

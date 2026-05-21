@@ -145,6 +145,29 @@ pub struct RunArgs {
     /// than `--dd-threshold` below the period's initial value.
     #[arg(long, action = clap::ArgAction::Set, default_value_t = false)]
     pub dd_circuit_breaker: bool,
+
+    /// Enable the alpha gate filter (see crates/simulate/docs/plan_alpha_gate.md).
+    /// Rejects tokens where `hold_cycles × expected_return < multiplier × round_trip_cost`.
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = false)]
+    pub alpha_gate: bool,
+
+    /// Safety multiplier `k` applied to round-trip cost in the gate
+    /// comparison `H × ER > k × cost`. Clamped to `[0.1, 10.0]` at the
+    /// typed-config layer. Has no effect when `--alpha-gate=false`.
+    #[arg(long, default_value = "2.0")]
+    pub alpha_gate_multiplier: f64,
+
+    /// Holding period `H` (cycles) in the gate comparison
+    /// `H × ER > k × cost`. Default `1` is the conservative single-cycle
+    /// assumption. Has no effect when `--alpha-gate=false`.
+    #[arg(long, default_value_t = 1)]
+    pub alpha_gate_hold_cycles: u32,
+
+    /// Minimum tokens that must reach the optimizer after the gate. When
+    /// fewer pass, the highest-ER rejected tokens are reinstated. `0`
+    /// disables the fallback. Has no effect when `--alpha-gate=false`.
+    #[arg(long, default_value_t = 5)]
+    pub alpha_gate_min_pass_count: u32,
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -223,6 +246,10 @@ mod tests {
             half_kelly: false,
             stop_loss: false,
             dd_circuit_breaker: false,
+            alpha_gate: false,
+            alpha_gate_multiplier: 2.0,
+            alpha_gate_hold_cycles: 1,
+            alpha_gate_min_pass_count: 5,
         }
     }
 
