@@ -638,6 +638,42 @@ fn clamp_trade_max_position_vs_pool_ratio(v: f64) -> f64 {
     }
 }
 
+// ── TRADE_ALPHA_GATE_MULTIPLIER ──
+
+/// Lower bound for [`ConfigAccess::trade_alpha_gate_multiplier`].
+///
+/// `0.1` is the floor: the gate filter `H × ER > k × round_trip_cost`
+/// degenerates for `k < 0.1` because even break-even alpha would pass.
+const TRADE_ALPHA_GATE_MULTIPLIER_LOWER: f64 = 0.1;
+
+/// Upper bound for [`ConfigAccess::trade_alpha_gate_multiplier`].
+///
+/// `10.0` is the ceiling: thresholds above 10x round-trip cost reject
+/// essentially every realistic alpha and collapse the strategy into
+/// permanent Hold; the dedicated `TRADE_ALPHA_GATE_ENABLED` flag should
+/// be used to disable the gate instead.
+const TRADE_ALPHA_GATE_MULTIPLIER_UPPER: f64 = 10.0;
+
+/// NaN fallback for [`ConfigAccess::trade_alpha_gate_multiplier`].
+///
+/// A poisoned config read does not propagate `NaN` into the gate
+/// comparison `H × ER > k × round_trip_cost` (a `NaN` comparison
+/// would always evaluate to false and silently disable the gate).
+/// The fallback matches the documented default.
+const TRADE_ALPHA_GATE_MULTIPLIER_NAN_FALLBACK: f64 = 2.0;
+
+/// Idempotent clamp applied to `trade_alpha_gate_multiplier` reads.
+fn clamp_trade_alpha_gate_multiplier(v: f64) -> f64 {
+    if v.is_nan() {
+        TRADE_ALPHA_GATE_MULTIPLIER_NAN_FALLBACK
+    } else {
+        v.clamp(
+            TRADE_ALPHA_GATE_MULTIPLIER_LOWER,
+            TRADE_ALPHA_GATE_MULTIPLIER_UPPER,
+        )
+    }
+}
+
 /// Lower bound for [`ConfigAccess::trade_dd_threshold`].
 ///
 /// `0.01` (= 1% drawdown) is the floor for any meaningful circuit breaker;
@@ -1171,6 +1207,66 @@ define_typed_config! {
     fn trade_top_n_after_prediction() -> u32 {
         key: "TRADE_TOP_N_AFTER_PREDICTION",
         default: 0
+    }
+
+    /// Enable the alpha gate filter that rejects tokens whose expected
+    /// return cannot recoup the round-trip AMM cost.
+    ///
+    /// When `true`, before the optimizer sees the candidate set the strategy
+    /// estimates the round-trip variable cost for a worst-case position
+    /// (`total_value × MAX_POSITION_SIZE`) and excludes tokens where
+    /// `hold_cycles × expected_return < multiplier × round_trip_cost`.
+    /// Held tokens always bypass the gate so existing positions can still
+    /// be liquidated. Default `false` (legacy: no gate, optimizer sees
+    /// every confidence-filtered token).
+    fn trade_alpha_gate_enabled() -> bool {
+        key: "TRADE_ALPHA_GATE_ENABLED",
+        default: false
+    }
+
+    /// Safety multiplier `k` applied to the round-trip cost in the alpha
+    /// gate comparison `H × ER > k × round_trip_cost`.
+    ///
+    /// `k = 2.0` (default) requires alpha at least 2× the estimated
+    /// round-trip cost before a token is allowed into the optimizer. This
+    /// is the "safety margin" axis; the holding-period axis lives in
+    /// [`ConfigAccess::trade_alpha_gate_hold_cycles`]. Has no effect when
+    /// `trade_alpha_gate_enabled` is `false`.
+    fn trade_alpha_gate_multiplier() -> f64 {
+        key: "TRADE_ALPHA_GATE_MULTIPLIER",
+        default: 2.0,
+        clamp: clamp_trade_alpha_gate_multiplier
+    }
+
+    /// Number of cycles the strategy expects to hold a position before
+    /// closing it, used in the alpha gate comparison
+    /// `H × ER > k × round_trip_cost`.
+    ///
+    /// `H = 1` (default) is the conservative single-cycle round trip
+    /// assumption — alpha must recoup the full cost on the *next* cycle.
+    /// Larger values amortize the cost across multiple cycles and lower
+    /// the effective gate threshold. The `(1..=100)` clamp range covers
+    /// daily-rebalance horizons from one day to ~3 months. Has no effect
+    /// when `trade_alpha_gate_enabled` is `false`.
+    fn trade_alpha_gate_hold_cycles() -> u32 {
+        key: "TRADE_ALPHA_GATE_HOLD_CYCLES",
+        default: 1
+    }
+
+    /// Minimum number of tokens that must reach the optimizer after the
+    /// alpha gate filter.
+    ///
+    /// When the gate rejects so many tokens that fewer than this many
+    /// remain, the strategy supplies missing slots from the rejected
+    /// tokens ranked by composite score (the same score used by
+    /// `TRADE_TOP_N_AFTER_PREDICTION`). This prevents the Markowitz
+    /// optimizer from collapsing to a single-token corner solution when
+    /// the gate is too strict. `0` disables the fallback (gate decisions
+    /// are final). Default `5`. Has no effect when
+    /// `trade_alpha_gate_enabled` is `false`.
+    fn trade_alpha_gate_min_pass_count() -> u32 {
+        key: "TRADE_ALPHA_GATE_MIN_PASS_COUNT",
+        default: 5
     }
 
     /// Soft-threshold shrinkage strength applied to per-token expected returns.
