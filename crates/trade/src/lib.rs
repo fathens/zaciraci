@@ -1,5 +1,6 @@
 #![deny(warnings)]
 
+pub(crate) mod alpha_gate;
 pub(crate) mod candidate_telemetry;
 pub(crate) mod cost;
 pub mod execution;

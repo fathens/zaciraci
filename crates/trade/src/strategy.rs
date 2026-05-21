@@ -23,6 +23,7 @@
 //! - yoctoNEAR → NEAR: `YoctoValue::from_yocto(bd).to_near().as_bigdecimal()`
 
 use crate::Result;
+use crate::alpha_gate;
 use crate::candidate_telemetry;
 use crate::predict::PredictionService;
 use crate::swap;
@@ -691,6 +692,86 @@ pub(crate) struct PortfolioStrategyParams<'a, Cfg: ConfigAccess> {
     pub(crate) held_tokens: &'a BTreeSet<TokenOutAccount>,
 }
 
+/// 既存ポジションを取得して `WalletInfo` を構築する。
+///
+/// `is_new_period = true` のとき `available_funds` を総価値として使う「新規期間」
+/// パス、`false` のとき DB snapshot 経由（フォールバックで RPC）で既存残高を読み、
+/// 実際のポートフォリオ価値・cash 残高・per-token holdings を組み立てる。
+/// alpha gate (position size 計算) と cost-aware iteration (total_value) の両方で
+/// 同じ wallet snapshot を共有するため、サイクル内で 1 度だけ呼び出す前提。
+async fn build_wallet_info<C, W>(
+    client: &C,
+    wallet: &W,
+    is_new_period: bool,
+    period_id: &str,
+    available_funds: &YoctoAmount,
+    tokens: &[AccountId],
+    log: &Logger,
+) -> Result<WalletInfo>
+where
+    C: blockchain::jsonrpc::ViewContract
+        + blockchain::jsonrpc::AccountInfo
+        + blockchain::jsonrpc::SendTx
+        + blockchain::jsonrpc::GasInfo,
+    W: blockchain::wallet::Wallet,
+{
+    if is_new_period {
+        debug!(log, "new evaluation period, starting with empty holdings");
+        let total_value_near = available_funds.to_value().to_near();
+        return Ok(WalletInfo {
+            holdings: BTreeMap::new(),
+            total_value: total_value_near.clone(),
+            cash_balance: total_value_near,
+        });
+    }
+    debug!(
+        log,
+        "continuing evaluation period, loading current holdings"
+    );
+    let wnear_token = &*blockchain::ref_finance::token_account::WNEAR_TOKEN;
+    let mut token_accounts: Vec<common::types::TokenAccount> = tokens
+        .iter()
+        .map(|t| common::types::TokenAccount::from(t.clone()))
+        .collect();
+    super::snapshot::ensure_wnear_included(&mut token_accounts);
+    let current_balances = match super::snapshot::get_holdings_from_db(period_id).await? {
+        Some(holdings) => {
+            debug!(log, "loaded holdings from DB snapshot");
+            holdings
+        }
+        None => {
+            debug!(log, "no DB snapshot, falling back to RPC");
+            swap::get_current_portfolio_balances(client, wallet, &token_accounts).await?
+        }
+    };
+    let total_value_near = swap::calculate_total_portfolio_value(&current_balances).await?;
+    let cash_balance_near = current_balances
+        .get(wnear_token)
+        .map(|amount| {
+            let rate = ExchangeRate::wnear();
+            amount / &rate
+        })
+        .unwrap_or_else(NearValue::zero);
+    debug!(log, "portfolio value calculated";
+        "total_value" => %total_value_near, "cash_balance" => %cash_balance_near);
+    let mut holdings_typed = BTreeMap::new();
+    for (token, amount) in &current_balances {
+        if token == wnear_token {
+            continue;
+        }
+        if !amount.is_zero() {
+            trace!(log, "loaded existing position"; "token" => %token, "amount" => %amount);
+            let token_out: common::types::TokenOutAccount = token.clone().into();
+            holdings_typed.insert(token_out, amount.clone());
+        }
+    }
+    Ok(WalletInfo {
+        holdings: holdings_typed,
+        total_value: total_value_near,
+        cash_balance: cash_balance_near,
+    })
+}
+
 /// ポートフォリオ戦略の実行
 ///
 /// # 内部の単位
@@ -1078,13 +1159,94 @@ where
     }
 
     // フィルタ後のトークンのみの confidence を PortfolioData に渡す
-    let filtered_confidences: BTreeMap<TokenOutAccount, f64> = prediction_confidences
+    let mut filtered_confidences: BTreeMap<TokenOutAccount, f64> = prediction_confidences
         .into_iter()
         .filter(|(k, _)| remaining_symbols.contains(k))
         .collect();
 
     // Telemetry: confidence フィルタ通過後の token 数を記録。
     funnel.after_confidence = token_data.len();
+
+    // wallet_info を alpha gate (位置サイズ) と cost-aware iteration の両方で
+    // 使うため、confidence filter 直後にここで一度だけ構築する。両者が同じ
+    // wallet snapshot を参照することで、判断基準を時系列整合に保つ。
+    let wallet_info = build_wallet_info(
+        client,
+        wallet,
+        is_new_period,
+        period_id,
+        available_funds,
+        tokens,
+        &log,
+    )
+    .await?;
+
+    // Alpha gate: ER < k × round_trip_cost の token を Markowitz 入力から除外。
+    // simulate baseline で確認した「flat 予測 × 低分散 → 高 Sharpe → memecoin 集中
+    // → AMM slippage で逆ザヤ」の構造を、フルポジション size での round-trip cost
+    // 推定で事前フィルタする (crates/simulate/docs/plan_alpha_gate.md §2 参照)。
+    if cfg.trade_alpha_gate_enabled() {
+        let before = token_data.len();
+        match collect_cost_inputs(client, wallet.account_id(), &token_data, params.pools, cfg).await
+        {
+            Ok(gate_inputs) => {
+                let thresholds = alpha_gate::AlphaGateThresholds {
+                    multiplier: cfg.trade_alpha_gate_multiplier(),
+                    hold_cycles: cfg.trade_alpha_gate_hold_cycles(),
+                    min_pass_count: cfg.trade_alpha_gate_min_pass_count() as usize,
+                };
+                let held_set: HashSet<TokenOutAccount> =
+                    params.held_tokens.iter().cloned().collect();
+                let total_value_yocto = wallet_info.total_value.to_yocto().as_bigdecimal().clone();
+                let outcome = alpha_gate::apply_alpha_gate(
+                    &token_data,
+                    &expected_returns,
+                    &gate_inputs,
+                    &total_value_yocto,
+                    &thresholds,
+                    &held_set,
+                );
+                // 除外集合の telemetry。CRITICAL 級ではないため info!。
+                if !outcome.rejected.is_empty() {
+                    let sample: Vec<String> = outcome
+                        .rejected
+                        .iter()
+                        .take(5)
+                        .map(|r| {
+                            format!(
+                                "{}(ER={:.4}, cost={:.4})",
+                                r.token, r.expected_return, r.round_trip_cost
+                            )
+                        })
+                        .collect();
+                    info!(log, "tokens filtered by alpha gate";
+                        "before" => before,
+                        "rejected" => outcome.rejected.len(),
+                        "kept" => outcome.kept.len(),
+                        "fallback_used" => outcome.fallback_used,
+                        "fallback_count" => outcome.fallback_count,
+                        "sample_rejections" => sample.join(", "));
+                }
+                token_data.retain(|t| outcome.kept.contains(&t.symbol));
+                let kept = outcome.kept;
+                predictions.retain(|k, _| kept.contains(k));
+                historical_prices.retain(|k, _| kept.contains(k));
+                filtered_confidences.retain(|k, _| kept.contains(k));
+                if token_data.is_empty() {
+                    warn!(log, "all tokens excluded by alpha gate, holding";
+                        "multiplier" => thresholds.multiplier,
+                        "hold_cycles" => thresholds.hold_cycles);
+                    return Ok((vec![TradingAction::Hold], BTreeMap::new()));
+                }
+            }
+            Err(e) => {
+                warn!(log, "alpha gate cost inputs collection failed, skipping gate";
+                    "error" => %e);
+            }
+        }
+    }
+    funnel.after_alpha_gate = token_data.len();
+
     // 分布統計と per-token 属性ログ用に optimizer 入力直前の confidence と
     // liquidity_score をクローンする。token_data / filtered_confidences は
     // この後 portfolio_data に move されるため、ここで所有権から切り離す。
@@ -1098,7 +1260,6 @@ where
     // (confidence × liquidity × max(0, ER)) で上位 N + held を残す。
     // 0 のときは無効化 (旧挙動と等価)。
     let top_n = cfg.trade_top_n_after_prediction() as usize;
-    let mut filtered_confidences = filtered_confidences;
     if top_n > 0 && params.all_predicted_pre_filter_count.is_some() {
         let scores: BTreeMap<TokenOutAccount, f64> = token_data
             .iter()
@@ -1195,75 +1356,6 @@ where
     };
 
     funnel.optimizer_input = portfolio_data.tokens.len();
-
-    // 既存ポジションの取得と WalletInfo の構築
-    let wallet_info = if is_new_period {
-        // 新規期間: ポジションなし、available_funds を総価値として使用
-        debug!(log, "new evaluation period, starting with empty holdings");
-        let total_value_near = available_funds.to_value().to_near();
-        WalletInfo {
-            holdings: BTreeMap::new(),
-            total_value: total_value_near.clone(),
-            cash_balance: total_value_near,
-        }
-    } else {
-        // 評価期間中: 既存のポジションを取得し、実際のポートフォリオ価値を計算
-        debug!(
-            log,
-            "continuing evaluation period, loading current holdings"
-        );
-        // wrap.near を含めて全残高を取得（DB に記録がある場合は DB から読み取り）
-        let wnear_token = &*blockchain::ref_finance::token_account::WNEAR_TOKEN;
-        let mut token_accounts: Vec<common::types::TokenAccount> = tokens
-            .iter()
-            .map(|t| common::types::TokenAccount::from(t.clone()))
-            .collect();
-        super::snapshot::ensure_wnear_included(&mut token_accounts);
-        let current_balances = match super::snapshot::get_holdings_from_db(period_id).await? {
-            Some(holdings) => {
-                debug!(log, "loaded holdings from DB snapshot");
-                holdings
-            }
-            None => {
-                debug!(log, "no DB snapshot, falling back to RPC");
-                swap::get_current_portfolio_balances(client, wallet, &token_accounts).await?
-            }
-        };
-
-        // 実際のポートフォリオ総価値を計算
-        let total_value_near = swap::calculate_total_portfolio_value(&current_balances).await?;
-
-        // wrap.near の残高を cash_balance として使用
-        let cash_balance_near = current_balances
-            .get(wnear_token)
-            .map(|amount| {
-                let rate = ExchangeRate::wnear();
-                amount / &rate
-            })
-            .unwrap_or_else(NearValue::zero);
-
-        debug!(log, "portfolio value calculated";
-            "total_value" => %total_value_near, "cash_balance" => %cash_balance_near);
-
-        // holdings には投資対象トークンのみ（wrap.near は除外）
-        let mut holdings_typed = BTreeMap::new();
-        for (token, amount) in &current_balances {
-            if token == wnear_token {
-                continue;
-            }
-            if !amount.is_zero() {
-                trace!(log, "loaded existing position"; "token" => %token, "amount" => %amount);
-                let token_out: common::types::TokenOutAccount = token.clone().into();
-                holdings_typed.insert(token_out, amount.clone());
-            }
-        }
-
-        WalletInfo {
-            holdings: holdings_typed,
-            total_value: total_value_near,
-            cash_balance: cash_balance_near,
-        }
-    };
 
     // ポートフォリオ最適化の実行
     let execution_report = if cfg.trade_cost_aware_return_enabled() {

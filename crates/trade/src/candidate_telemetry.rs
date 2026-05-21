@@ -13,6 +13,9 @@ pub(crate) struct CandidateFunnel {
     pub after_confidence: usize,
     /// After hard liquidity / graph-reachability filter.
     pub after_liquidity: usize,
+    /// After alpha gate filter (`apply_alpha_gate`). Equals
+    /// `after_confidence` when the gate is disabled or not yet evaluated.
+    pub after_alpha_gate: usize,
     /// Final input to the portfolio optimizer.
     pub optimizer_input: usize,
     /// Tokens with non-zero weight in the optimizer output.
