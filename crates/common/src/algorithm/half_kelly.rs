@@ -24,13 +24,7 @@
 //!   "degenerate covariance ⇒ defer to box bound" policy used elsewhere.
 //! - `fraction ≤ 0` collapses to `MAX_POSITION_SIZE` for the same reason.
 
-/// Per-token maximum position. Mirrors
-/// `crate::algorithm::portfolio::MAX_POSITION_SIZE` so the half-Kelly cap is
-/// never *more* permissive than the existing box constraint. The constant is
-/// re-declared here (rather than imported) because the portfolio module
-/// owns the value as `pub(super)` only — keeping the duplicate is the
-/// smaller of two ergonomic costs versus exposing the constant.
-const MAX_POSITION_SIZE: f64 = 0.6;
+use super::portfolio::MAX_POSITION_SIZE;
 
 /// Map per-asset `(expected_return, diag_variance)` to per-asset upper
 /// bounds suitable for `BoxBounds::apply_half_kelly`.

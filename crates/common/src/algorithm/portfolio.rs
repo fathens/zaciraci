@@ -367,8 +367,11 @@ pub struct PortfolioExecutionReport {
 /// リスクフリーレート（年率2%相当の日次レート: 0.02 / 365）
 const RISK_FREE_RATE: f64 = 5.479e-5;
 
-/// 単一トークンの最大保有比率（積極的設定）
-const MAX_POSITION_SIZE: f64 = 0.6;
+/// 単一トークンの最大保有比率（積極的設定）。
+///
+/// `pub`: alpha gate (`trade::alpha_gate`) と half-Kelly (`half_kelly`) も
+/// この値を共有する。複数モジュールから参照される SSoT として公開する。
+pub const MAX_POSITION_SIZE: f64 = 0.6;
 
 /// 最小保有比率
 const MIN_POSITION_SIZE: f64 = 0.05;
