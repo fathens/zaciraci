@@ -31,6 +31,7 @@ use bigdecimal::{BigDecimal, FromPrimitive};
 use common::algorithm::portfolio::MAX_POSITION_SIZE;
 use common::algorithm::types::TokenData;
 use common::types::{TokenOutAccount, YoctoValue};
+use logging::*;
 use std::collections::{BTreeMap, HashSet};
 
 /// Thresholds driving [`apply_alpha_gate`]. Grouped to keep the function
@@ -114,11 +115,20 @@ pub(crate) fn apply_alpha_gate(
             continue;
         }
 
-        // Tokens without a swap bundle (path failure) are kept and
-        // delegated to the caller's `failed_tokens` / `retain_excluding`
-        // flow. Filtering them here would double-handle the failure.
+        // Tokens without a swap bundle (path failure in
+        // `collect_cost_inputs`) are rejected, not kept. Empirically the
+        // downstream `execute_direct_swap` finds a different (often
+        // catastrophic) path than the graph-based `get_path` and produces
+        // 100%-impact swaps, so we treat path failure here as a hard
+        // exclusion rather than deferring to the caller's
+        // `failed_tokens` / `retain_excluding` flow. The gate's `rejected`
+        // list still records the decision for telemetry.
         let Some(bundle) = cost_inputs.bundles.get(token) else {
-            kept.insert(token.clone());
+            rejected.push(AlphaGateRejection {
+                token: token.clone(),
+                expected_return: expected_returns.get(token).copied().unwrap_or(0.0),
+                round_trip_cost: f64::INFINITY,
+            });
             continue;
         };
 
@@ -150,6 +160,11 @@ pub(crate) fn apply_alpha_gate(
         };
 
         if gate_passes(er, cost, thresholds) {
+            let log = DEFAULT.new(o!("function" => "apply_alpha_gate"));
+            info!(log, "alpha gate kept token";
+                "token" => %token,
+                "er" => format!("{er:.6}"),
+                "round_trip_cost" => format!("{cost:.6}"));
             kept.insert(token.clone());
         } else {
             rejected.push(AlphaGateRejection {

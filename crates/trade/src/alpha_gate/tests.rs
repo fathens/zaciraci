@@ -166,11 +166,15 @@ fn held_token_bypasses_gate_even_with_flat_er() {
 }
 
 #[test]
-fn token_without_bundle_is_kept_for_caller_to_filter() {
+fn token_without_bundle_is_rejected_to_avoid_catastrophic_swap() {
+    // Empirically, when collect_cost_inputs cannot find a graph path for a
+    // token, execute_direct_swap still tries — and routes through stale or
+    // empty pools that produce 100%-impact swaps. The gate rejects these
+    // tokens defensively rather than deferring to downstream filters.
     let token = make_token("unreachable.near");
     let tokens = vec![make_token_data(token.clone())];
     let mut ers = BTreeMap::new();
-    ers.insert(token.clone(), 0.0);
+    ers.insert(token.clone(), 0.5); // even high ER cannot save a no-path token
     let total_value = BigDecimal::from(100_u32) * BigDecimal::from(ONE_NEAR_YOCTO);
 
     let outcome = apply_alpha_gate(
@@ -182,10 +186,11 @@ fn token_without_bundle_is_kept_for_caller_to_filter() {
         &HashSet::new(),
     );
     assert!(
-        outcome.kept.contains(&token),
-        "tokens without a bundle must be kept (caller's failed_tokens path)"
+        !outcome.kept.contains(&token),
+        "tokens without a bundle must be rejected (no reliable cost basis)"
     );
-    assert!(outcome.rejected.is_empty());
+    assert_eq!(outcome.rejected.len(), 1);
+    assert_eq!(outcome.rejected[0].round_trip_cost, f64::INFINITY);
 }
 
 #[test]
