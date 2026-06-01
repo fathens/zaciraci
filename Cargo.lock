@@ -3711,6 +3711,7 @@ dependencies = [
  "clap",
  "common 1.4.2",
  "dex",
+ "futures",
  "itertools 0.14.0",
  "logging",
  "near-crypto",
