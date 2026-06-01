@@ -267,6 +267,10 @@ pub(crate) fn apply_config(cli: &RunArgs) {
         "TRADE_ALPHA_GATE_MIN_PASS_COUNT",
         &cli.alpha_gate_min_pass_count.to_string(),
     );
+    common::config::store::set(
+        "TRADE_MIN_POOL_LIQUIDITY",
+        &cli.min_pool_liquidity.to_string(),
+    );
 }
 
 #[cfg(test)]
@@ -305,6 +309,7 @@ mod tests {
             alpha_gate_multiplier: 2.0,
             alpha_gate_hold_cycles: 1,
             alpha_gate_min_pass_count: 5,
+            min_pool_liquidity: 100,
         }
     }
 
@@ -350,6 +355,7 @@ mod tests {
             alpha_gate_multiplier: 3.0,
             alpha_gate_hold_cycles: 4,
             alpha_gate_min_pass_count: 6,
+            min_pool_liquidity: 5000,
         };
 
         apply_config(&cli);
@@ -442,6 +448,10 @@ mod tests {
         assert_eq!(
             common::config::store::get("TRADE_ALPHA_GATE_MIN_PASS_COUNT").unwrap(),
             "6"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_MIN_POOL_LIQUIDITY").unwrap(),
+            "5000"
         );
     }
 }

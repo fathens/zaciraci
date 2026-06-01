@@ -168,6 +168,17 @@ pub struct RunArgs {
     /// disables the fallback. Has no effect when `--alpha-gate=false`.
     #[arg(long, default_value_t = 5)]
     pub alpha_gate_min_pass_count: u32,
+
+    /// Minimum wnear-side pool TVL (in NEAR) for a token to enter the
+    /// strategy's candidate set. Default `100` matches production.
+    ///
+    /// The predict_sweep analysis shows direction accuracy at TVL
+    /// buckets: 100-500 NEAR -> 27%, 500-1000 -> 39%, 1000-5000 -> 59%,
+    /// 5000-50000 -> 67% (sweet spot). Raising the threshold tightens
+    /// the trading universe to the predictable subset (~32 tokens at
+    /// 5000 vs ~281 at 100).
+    #[arg(long, default_value_t = 100)]
+    pub min_pool_liquidity: u32,
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -250,6 +261,7 @@ mod tests {
             alpha_gate_multiplier: 2.0,
             alpha_gate_hold_cycles: 1,
             alpha_gate_min_pass_count: 5,
+            min_pool_liquidity: 100,
         }
     }
 

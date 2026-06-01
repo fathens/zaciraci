@@ -289,6 +289,7 @@ fn make_cli(start: &str, end: &str) -> RunArgs {
         alpha_gate_multiplier: 2.0,
         alpha_gate_hold_cycles: 1,
         alpha_gate_min_pass_count: 5,
+        min_pool_liquidity: 100,
     }
 }
 
@@ -388,6 +389,7 @@ fn from_state_config_reflects_cli_params() {
         alpha_gate_multiplier: 2.0,
         alpha_gate_hold_cycles: 1,
         alpha_gate_min_pass_count: 5,
+        min_pool_liquidity: 100,
     };
     let state = PortfolioState::new(yocto(200_000_000_000_000_000_000_000_000));
 
