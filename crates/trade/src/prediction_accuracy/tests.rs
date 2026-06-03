@@ -254,9 +254,10 @@ fn test_direction_accuracy_normal_cases() {
 #[test]
 fn test_direction_accuracy_skips_large_gap() {
     let log = test_logger();
-    // t1 と t2 の間に 48h のギャップ（max_gap = 36h を超える）
+    // max_gap = PREDICTION_HORIZON_HOURS × 1.5。それを超えるギャップを作る。
+    let max_gap_h = (PREDICTION_HORIZON_HOURS as i64 * 3) / 2;
     let t1 = make_time(0);
-    let t2 = make_time(48);
+    let t2 = make_time(max_gap_h + 12);
 
     let records = vec![
         make_record(t2, 120, Some(115)),
@@ -264,7 +265,7 @@ fn test_direction_accuracy_skips_large_gap() {
     ];
 
     let (correct, total) = calculate_direction_accuracy_for_records(&records, &log);
-    // ギャップが 48h > 36h (max_gap) なのでスキップ
+    // ギャップが max_gap を超えるのでスキップ
     assert_eq!(total, 0);
     assert_eq!(correct, 0);
 }
@@ -272,9 +273,10 @@ fn test_direction_accuracy_skips_large_gap() {
 #[test]
 fn test_direction_accuracy_allows_within_gap() {
     let log = test_logger();
-    // t1 と t2 の間に 30h のギャップ（max_gap = 36h 以内）
+    // max_gap = PREDICTION_HORIZON_HOURS × 1.5 以内のギャップ。
+    let max_gap_h = (PREDICTION_HORIZON_HOURS as i64 * 3) / 2;
     let t1 = make_time(0);
-    let t2 = make_time(30);
+    let t2 = make_time(max_gap_h - 12);
 
     let records = vec![
         make_record(t2, 120, Some(115)),
@@ -282,7 +284,7 @@ fn test_direction_accuracy_allows_within_gap() {
     ];
 
     let (correct, total) = calculate_direction_accuracy_for_records(&records, &log);
-    // ギャップが 30h ≤ 36h (max_gap) なのでカウントされる
+    // ギャップが max_gap 以内なのでカウントされる
     // prev_actual=100, predicted=120(上昇), actual=115(上昇) → correct
     assert_eq!(total, 1);
     assert_eq!(correct, 1);
@@ -350,12 +352,12 @@ fn test_new_prediction_record_target_time_with_past_data_cutoff() {
     );
 }
 
-/// data_cutoff_time が大幅に過去（3日前）の場合、target_time も過去になること
+/// data_cutoff_time が予測ホライズンより十分過去の場合、target_time も過去になること
 #[test]
 fn test_new_prediction_record_target_time_far_in_past() {
     let now = chrono::Utc::now().naive_utc();
-    // 3日前のデータカットオフ
-    let data_cutoff_time = now - chrono::TimeDelta::days(3);
+    // ホライズン + 余裕ぶん過去のデータカットオフ (target_time が過去になる条件)
+    let data_cutoff_time = now - chrono::TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64 + 72);
     let expected_target_time =
         data_cutoff_time + chrono::TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64);
 
@@ -372,10 +374,10 @@ fn test_new_prediction_record_target_time_far_in_past() {
     assert_eq!(records.len(), 1);
     let record = &records[0];
     assert_eq!(record.target_time(), expected_target_time);
-    // 3日前 + 24h = 2日前 → target_time は過去
+    // cutoff = now - (horizon + 72h) → target = now - 72h → 過去
     assert!(
         record.target_time() < now,
-        "target_time should be in the past when data_cutoff_time is 3 days ago"
+        "target_time should be in the past when data_cutoff_time precedes the horizon"
     );
 }
 

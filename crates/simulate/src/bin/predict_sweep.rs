@@ -136,10 +136,9 @@ async fn run_one_job(
     let data: BTreeMap<DateTime<Utc>, BigDecimal> = history.iter().cloned().collect();
 
     let forecast_until = last_ts + TimeDelta::hours(max_horizon as i64);
-    let response = match predictor
-        .predict_price_with_detrend(data, forecast_until)
-        .await
-    {
+    // adaptive detrend は chronos-rs 本体 (regime==Trending でゲート) に組み込まれた
+    // ため、predict_price を呼ぶだけで trending token の detrend が自動適用される。
+    let response = match predictor.predict_price(data, forecast_until).await {
         Ok(r) => r,
         Err(_) => return Vec::new(),
     };
