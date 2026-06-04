@@ -11,8 +11,13 @@ path = "src/main.rs"
 name = "predict_sweep"
 path = "src/bin/predict_sweep.rs"
 
+[[bin]]
+name = "regime_probe"
+path = "src/bin/regime_probe.rs"
+
 [dependencies]
 common = { path = "../common" }
+analyzer = { workspace = true }
 dex = { path = "../dex" }
 persistence = { path = "../persistence" }
 trade = { path = "../trade" }
