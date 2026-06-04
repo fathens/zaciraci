@@ -45,7 +45,8 @@ humantime = "2.2"
 itertools = "0.14"
 reqwest = { version = "0.12", features = ["json"] }
 near-account-id = { version = "2.5", features = ["serde"] }
-predictor = { git = "https://github.com/fathens/zcrc-chronos-rs", rev = "a59cf20d60d9dbbdc627323ad5a49c2ac53d14b1" }
+predictor = { git = "https://github.com/fathens/zcrc-chronos-rs", rev = "f651fb9a7e7244d8b6b842439139119a4c386395" }
+analyzer = { git = "https://github.com/fathens/zcrc-chronos-rs", rev = "f651fb9a7e7244d8b6b842439139119a4c386395" }
 
 [profile]
 
