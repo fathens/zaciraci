@@ -15,6 +15,10 @@ path = "src/bin/predict_sweep.rs"
 name = "regime_probe"
 path = "src/bin/regime_probe.rs"
 
+[[bin]]
+name = "dump_fixtures"
+path = "src/bin/dump_fixtures.rs"
+
 [dependencies]
 common = { path = "../common" }
 analyzer = { workspace = true }
