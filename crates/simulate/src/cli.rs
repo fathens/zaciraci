@@ -179,6 +179,17 @@ pub struct RunArgs {
     /// 5000 vs ~281 at 100).
     #[arg(long, default_value_t = 100)]
     pub min_pool_liquidity: u32,
+
+    /// Minimum coefficient of variation (stddev/mean of the NEAR rate over
+    /// the price-history window) for a token to enter the candidate set.
+    /// Default `0.0` keeps every token (no filter).
+    ///
+    /// Cross-section analysis of 2026-05-20..06-03 found ~81% of tokens have
+    /// CV < 0.01 (NEAR rate effectively constant). These dead/stale tokens
+    /// only generate swap costs. A floor of `0.01` drops that mass, leaving
+    /// the ~190 actively-moving tokens.
+    #[arg(long, default_value_t = 0.0)]
+    pub min_volatility: f64,
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -262,6 +273,7 @@ mod tests {
             alpha_gate_hold_cycles: 1,
             alpha_gate_min_pass_count: 5,
             min_pool_liquidity: 100,
+            min_volatility: 0.0,
         }
     }
 
