@@ -953,3 +953,56 @@ fn test_hard_filter_keeping_held_empty_result_is_error() {
 
     assert!(result.is_err());
 }
+
+// =============================================================================
+// apply_min_volatility_floor テスト
+// =============================================================================
+
+fn make_top_token(name: &str, cv: &str) -> TopTokenInfo {
+    TopTokenInfo {
+        token: TokenOutAccount::from(make_token(name)),
+        volatility: BigDecimal::from_str(cv).unwrap(),
+    }
+}
+
+#[test]
+fn test_min_volatility_floor_disabled_keeps_all() {
+    let log = DEFAULT.new(o!());
+    let tokens = vec![
+        make_top_token("a.near", "0.0"),
+        make_top_token("b.near", "0.5"),
+    ];
+    // 閾値 0.0 は no-op で全保持
+    let kept = apply_min_volatility_floor(tokens, 0.0, &log);
+    assert_eq!(kept.len(), 2);
+}
+
+#[test]
+fn test_min_volatility_floor_drops_dead_tokens() {
+    let log = DEFAULT.new(o!());
+    let tokens = vec![
+        make_top_token("dead.near", "0.0"),
+        make_top_token("stale.near", "0.005"),
+        make_top_token("active.near", "0.05"),
+        make_top_token("hot.near", "0.5"),
+    ];
+    let kept = apply_min_volatility_floor(tokens, 0.01, &log);
+    let names: Vec<String> = kept.iter().map(|t| t.token.to_string()).collect();
+    assert_eq!(
+        names,
+        vec!["active.near".to_string(), "hot.near".to_string()]
+    );
+}
+
+#[test]
+fn test_min_volatility_floor_keeps_just_above_threshold() {
+    let log = DEFAULT.new(o!());
+    // 閾値より僅かに上は保持、僅かに下は除外
+    let tokens = vec![
+        make_top_token("above.near", "0.0101"),
+        make_top_token("below.near", "0.0099"),
+    ];
+    let kept = apply_min_volatility_floor(tokens, 0.01, &log);
+    let names: Vec<String> = kept.iter().map(|t| t.token.to_string()).collect();
+    assert_eq!(names, vec!["above.near".to_string()]);
+}
