@@ -638,38 +638,6 @@ fn clamp_trade_max_position_vs_pool_ratio(v: f64) -> f64 {
     }
 }
 
-// ── TRADE_MIN_VOLATILITY ──
-
-/// Lower bound for [`ConfigAccess::trade_min_volatility`].
-///
-/// `0.0` disables the filter (every token passes). Negative thresholds are
-/// meaningless for a coefficient of variation, so they collapse to the
-/// no-op floor.
-const TRADE_MIN_VOLATILITY_LOWER: f64 = 0.0;
-
-/// Upper bound for [`ConfigAccess::trade_min_volatility`].
-///
-/// A coefficient of variation above `10.0` (= 1000% relative dispersion)
-/// would reject essentially every real token and collapse the candidate
-/// universe; values that high indicate misconfiguration, so they are capped.
-const TRADE_MIN_VOLATILITY_UPPER: f64 = 10.0;
-
-/// NaN fallback for [`ConfigAccess::trade_min_volatility`].
-///
-/// A poisoned config read must not propagate `NaN` into the
-/// `cv >= floor` comparison (a `NaN` floor would reject every token and
-/// silently empty the universe). The fallback disables the filter.
-const TRADE_MIN_VOLATILITY_NAN_FALLBACK: f64 = 0.0;
-
-/// Idempotent clamp applied to `trade_min_volatility` reads.
-fn clamp_trade_min_volatility(v: f64) -> f64 {
-    if v.is_nan() {
-        TRADE_MIN_VOLATILITY_NAN_FALLBACK
-    } else {
-        v.clamp(TRADE_MIN_VOLATILITY_LOWER, TRADE_MIN_VOLATILITY_UPPER)
-    }
-}
-
 // ── TRADE_ALPHA_GATE_MULTIPLIER ──
 
 /// Lower bound for [`ConfigAccess::trade_alpha_gate_multiplier`].
@@ -1128,21 +1096,6 @@ define_typed_config! {
     fn trade_min_pool_liquidity() -> u32 {
         key: "TRADE_MIN_POOL_LIQUIDITY",
         default: 100
-    }
-
-    /// Minimum coefficient of variation (stddev/mean of the NEAR rate over
-    /// `TRADE_PRICE_HISTORY_DAYS`) required for a token to enter the candidate
-    /// universe. Tokens below this floor are "dead/stale" — their NEAR rate
-    /// barely moves, so trading them only pays swap costs without any chance
-    /// of a NEAR-denominated gain. Held tokens are exempt (sell-only path is
-    /// always preserved). Default `0.0` keeps every token (no-op, backward
-    /// compatible). Cross-section analysis of the 2026-05-20..06-03 block found
-    /// ~81% of tokens have CV < 0.01 (rate constant); a floor of `0.01`
-    /// removes that dead mass.
-    fn trade_min_volatility() -> f64 {
-        key: "TRADE_MIN_VOLATILITY",
-        default: 0.0,
-        clamp: clamp_trade_min_volatility
     }
 
     /// Maximum trade size as a fraction of the smallest pool TVL on the

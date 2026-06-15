@@ -33,7 +33,7 @@ use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, ViewContract};
 use blockchain::wallet::Wallet;
 use common::algorithm::{
     portfolio::{PortfolioData, execute_portfolio_optimization},
-    types::{TokenData, TopTokenInfo, TradingAction, WalletInfo},
+    types::{TokenData, TradingAction, WalletInfo},
 };
 use common::config::ConfigAccess;
 use common::types::{
@@ -428,39 +428,6 @@ pub(crate) async fn select_top_volatility_tokens(
     select_volatility_tokens_inner(prediction_service, end_date, cfg, Some(limit), pools).await
 }
 
-/// 最小ボラティリティ (coefficient of variation) フロアを候補トークンに適用する。
-///
-/// `TRADE_MIN_VOLATILITY` 未満の CV を持つトークン (= NEAR レートがほぼ動かない
-/// 死んだ/stale 銘柄) を除外する。これらは取引しても swap コストを払うだけで
-/// NEAR 建ての利益機会がない。閾値 `0.0` (デフォルト) では全トークンを保持する
-/// no-op。保有トークンの sell 経路は呼び出し側の held union で別途確保されるため、
-/// ここでフィルタしても sell-only パスは失われない。
-fn apply_min_volatility_floor(
-    top_tokens: Vec<TopTokenInfo>,
-    min_volatility: f64,
-    log: &slog::Logger,
-) -> Vec<TopTokenInfo> {
-    if min_volatility <= 0.0 {
-        return top_tokens;
-    }
-    let floor = match BigDecimal::try_from(min_volatility) {
-        Ok(f) => f,
-        Err(e) => {
-            warn!(log, "invalid min_volatility, skipping floor";
-                "min_volatility" => min_volatility, "error" => %e);
-            return top_tokens;
-        }
-    };
-    let before = top_tokens.len();
-    let kept: Vec<TopTokenInfo> = top_tokens
-        .into_iter()
-        .filter(|t| t.volatility >= floor)
-        .collect();
-    debug!(log, "min-volatility floor applied";
-        "min_volatility" => min_volatility, "before" => before, "after" => kept.len());
-    kept
-}
-
 /// 全予測トークン + 現在保有トークンを union した候補集合を返す (all-token モード用)。
 ///
 /// `select_top_volatility_tokens` との違い:
@@ -487,9 +454,6 @@ pub(crate) async fn select_all_predicted_candidates(
     let top_tokens = prediction_service
         .get_tokens_by_volatility(start_date, end_date, &quote_token)
         .await?;
-
-    // 1b) 最小ボラティリティフロア: 死んだ/stale 銘柄を除外
-    let top_tokens = apply_min_volatility_floor(top_tokens, cfg.trade_min_volatility(), &log);
 
     let mut tokens: Vec<AccountId> = top_tokens
         .into_iter()
@@ -676,8 +640,6 @@ async fn select_volatility_tokens_inner(
     let top_tokens = prediction_service
         .get_tokens_by_volatility(start_date, end_date, &quote_token)
         .await?;
-
-    let top_tokens = apply_min_volatility_floor(top_tokens, cfg.trade_min_volatility(), &log);
 
     let tokens: Vec<AccountId> = top_tokens
         .into_iter()

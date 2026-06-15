@@ -271,7 +271,6 @@ pub(crate) fn apply_config(cli: &RunArgs) {
         "TRADE_MIN_POOL_LIQUIDITY",
         &cli.min_pool_liquidity.to_string(),
     );
-    common::config::store::set("TRADE_MIN_VOLATILITY", &cli.min_volatility.to_string());
 }
 
 #[cfg(test)]
@@ -311,7 +310,6 @@ mod tests {
             alpha_gate_hold_cycles: 1,
             alpha_gate_min_pass_count: 5,
             min_pool_liquidity: 100,
-            min_volatility: 0.0,
         }
     }
 
@@ -358,7 +356,6 @@ mod tests {
             alpha_gate_hold_cycles: 4,
             alpha_gate_min_pass_count: 6,
             min_pool_liquidity: 5000,
-            min_volatility: 0.02,
         };
 
         apply_config(&cli);
@@ -455,10 +452,6 @@ mod tests {
         assert_eq!(
             common::config::store::get("TRADE_MIN_POOL_LIQUIDITY").unwrap(),
             "5000"
-        );
-        assert_eq!(
-            common::config::store::get("TRADE_MIN_VOLATILITY").unwrap(),
-            "0.02"
         );
     }
 }
