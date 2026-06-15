@@ -192,6 +192,45 @@ fn test_trade_min_pool_liquidity_override() {
 
 #[test]
 #[serial]
+fn test_trade_min_volatility_default() {
+    let _env = EnvGuard::remove("TRADE_MIN_VOLATILITY");
+    crate::config::store::remove("TRADE_MIN_VOLATILITY");
+    assert_eq!(typed().trade_min_volatility(), 0.0);
+}
+
+#[test]
+#[serial]
+fn test_trade_min_volatility_override() {
+    let _guard = ConfigGuard::new("TRADE_MIN_VOLATILITY", "0.01");
+    assert_eq!(typed().trade_min_volatility(), 0.01);
+}
+
+#[test]
+#[serial]
+fn test_trade_min_volatility_clamped_below_lower() {
+    let _guard = ConfigGuard::new("TRADE_MIN_VOLATILITY", "-1.0");
+    assert_eq!(typed().trade_min_volatility(), TRADE_MIN_VOLATILITY_LOWER);
+}
+
+#[test]
+#[serial]
+fn test_trade_min_volatility_clamped_above_upper() {
+    let _guard = ConfigGuard::new("TRADE_MIN_VOLATILITY", "1000.0");
+    assert_eq!(typed().trade_min_volatility(), TRADE_MIN_VOLATILITY_UPPER);
+}
+
+#[test]
+#[serial]
+fn test_trade_min_volatility_maps_nan_to_disabled() {
+    let _guard = ConfigGuard::new("TRADE_MIN_VOLATILITY", "NaN");
+    assert_eq!(
+        typed().trade_min_volatility(),
+        TRADE_MIN_VOLATILITY_NAN_FALLBACK,
+    );
+}
+
+#[test]
+#[serial]
 fn test_harvest_min_amount_default() {
     let _env = EnvGuard::remove("HARVEST_MIN_AMOUNT");
     crate::config::store::remove("HARVEST_MIN_AMOUNT");
