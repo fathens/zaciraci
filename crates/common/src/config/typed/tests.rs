@@ -622,7 +622,7 @@ fn test_value_type_result_string() {
 #[test]
 fn test_key_definitions_count() {
     // define_typed_config! に定義されたキーの数と一致すること
-    assert_eq!(KEY_DEFINITIONS.len(), 76);
+    assert_eq!(KEY_DEFINITIONS.len(), 77);
 }
 
 #[test]
@@ -998,6 +998,44 @@ fn test_portfolio_cost_iterations_max_clamped_below_lower() {
 fn test_portfolio_cost_iterations_max_passthrough_in_range() {
     let _guard = ConfigGuard::new("PORTFOLIO_COST_ITERATIONS_MAX", "5");
     assert_eq!(typed().portfolio_cost_iterations_max(), 5);
+}
+
+#[test]
+#[serial]
+fn test_trade_max_price_impact_default() {
+    let _env = EnvGuard::remove("TRADE_MAX_PRICE_IMPACT");
+    crate::config::store::remove("TRADE_MAX_PRICE_IMPACT");
+    assert_eq!(typed().trade_max_price_impact(), 0.03);
+}
+
+#[test]
+#[serial]
+fn test_trade_max_price_impact_clamped_above_upper() {
+    let _guard = ConfigGuard::new("TRADE_MAX_PRICE_IMPACT", "1.5");
+    assert_eq!(
+        typed().trade_max_price_impact(),
+        TRADE_MAX_PRICE_IMPACT_UPPER
+    );
+}
+
+#[test]
+#[serial]
+fn test_trade_max_price_impact_clamped_below_lower() {
+    let _guard = ConfigGuard::new("TRADE_MAX_PRICE_IMPACT", "0.0");
+    assert_eq!(
+        typed().trade_max_price_impact(),
+        TRADE_MAX_PRICE_IMPACT_LOWER
+    );
+}
+
+#[test]
+#[serial]
+fn test_trade_max_price_impact_maps_nan_to_fallback() {
+    let _guard = ConfigGuard::new("TRADE_MAX_PRICE_IMPACT", "NaN");
+    assert_eq!(
+        typed().trade_max_price_impact(),
+        TRADE_MAX_PRICE_IMPACT_NAN_FALLBACK,
+    );
 }
 
 #[test]

@@ -4,6 +4,7 @@ pub(crate) mod alpha_gate;
 pub(crate) mod candidate_telemetry;
 pub(crate) mod cost;
 pub mod execution;
+pub(crate) mod execution_guard;
 pub mod harvest;
 pub mod market_data;
 pub(crate) mod portfolio_cost;

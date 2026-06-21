@@ -563,6 +563,42 @@ fn clamp_trade_prediction_shrinkage_lambda(v: f64) -> f64 {
     }
 }
 
+/// Lower bound for [`ConfigAccess::trade_max_price_impact`].
+///
+/// `0.005` (0.5 %) is the floor: thresholds below half a percent would
+/// reject almost every realistic swap (normal multi-hop AMM routing incurs
+/// fractions of a percent of depth impact), collapsing the strategy into
+/// permanent Hold.
+const TRADE_MAX_PRICE_IMPACT_LOWER: f64 = 0.005;
+
+/// Upper bound for [`ConfigAccess::trade_max_price_impact`].
+///
+/// `0.95` (95 %) is the ceiling: the guard exists to block catastrophic
+/// thin-pool routes (observed up to 97 % impact), so a threshold at or above
+/// 95 % would let essentially all of them through and defeat the purpose.
+const TRADE_MAX_PRICE_IMPACT_UPPER: f64 = 0.95;
+
+/// NaN fallback for [`ConfigAccess::trade_max_price_impact`].
+///
+/// A poisoned config read must not disable the guard: a `NaN` threshold in
+/// the comparison `impact > threshold` would always evaluate to false and
+/// silently allow catastrophic swaps. The fallback matches the documented
+/// default.
+const TRADE_MAX_PRICE_IMPACT_NAN_FALLBACK: f64 = 0.03;
+
+/// Idempotent clamp applied to `trade_max_price_impact` reads.
+///
+/// `NaN` is mapped to the documented default (keeping the guard active)
+/// rather than poisoning the comparison. `±INFINITY` is handled by
+/// `f64::clamp` itself.
+fn clamp_trade_max_price_impact(v: f64) -> f64 {
+    if v.is_nan() {
+        TRADE_MAX_PRICE_IMPACT_NAN_FALLBACK
+    } else {
+        v.clamp(TRADE_MAX_PRICE_IMPACT_LOWER, TRADE_MAX_PRICE_IMPACT_UPPER)
+    }
+}
+
 /// Idempotent clamp applied to `portfolio_cost_iteration_damping` reads.
 ///
 /// `NaN` is mapped to [`PORTFOLIO_COST_ITERATION_DAMPING_NAN_FALLBACK`] so
@@ -1296,6 +1332,30 @@ define_typed_config! {
         key: "TRADE_PREDICTION_SHRINKAGE_LAMBDA",
         default: 0.0,
         clamp: clamp_trade_prediction_shrinkage_lambda
+    }
+
+    /// Maximum AMM price impact (depth slippage) tolerated for a single swap.
+    ///
+    /// Before executing a swap the strategy compares the route's effective
+    /// rate at the full trade size against its marginal rate at a tiny
+    /// reference size (`execution_guard::price_impact_ratio`). When the
+    /// resulting impact exceeds this threshold the swap is skipped instead of
+    /// executed, because such routes are dominated by a thin or stale pool
+    /// and would convert most of the input into slippage (real cycles up to
+    /// 97 % impact were observed against dead pools).
+    ///
+    /// This is independent of `SlippagePolicy` / `min_out`: `min_out` only
+    /// caps *additional* slippage beyond the (already bad) estimated output,
+    /// and is `0` for `Unprotected` liquidation swaps, so it does not block
+    /// entry into a thin-pool route. The guard applies to every swap
+    /// regardless of policy.
+    ///
+    /// Defaults to `0.03` (3 %). The `[0.005, 0.95]` clamp keeps the guard
+    /// from degenerating into permanent Hold (too low) or a no-op (too high).
+    fn trade_max_price_impact() -> f64 {
+        key: "TRADE_MAX_PRICE_IMPACT",
+        default: 0.03,
+        clamp: clamp_trade_max_price_impact
     }
 
     // ── arbitrage ──
