@@ -3,7 +3,12 @@ use chrono::{Duration, NaiveDate, NaiveDateTime};
 use common::types::{NearValue, YoctoAmount};
 use persistence::evaluation_period::EvaluationPeriod;
 
-use crate::execution::{PeriodAction, determine_period_action, drawdown_triggers_breaker};
+use common::config::MockConfig;
+
+use crate::execution::{
+    PeriodAction, determine_period_action, drawdown_triggers_breaker,
+    effective_evaluation_period_days,
+};
 
 fn fixed_now() -> NaiveDateTime {
     NaiveDate::from_ymd_opt(2026, 4, 16)
@@ -27,6 +32,25 @@ fn period_at(start: NaiveDateTime, period_id: &str) -> EvaluationPeriod {
 fn bootstrap_when_no_period_exists() {
     let action = determine_period_action(None, fixed_now(), 10);
     assert!(matches!(action, PeriodAction::Bootstrap));
+}
+
+#[test]
+fn effective_period_uses_standard_window_when_carry_disabled() {
+    let mut cfg = MockConfig::new();
+    cfg.trade_lst_carry_enabled = Some(false);
+    cfg.trade_evaluation_days = Some(10);
+    assert_eq!(effective_evaluation_period_days(&cfg), 10);
+}
+
+#[test]
+fn effective_period_uses_carry_hold_when_carry_enabled() {
+    let mut cfg = MockConfig::new();
+    cfg.trade_lst_carry_enabled = Some(true);
+    cfg.trade_lst_carry_min_hold_days = Some(45);
+    // Carry hold overrides the standard window so the period boundary does not
+    // force-liquidate before the min hold completes.
+    cfg.trade_evaluation_days = Some(10);
+    assert_eq!(effective_evaluation_period_days(&cfg), 45);
 }
 
 #[test]

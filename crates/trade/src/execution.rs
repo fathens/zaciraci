@@ -1045,6 +1045,23 @@ where
     }
 }
 
+/// Effective evaluation-period length, in days.
+///
+/// The liquid-staking carry mode requires a long hold (≥30 days) to be
+/// reliably positive, and the period boundary force-liquidates all positions
+/// (`handle_end_and_start_new`), so the period length is the de-facto hold.
+/// When carry is enabled the period length is therefore driven by
+/// `trade_lst_carry_min_hold_days` rather than the standard
+/// `trade_evaluation_days`; otherwise the standard window applies. Keeping this
+/// pure makes the mode selection unit-testable.
+pub(crate) fn effective_evaluation_period_days(cfg: &impl ConfigAccess) -> i64 {
+    if cfg.trade_lst_carry_enabled() {
+        i64::from(cfg.trade_lst_carry_min_hold_days())
+    } else {
+        i64::from(cfg.trade_evaluation_days())
+    }
+}
+
 pub(crate) fn determine_period_action(
     latest_period: Option<EvaluationPeriod>,
     current_time_naive: NaiveDateTime,
@@ -1294,10 +1311,13 @@ where
 {
     let log = DEFAULT.new(o!("function" => "manage_evaluation_period"));
 
-    // 設定ファイルから評価期間を読み込む（デフォルト: 10日）
-    let evaluation_period_days = i64::from(cfg.trade_evaluation_days());
+    // 評価期間長を決定する。carry モード有効時は最低保有日数を期間長にして、
+    // 期間境界の強制清算が carry の保有を途中で打ち切らないようにする。
+    let evaluation_period_days = effective_evaluation_period_days(cfg);
 
-    info!(log, "evaluation period configuration"; "days" => evaluation_period_days);
+    info!(log, "evaluation period configuration";
+        "days" => evaluation_period_days,
+        "lst_carry" => cfg.trade_lst_carry_enabled());
 
     // 最新の評価期間を取得して、時間に基づいて action を決定
     let latest_period = EvaluationPeriod::get_latest_async().await?;
