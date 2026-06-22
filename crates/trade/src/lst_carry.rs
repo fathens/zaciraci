@@ -12,10 +12,22 @@
 //! responsible for turning the weights into swaps via the existing execution
 //! path.
 
-use bigdecimal::BigDecimal;
-use common::types::TokenOutAccount;
+use bigdecimal::{BigDecimal, ToPrimitive};
+use common::types::{ExchangeRate, TokenOutAccount};
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
+
+/// Expected annual carry return (NEAR-denominated) used to seed per-token
+/// expected returns.
+///
+/// Grounded in the backtest: LiNEAR/stNEAR appreciated ~4 %/yr against NEAR
+/// over the measured window. This is a deliberately conservative, strategy
+/// internal estimate (not a price prediction) — its only downstream consumer
+/// is the slippage policy, where `calculate_min_out` clamps the magnitude to a
+/// 0.5 % floor, so the exact value matters little for a sub-1 % per-hold carry.
+/// Its purpose is to keep the buy off the `Unprotected` (min_out = 0) path that
+/// an empty expected-returns map would trigger.
+const EXPECTED_ANNUAL_CARRY: f64 = 0.04;
 
 /// Fixed liquid-staking token universe for the carry strategy.
 ///
@@ -45,10 +57,7 @@ pub(crate) static CARRY_UNIVERSE: LazyLock<[TokenOutAccount; 2]> = LazyLock::new
 /// empty universe (the strategy treats that as "hold cash" rather than
 /// dividing by zero). The weights sum to `1` exactly whenever `N` divides
 /// evenly; for `N = 2` (the production universe) this is `0.5` each.
-#[allow(dead_code)]
-pub(crate) fn equal_weight_targets(
-    universe: &[TokenOutAccount],
-) -> BTreeMap<TokenOutAccount, BigDecimal> {
+fn equal_weight_targets(universe: &[TokenOutAccount]) -> BTreeMap<TokenOutAccount, BigDecimal> {
     let n = universe.len();
     if n == 0 {
         return BTreeMap::new();
@@ -58,6 +67,91 @@ pub(crate) fn equal_weight_targets(
         .iter()
         .map(|token| (token.clone(), weight.clone()))
         .collect()
+}
+
+/// Expected carry return realized over a `hold_days` horizon.
+///
+/// `ER = EXPECTED_ANNUAL_CARRY × hold_days / 365`. This is the real expected
+/// holding-period return, not a placeholder.
+fn expected_return_over_hold(hold_days: u32) -> f64 {
+    EXPECTED_ANNUAL_CARRY * (hold_days as f64) / 365.0
+}
+
+/// Relative deviation of an `observed` rate from a `reference` rate, as a
+/// fraction of the reference.
+///
+/// `observed` and `reference` are the same token sampled at two times, so they
+/// share `decimals` and the raw-rate comparison is valid. Returns `None` when
+/// the reference is effectively zero (cannot form a ratio).
+fn relative_deviation(observed: &ExchangeRate, reference: &ExchangeRate) -> Option<f64> {
+    if reference.is_effectively_zero() {
+        return None;
+    }
+    let diff = (observed.raw_rate() - reference.raw_rate()).abs();
+    (diff / reference.raw_rate()).to_f64()
+}
+
+/// Whether an LST's observed rate has de-pegged beyond `max_depeg` versus its
+/// reference.
+///
+/// Fails closed: if the deviation cannot be assessed (zero/degenerate
+/// reference), the token is treated as de-pegged so the carry mode declines to
+/// buy into it.
+fn is_depegged(observed: &ExchangeRate, reference: &ExchangeRate, max_depeg: f64) -> bool {
+    match relative_deviation(observed, reference) {
+        Some(dev) => dev > max_depeg,
+        None => true,
+    }
+}
+
+/// Build the `(target_weights, expected_returns)` pair for the carry universe,
+/// excluding any token whose observed rate has de-pegged from its reference.
+///
+/// - `observed`: the current per-token exchange rate (required to trade).
+/// - `reference`: the prior-period per-token rate, used as the de-peg
+///   baseline. A token absent from `reference` (no prior observation, e.g. the
+///   first entry) is accepted — there is no baseline to deviate from, and the
+///   execution-layer `min_out` / price-impact guard still protect the swap.
+/// - `hold_days`: the carry hold horizon, seeding the expected return.
+/// - `max_depeg`: the de-peg tolerance (fraction).
+///
+/// The returned maps share identical key sets (the surviving tokens), so the
+/// expected-returns map is never empty while there is something to buy — this
+/// is what keeps the buy off the `Unprotected` slippage path.
+// NOTE: temporary scaffolding allowance; removed when the strategy wiring calls
+// this in a later commit.
+#[allow(dead_code)]
+fn carry_targets(
+    universe: &[TokenOutAccount],
+    observed: &BTreeMap<TokenOutAccount, ExchangeRate>,
+    reference: &BTreeMap<TokenOutAccount, ExchangeRate>,
+    hold_days: u32,
+    max_depeg: f64,
+) -> (
+    BTreeMap<TokenOutAccount, BigDecimal>,
+    BTreeMap<TokenOutAccount, f64>,
+) {
+    let healthy: Vec<TokenOutAccount> = universe
+        .iter()
+        .filter(|token| match observed.get(token) {
+            // No tradable rate → cannot buy this token.
+            None => false,
+            Some(obs) => match reference.get(token) {
+                // No baseline yet → accept (first entry).
+                None => true,
+                Some(reference_rate) => !is_depegged(obs, reference_rate, max_depeg),
+            },
+        })
+        .cloned()
+        .collect();
+
+    let weights = equal_weight_targets(&healthy);
+    let er = expected_return_over_hold(hold_days);
+    let expected_returns = healthy
+        .iter()
+        .map(|token| (token.clone(), er))
+        .collect::<BTreeMap<_, _>>();
+    (weights, expected_returns)
 }
 
 #[cfg(test)]
@@ -103,5 +197,80 @@ mod tests {
     #[test]
     fn equal_weights_empty_universe_is_empty() {
         assert!(equal_weight_targets(&[]).is_empty());
+    }
+
+    fn rate(raw: i64) -> ExchangeRate {
+        ExchangeRate::from_raw_rate(BigDecimal::from(raw), 24)
+    }
+
+    #[test]
+    fn expected_return_scales_with_hold() {
+        let er = expected_return_over_hold(365);
+        assert!((er - EXPECTED_ANNUAL_CARRY).abs() < 1e-12);
+        let half = expected_return_over_hold(30);
+        assert!((half - EXPECTED_ANNUAL_CARRY * 30.0 / 365.0).abs() < 1e-12);
+        assert!(half > 0.0);
+    }
+
+    #[test]
+    fn small_drift_is_not_depegged() {
+        // 2 % move, tolerance 5 % → healthy.
+        assert!(!is_depegged(&rate(1_020), &rate(1_000), 0.05));
+    }
+
+    #[test]
+    fn large_move_is_depegged() {
+        // 20 % move, tolerance 5 % → de-pegged.
+        assert!(is_depegged(&rate(1_200), &rate(1_000), 0.05));
+    }
+
+    #[test]
+    fn zero_reference_fails_closed() {
+        // Cannot assess against a zero reference → treat as de-pegged (skip).
+        assert!(is_depegged(&rate(1_000), &rate(0), 0.05));
+    }
+
+    #[test]
+    fn carry_targets_excludes_depegged_and_keeps_er_nonempty() {
+        let u = univ(&["linear-protocol.near", "meta-pool.near"]);
+        let mut observed = BTreeMap::new();
+        observed.insert(u[0].clone(), rate(1_000)); // LiNEAR healthy
+        observed.insert(u[1].clone(), rate(1_500)); // stNEAR moved 50 %
+        let mut reference = BTreeMap::new();
+        reference.insert(u[0].clone(), rate(1_010));
+        reference.insert(u[1].clone(), rate(1_000));
+
+        let (weights, ers) = carry_targets(&u, &observed, &reference, 30, 0.05);
+        // stNEAR de-pegged out; LiNEAR remains at full weight.
+        assert_eq!(weights.len(), 1);
+        assert_eq!(weights.get(&u[0]), Some(&BigDecimal::from(1)));
+        // expected_returns shares the surviving key set and is non-empty
+        // (keeps the buy off the Unprotected path).
+        assert_eq!(ers.len(), 1);
+        assert!(ers.contains_key(&u[0]));
+        assert!(*ers.get(&u[0]).unwrap() > 0.0);
+    }
+
+    #[test]
+    fn carry_targets_accepts_token_without_reference() {
+        // First entry: no prior rate to compare → token accepted.
+        let u = univ(&["linear-protocol.near"]);
+        let mut observed = BTreeMap::new();
+        observed.insert(u[0].clone(), rate(1_000));
+        let reference = BTreeMap::new();
+        let (weights, ers) = carry_targets(&u, &observed, &reference, 30, 0.05);
+        assert_eq!(weights.len(), 1);
+        assert_eq!(ers.len(), 1);
+    }
+
+    #[test]
+    fn carry_targets_excludes_token_without_observed_rate() {
+        // No tradable rate → cannot buy → excluded, maps stay empty.
+        let u = univ(&["linear-protocol.near"]);
+        let observed = BTreeMap::new();
+        let reference = BTreeMap::new();
+        let (weights, ers) = carry_targets(&u, &observed, &reference, 30, 0.05);
+        assert!(weights.is_empty());
+        assert!(ers.is_empty());
     }
 }
