@@ -6,6 +6,7 @@ pub(crate) mod cost;
 pub mod execution;
 pub(crate) mod execution_guard;
 pub mod harvest;
+pub(crate) mod lst_carry;
 pub mod market_data;
 pub(crate) mod portfolio_cost;
 pub mod predict;
