@@ -37,10 +37,6 @@ const EXPECTED_ANNUAL_CARRY: f64 = 0.04;
 /// traded against reliably. The IDs are compile-time constants, so the parse
 /// cannot fail at runtime — `expect` documents the invariant rather than
 /// guarding a real error path.
-// NOTE: `CARRY_UNIVERSE` / `equal_weight_targets` are wired into the strategy
-// in a later commit (strategy mode branch). The `dead_code` allowance is
-// temporary scaffolding and is removed once the wiring lands.
-#[allow(dead_code)]
 pub(crate) static CARRY_UNIVERSE: LazyLock<[TokenOutAccount; 2]> = LazyLock::new(|| {
     [
         "linear-protocol.near"
@@ -119,10 +115,7 @@ fn is_depegged(observed: &ExchangeRate, reference: &ExchangeRate, max_depeg: f64
 /// The returned maps share identical key sets (the surviving tokens), so the
 /// expected-returns map is never empty while there is something to buy — this
 /// is what keeps the buy off the `Unprotected` slippage path.
-// NOTE: temporary scaffolding allowance; removed when the strategy wiring calls
-// this in a later commit.
-#[allow(dead_code)]
-fn carry_targets(
+pub(crate) fn carry_targets(
     universe: &[TokenOutAccount],
     observed: &BTreeMap<TokenOutAccount, ExchangeRate>,
     reference: &BTreeMap<TokenOutAccount, ExchangeRate>,
@@ -168,10 +161,7 @@ fn carry_targets(
 /// Returns a single `Rebalance` action on the entry cycle (when there is
 /// something to buy), and an empty action list otherwise. An empty
 /// `target_weights` (e.g. every LST de-pegged out) also yields no action.
-// NOTE: temporary scaffolding allowance; removed when the strategy wiring calls
-// this in a later commit.
-#[allow(dead_code)]
-fn carry_actions(
+pub(crate) fn carry_actions(
     is_new_period: bool,
     target_weights: BTreeMap<TokenOutAccount, BigDecimal>,
 ) -> Vec<TradingAction> {

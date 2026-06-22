@@ -25,6 +25,7 @@
 use crate::Result;
 use crate::alpha_gate;
 use crate::candidate_telemetry;
+use crate::lst_carry;
 use crate::predict::PredictionService;
 use crate::swap;
 use crate::top_n_pruner;
@@ -39,7 +40,7 @@ use common::config::ConfigAccess;
 use common::types::{
     ExchangeRate, NearAmount, NearValue, TokenAmount, TokenPrice, YoctoAmount, YoctoValue,
 };
-use common::types::{TokenAccount, TokenInAccount, TokenOutAccount};
+use common::types::{TimeRange, TokenAccount, TokenInAccount, TokenOutAccount};
 use futures::stream::{self, StreamExt};
 use logging::*;
 use near_sdk::{AccountId, NearToken};
@@ -134,9 +135,6 @@ where
         YoctoAmount::zero() // available_funds は使用されない
     };
 
-    // Step 3: PredictionServiceの初期化
-    let prediction_service = PredictionService::new(cfg)?;
-
     // 清算失敗トークンがあればログ出力
     if !result.failed_liquidations.is_empty() {
         warn!(log, "some tokens failed to liquidate, will be retried next period";
@@ -165,117 +163,131 @@ where
     let pool_snapshot =
         persistence::pool_info::read_from_db(Some(current_time.naive_utc())).await?;
 
-    // Step 4: トークン選定 (フラグでモード分岐)
-    //
     // `held` は all-token モードの候補生成だけでなく、後段の storage `keep` リスト
-    // でも使われる。`fetch_held_tokens` は両モードで安全に動作する
+    // でも使われる。両モード (carry 含む) で必要なのでモード分岐の前に取得する。
+    // `fetch_held_tokens` は両モードで安全に動作する
     // (`is_new_period=true` で empty、それ以外は DB snapshot → RPC fallback)。
-    let all_predicted_enabled = cfg.trade_all_predicted_enabled();
     let held =
         fetch_held_tokens(client, wallet, &period_id, is_new_period, &existing_tokens).await?;
 
-    let (selected_tokens, all_predicted_pre_filter_count) = if all_predicted_enabled {
-        // All-token モード: 全予測トークン + 現在保有トークン union を毎サイクル算出
-        let (candidates, pre_filter_count) = select_all_predicted_candidates(
-            &prediction_service,
-            current_time,
-            cfg,
-            &pool_snapshot,
-            &held,
-        )
-        .await?;
+    // Step 3-5: モード分岐で (actions, expected_returns) を生成する。
+    // LST carry モードは予測・CoV・alpha gate・Markowitz 最適化を全てバイパスし、
+    // de-peg フィルタ済みの等加重ターゲットを entry サイクルでのみ buy する
+    // (prediction service も初期化しない)。それ以外は従来フロー (予測 → 選定 → 最適化)。
+    let (actions, expected_returns) = if cfg.trade_lst_carry_enabled() {
+        run_lst_carry(current_time, is_new_period, cfg).await?
+    } else {
+        // Step 3: PredictionService の初期化
+        let prediction_service = PredictionService::new(cfg)?;
 
-        // 毎サイクル DB に書き込む。`manage_evaluation_period` の
-        // 「selected_tokens empty + transactions exist → 破損疑い」検知ロジックが
-        // 引き続き機能するよう、空でない候補集合を都度 selected_tokens 列に反映する。
-        if !candidates.is_empty() {
-            let token_strs: Vec<String> = candidates.iter().map(|t| t.to_string()).collect();
-            match EvaluationPeriod::update_selected_tokens_async(period_id.clone(), token_strs)
-                .await
-            {
-                Ok(_) => {
-                    debug!(log, "updated selected tokens (all-token mode)";
+        // Step 4: トークン選定 (フラグでモード分岐)
+        let all_predicted_enabled = cfg.trade_all_predicted_enabled();
+        let (selected_tokens, all_predicted_pre_filter_count) = if all_predicted_enabled {
+            // All-token モード: 全予測トークン + 現在保有トークン union を毎サイクル算出
+            let (candidates, pre_filter_count) = select_all_predicted_candidates(
+                &prediction_service,
+                current_time,
+                cfg,
+                &pool_snapshot,
+                &held,
+            )
+            .await?;
+
+            // 毎サイクル DB に書き込む。`manage_evaluation_period` の
+            // 「selected_tokens empty + transactions exist → 破損疑い」検知ロジックが
+            // 引き続き機能するよう、空でない候補集合を都度 selected_tokens 列に反映する。
+            if !candidates.is_empty() {
+                let token_strs: Vec<String> = candidates.iter().map(|t| t.to_string()).collect();
+                match EvaluationPeriod::update_selected_tokens_async(period_id.clone(), token_strs)
+                    .await
+                {
+                    Ok(_) => {
+                        debug!(log, "updated selected tokens (all-token mode)";
                         "count" => candidates.len(),
                         "held_count" => held.len());
-                }
-                Err(e) => {
-                    error!(log, "failed to update selected tokens (all-token mode)";
+                    }
+                    Err(e) => {
+                        error!(log, "failed to update selected tokens (all-token mode)";
                         "error" => ?e);
+                    }
                 }
             }
-        }
 
-        (candidates, Some(pre_filter_count))
-    } else if is_new_period {
-        // Legacy モード (新規期間): 期間最初にトップ N ボラティリティトークンを固定
-        let tokens =
-            select_top_volatility_tokens(&prediction_service, current_time, cfg, &pool_snapshot)
-                .await?;
+            (candidates, Some(pre_filter_count))
+        } else if is_new_period {
+            // Legacy モード (新規期間): 期間最初にトップ N ボラティリティトークンを固定
+            let tokens = select_top_volatility_tokens(
+                &prediction_service,
+                current_time,
+                cfg,
+                &pool_snapshot,
+            )
+            .await?;
 
-        // 選定したトークンをデータベースに保存
-        if !tokens.is_empty() {
-            let token_strs: Vec<String> = tokens.iter().map(|t| t.to_string()).collect();
-            match EvaluationPeriod::update_selected_tokens_async(period_id.clone(), token_strs)
-                .await
-            {
-                Ok(_) => {
-                    debug!(log, "updated selected tokens in database"; "count" => tokens.len());
-                }
-                Err(e) => {
-                    error!(log, "failed to update selected tokens"; "error" => ?e);
+            // 選定したトークンをデータベースに保存
+            if !tokens.is_empty() {
+                let token_strs: Vec<String> = tokens.iter().map(|t| t.to_string()).collect();
+                match EvaluationPeriod::update_selected_tokens_async(period_id.clone(), token_strs)
+                    .await
+                {
+                    Ok(_) => {
+                        debug!(log, "updated selected tokens in database"; "count" => tokens.len());
+                    }
+                    Err(e) => {
+                        error!(log, "failed to update selected tokens"; "error" => ?e);
+                    }
                 }
             }
+
+            (tokens, None)
+        } else {
+            // Legacy モード (評価期間中): 期間最初に固定したトークンを継続使用
+            let tokens: Vec<AccountId> = existing_tokens
+                .iter()
+                .cloned()
+                .map(AccountId::from)
+                .collect();
+            (tokens, None)
+        };
+
+        debug!(log, "Selected tokens"; "count" => selected_tokens.len(), "is_new_period" => is_new_period);
+
+        if selected_tokens.is_empty() {
+            info!(log, "no tokens selected for trading");
+            return Ok(());
         }
 
-        (tokens, None)
-    } else {
-        // Legacy モード (評価期間中): 期間最初に固定したトークンを継続使用
-        let tokens: Vec<AccountId> = existing_tokens
-            .iter()
-            .cloned()
-            .map(AccountId::from)
-            .collect();
-        (tokens, None)
-    };
+        // Step 5: ポートフォリオ最適化を先に実行する。
+        //
+        // 旧フローでは storage setup → deposit → 最適化 の順だったが、all-token モードで
+        // 候補が ~290 になると `MAX_REGISTER_PER_CYCLE = 100` を超えて storage setup が
+        // 全 cycle で失敗していた。最適化はオンチェーン状態を変更しない (deposit 読みのみ)
+        // ので、先に走らせて action に必要なトークンのみ register することで cap を回避する。
+        debug!(log, "executing portfolio optimization";
+            "is_new_period" => is_new_period,
+            "token_count" => selected_tokens.len()
+        );
 
-    debug!(log, "Selected tokens"; "count" => selected_tokens.len(), "is_new_period" => is_new_period);
-
-    if selected_tokens.is_empty() {
-        info!(log, "no tokens selected for trading");
-        return Ok(());
-    }
-
-    // Step 5: ポートフォリオ最適化を先に実行する。
-    //
-    // 旧フローでは storage setup → deposit → 最適化 の順だったが、all-token モードで
-    // 候補が ~290 になると `MAX_REGISTER_PER_CYCLE = 100` を超えて storage setup が
-    // 全 cycle で失敗していた。最適化はオンチェーン状態を変更しない (deposit 読みのみ)
-    // ので、先に走らせて action に必要なトークンのみ register することで cap を回避する。
-    debug!(log, "executing portfolio optimization";
-        "is_new_period" => is_new_period,
-        "token_count" => selected_tokens.len()
-    );
-
-    let params = PortfolioStrategyParams {
-        prediction_service: &prediction_service,
-        tokens: &selected_tokens,
-        available_funds: available_funds.clone(),
-        is_new_period,
-        period_id: &period_id,
-        end_date: current_time,
-        cfg,
-        pools: &pool_snapshot,
-        all_predicted_pre_filter_count,
-        held_tokens: &held,
-    };
-    let (actions, expected_returns) =
+        let params = PortfolioStrategyParams {
+            prediction_service: &prediction_service,
+            tokens: &selected_tokens,
+            available_funds: available_funds.clone(),
+            is_new_period,
+            period_id: &period_id,
+            end_date: current_time,
+            cfg,
+            pools: &pool_snapshot,
+            all_predicted_pre_filter_count,
+            held_tokens: &held,
+        };
         match execute_portfolio_strategy(&params, client, wallet).await {
             Ok(result) => result,
             Err(e) => {
                 error!(log, "failed to execute portfolio strategy"; "error" => ?e);
                 return Err(e);
             }
-        };
+        }
+    };
 
     info!(log, "portfolio optimization completed";
         "action_count" => actions.len()
@@ -353,6 +365,74 @@ where
 
     info!(log, "success");
     Ok(())
+}
+
+/// Most recent rate at or before `at` for `token` (quote = WNEAR), looking back
+/// up to `lookback_days` to tolerate sparse sampling.
+///
+/// Time-aware so it stays correct under `simulate` — unlike
+/// `TokenRate::get_latest`, which reads the globally newest row regardless of
+/// the simulated clock.
+async fn lst_rate_as_of(
+    token: &TokenOutAccount,
+    quote: &TokenInAccount,
+    at: chrono::NaiveDateTime,
+    lookback_days: i64,
+) -> Result<Option<ExchangeRate>> {
+    let range = TimeRange {
+        start: at - chrono::Duration::days(lookback_days),
+        end: at,
+    };
+    let rates =
+        persistence::token_rate::TokenRate::get_rates_in_time_range(&range, token, quote).await?;
+    Ok(rates.last().map(|r| r.to_spot_rate()))
+}
+
+/// Tier-1 liquid-staking carry: produce the `(actions, expected_returns)` pair.
+///
+/// Bypasses prediction / CoV ranking / alpha gate / Markowitz optimizer.
+/// Fetches the current rate and the prior-period de-peg baseline for the LST
+/// universe, drops any de-pegged token, equal-weights the rest, and confines
+/// the buy to the entry (new-period) cycle.
+async fn run_lst_carry(
+    current_time: chrono::DateTime<chrono::Utc>,
+    is_new_period: bool,
+    cfg: &impl ConfigAccess,
+) -> Result<(Vec<TradingAction>, BTreeMap<TokenOutAccount, f64>)> {
+    let log = DEFAULT.new(o!("function" => "run_lst_carry"));
+    let universe = &*lst_carry::CARRY_UNIVERSE;
+    let hold_days = cfg.trade_lst_carry_min_hold_days();
+    let max_depeg = cfg.trade_lst_carry_max_depeg();
+    let quote = blockchain::ref_finance::token_account::WNEAR_TOKEN.to_in();
+    let now = current_time.naive_utc();
+    let reference_at = now - chrono::Duration::days(i64::from(hold_days));
+
+    // Rates are recorded on a ~15-min cadence, so a 2-day lookback reliably
+    // finds a sample at/near `at` without straying far from it.
+    const LOOKBACK_DAYS: i64 = 2;
+
+    let mut observed = BTreeMap::new();
+    let mut reference = BTreeMap::new();
+    for token in universe {
+        if let Some(r) = lst_rate_as_of(token, &quote, now, LOOKBACK_DAYS).await? {
+            observed.insert(token.clone(), r);
+        }
+        if let Some(r) = lst_rate_as_of(token, &quote, reference_at, LOOKBACK_DAYS).await? {
+            reference.insert(token.clone(), r);
+        }
+    }
+
+    let (weights, expected_returns) =
+        lst_carry::carry_targets(universe, &observed, &reference, hold_days, max_depeg);
+    let actions = lst_carry::carry_actions(is_new_period, weights);
+
+    info!(log, "lst carry targets";
+        "is_new_period" => is_new_period,
+        "observed" => observed.len(),
+        "buy_tokens" => expected_returns.len(),
+        "action_count" => actions.len());
+
+    Ok((actions, expected_returns))
 }
 
 /// 資金準備 (NEAR -> wrap.near 変換)
