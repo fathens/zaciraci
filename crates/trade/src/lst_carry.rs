@@ -13,6 +13,7 @@
 //! path.
 
 use bigdecimal::{BigDecimal, ToPrimitive};
+use common::algorithm::types::TradingAction;
 use common::types::{ExchangeRate, TokenOutAccount};
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
@@ -154,6 +155,33 @@ fn carry_targets(
     (weights, expected_returns)
 }
 
+/// Entry-confinement gate: the carry mode buys only on the cycle that opens a
+/// new evaluation period, and holds (does nothing) on every continuation
+/// cycle.
+///
+/// This is the structural enforcement of the min-hold invariant. Because the
+/// evaluation-period length is set to the carry hold horizon elsewhere, the
+/// position acquired on the new-period cycle is held untouched until the
+/// period machinery liquidates it at the boundary — there is no mid-period
+/// top-up or rebalance that would reset the hold clock or incur churn.
+///
+/// Returns a single `Rebalance` action on the entry cycle (when there is
+/// something to buy), and an empty action list otherwise. An empty
+/// `target_weights` (e.g. every LST de-pegged out) also yields no action.
+// NOTE: temporary scaffolding allowance; removed when the strategy wiring calls
+// this in a later commit.
+#[allow(dead_code)]
+fn carry_actions(
+    is_new_period: bool,
+    target_weights: BTreeMap<TokenOutAccount, BigDecimal>,
+) -> Vec<TradingAction> {
+    if is_new_period && !target_weights.is_empty() {
+        vec![TradingAction::Rebalance { target_weights }]
+    } else {
+        Vec::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,5 +300,30 @@ mod tests {
         let (weights, ers) = carry_targets(&u, &observed, &reference, 30, 0.05);
         assert!(weights.is_empty());
         assert!(ers.is_empty());
+    }
+
+    fn weights_2() -> BTreeMap<TokenOutAccount, BigDecimal> {
+        equal_weight_targets(&univ(&["linear-protocol.near", "meta-pool.near"]))
+    }
+
+    #[test]
+    fn carry_actions_buys_only_on_new_period() {
+        let actions = carry_actions(true, weights_2());
+        assert_eq!(actions.len(), 1);
+        match &actions[0] {
+            TradingAction::Rebalance { target_weights } => assert_eq!(target_weights.len(), 2),
+            other => panic!("expected Rebalance, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn carry_actions_holds_on_continuation_cycle() {
+        // Continuation cycle: no action → positions held untouched (no churn).
+        assert!(carry_actions(false, weights_2()).is_empty());
+    }
+
+    #[test]
+    fn carry_actions_empty_weights_yields_no_action() {
+        assert!(carry_actions(true, BTreeMap::new()).is_empty());
     }
 }
