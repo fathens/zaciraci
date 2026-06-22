@@ -271,6 +271,15 @@ pub(crate) fn apply_config(cli: &RunArgs) {
         "TRADE_MIN_POOL_LIQUIDITY",
         &cli.min_pool_liquidity.to_string(),
     );
+    common::config::store::set("TRADE_LST_CARRY_ENABLED", &cli.lst_carry.to_string());
+    common::config::store::set(
+        "TRADE_LST_CARRY_MIN_HOLD_DAYS",
+        &cli.lst_carry_min_hold_days.to_string(),
+    );
+    common::config::store::set(
+        "TRADE_LST_CARRY_MAX_DEPEG",
+        &cli.lst_carry_max_depeg.to_string(),
+    );
 }
 
 #[cfg(test)]
@@ -310,6 +319,9 @@ mod tests {
             alpha_gate_hold_cycles: 1,
             alpha_gate_min_pass_count: 5,
             min_pool_liquidity: 100,
+            lst_carry: false,
+            lst_carry_min_hold_days: 30,
+            lst_carry_max_depeg: 0.05,
         }
     }
 
@@ -356,6 +368,9 @@ mod tests {
             alpha_gate_hold_cycles: 4,
             alpha_gate_min_pass_count: 6,
             min_pool_liquidity: 5000,
+            lst_carry: true,
+            lst_carry_min_hold_days: 45,
+            lst_carry_max_depeg: 0.08,
         };
 
         apply_config(&cli);
@@ -452,6 +467,18 @@ mod tests {
         assert_eq!(
             common::config::store::get("TRADE_MIN_POOL_LIQUIDITY").unwrap(),
             "5000"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_LST_CARRY_ENABLED").unwrap(),
+            "true"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_LST_CARRY_MIN_HOLD_DAYS").unwrap(),
+            "45"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_LST_CARRY_MAX_DEPEG").unwrap(),
+            "0.08"
         );
     }
 }

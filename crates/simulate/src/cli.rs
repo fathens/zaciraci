@@ -179,6 +179,26 @@ pub struct RunArgs {
     /// 5000 vs ~281 at 100).
     #[arg(long, default_value_t = 100)]
     pub min_pool_liquidity: u32,
+
+    /// Enable the Tier-1 liquid-staking carry mode (LiNEAR/stNEAR
+    /// equal-weight buy-and-hold). Bypasses prediction/optimizer entirely.
+    /// Defaults to `false`; pass `--lst-carry true` for A/B comparison.
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = false)]
+    pub lst_carry: bool,
+
+    /// Minimum hold horizon (days) for the carry mode. Also drives the
+    /// evaluation-period length so the period boundary does not liquidate
+    /// before the hold completes. Clamped to `[30, 90]` at the config layer.
+    /// Has no effect when `--lst-carry=false`.
+    #[arg(long, default_value_t = 30)]
+    pub lst_carry_min_hold_days: u32,
+
+    /// De-peg tolerance for the carry mode: an LST whose rate deviates from
+    /// its prior-period baseline by more than this fraction is skipped.
+    /// Clamped to `[0.01, 0.5]` at the config layer. Has no effect when
+    /// `--lst-carry=false`.
+    #[arg(long, default_value_t = 0.05)]
+    pub lst_carry_max_depeg: f64,
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -262,6 +282,9 @@ mod tests {
             alpha_gate_hold_cycles: 1,
             alpha_gate_min_pass_count: 5,
             min_pool_liquidity: 100,
+            lst_carry: false,
+            lst_carry_min_hold_days: 30,
+            lst_carry_max_depeg: 0.05,
         }
     }
 

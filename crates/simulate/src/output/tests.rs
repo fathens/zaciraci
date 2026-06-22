@@ -290,6 +290,9 @@ fn make_cli(start: &str, end: &str) -> RunArgs {
         alpha_gate_hold_cycles: 1,
         alpha_gate_min_pass_count: 5,
         min_pool_liquidity: 100,
+        lst_carry: false,
+        lst_carry_min_hold_days: 30,
+        lst_carry_max_depeg: 0.05,
     }
 }
 
@@ -390,6 +393,9 @@ fn from_state_config_reflects_cli_params() {
         alpha_gate_hold_cycles: 1,
         alpha_gate_min_pass_count: 5,
         min_pool_liquidity: 100,
+        lst_carry: false,
+        lst_carry_min_hold_days: 30,
+        lst_carry_max_depeg: 0.05,
     };
     let state = PortfolioState::new(yocto(200_000_000_000_000_000_000_000_000));
 
