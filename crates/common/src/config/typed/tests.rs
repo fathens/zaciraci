@@ -1005,7 +1005,7 @@ fn test_portfolio_cost_iterations_max_passthrough_in_range() {
 fn test_trade_max_price_impact_default() {
     let _env = EnvGuard::remove("TRADE_MAX_PRICE_IMPACT");
     crate::config::store::remove("TRADE_MAX_PRICE_IMPACT");
-    assert_eq!(typed().trade_max_price_impact(), 0.03);
+    assert_eq!(typed().trade_max_price_impact(), 0.5);
 }
 
 #[test]

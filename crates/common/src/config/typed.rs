@@ -584,7 +584,7 @@ const TRADE_MAX_PRICE_IMPACT_UPPER: f64 = 0.95;
 /// the comparison `impact > threshold` would always evaluate to false and
 /// silently allow catastrophic swaps. The fallback matches the documented
 /// default.
-const TRADE_MAX_PRICE_IMPACT_NAN_FALLBACK: f64 = 0.03;
+const TRADE_MAX_PRICE_IMPACT_NAN_FALLBACK: f64 = 0.5;
 
 /// Idempotent clamp applied to `trade_max_price_impact` reads.
 ///
@@ -1350,11 +1350,18 @@ define_typed_config! {
     /// entry into a thin-pool route. The guard applies to every swap
     /// regardless of policy.
     ///
-    /// Defaults to `0.03` (3 %). The `[0.005, 0.95]` clamp keeps the guard
-    /// from degenerating into permanent Hold (too low) or a no-op (too high).
+    /// Defaults to `0.5` (50 %). A backtest sweep (block 2026-06-04..06-15)
+    /// showed that `0.03` (3 %) blocks routine thin-pool meme swaps — normal
+    /// executed impact for these tokens runs 6–37 % — which only churns the
+    /// portfolio (6 → 17 swaps) and marginally worsens return (-6.29 % →
+    /// -6.54 %) without avoiding any catastrophe. At `0.5` the guard is
+    /// return-neutral versus disabled in normal windows while still blocking
+    /// the catastrophic dead-pool routes (observed up to 97 %) it exists for.
+    /// The `[0.005, 0.95]` clamp keeps the guard from degenerating into
+    /// permanent Hold (too low) or a no-op (too high).
     fn trade_max_price_impact() -> f64 {
         key: "TRADE_MAX_PRICE_IMPACT",
-        default: 0.03,
+        default: 0.5,
         clamp: clamp_trade_max_price_impact
     }
 

@@ -59,12 +59,12 @@ fn reference_input_is_never_zero() {
 }
 
 /// The observed mpdao-style dead-pool route (~97 % impact) is flagged well
-/// above the 3 % default threshold.
+/// above the 50 % default threshold.
 #[test]
 fn flags_observed_dead_pool_route() {
     // marginal: 1000 in → 2000 out (rate 2.0).
     // full: 1_000_000 in → 60_000 out (rate 0.06) ≈ 97 % impact.
     let impact = price_impact_ratio(1_000_000, 60_000, 1000, 2000);
     assert!(impact > 0.95, "expected >0.95, got {impact}");
-    assert!(impact > 0.03, "must exceed default threshold");
+    assert!(impact > 0.5, "must exceed default threshold");
 }
