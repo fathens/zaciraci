@@ -622,7 +622,7 @@ fn test_value_type_result_string() {
 #[test]
 fn test_key_definitions_count() {
     // define_typed_config! に定義されたキーの数と一致すること
-    assert_eq!(KEY_DEFINITIONS.len(), 77);
+    assert_eq!(KEY_DEFINITIONS.len(), 80);
 }
 
 #[test]
@@ -1035,6 +1035,87 @@ fn test_trade_max_price_impact_maps_nan_to_fallback() {
     assert_eq!(
         typed().trade_max_price_impact(),
         TRADE_MAX_PRICE_IMPACT_NAN_FALLBACK,
+    );
+}
+
+#[test]
+#[serial]
+fn test_trade_lst_carry_enabled_default() {
+    let _env = EnvGuard::remove("TRADE_LST_CARRY_ENABLED");
+    crate::config::store::remove("TRADE_LST_CARRY_ENABLED");
+    assert!(!typed().trade_lst_carry_enabled());
+}
+
+#[test]
+#[serial]
+fn test_trade_lst_carry_min_hold_days_default_is_within_bounds() {
+    let _env = EnvGuard::remove("TRADE_LST_CARRY_MIN_HOLD_DAYS");
+    crate::config::store::remove("TRADE_LST_CARRY_MIN_HOLD_DAYS");
+    let v = typed().trade_lst_carry_min_hold_days();
+    assert!(
+        (TRADE_LST_CARRY_MIN_HOLD_DAYS_LOWER..=TRADE_LST_CARRY_MIN_HOLD_DAYS_UPPER).contains(&v),
+        "default {v} should already lie within [{}, {}]",
+        TRADE_LST_CARRY_MIN_HOLD_DAYS_LOWER,
+        TRADE_LST_CARRY_MIN_HOLD_DAYS_UPPER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_trade_lst_carry_min_hold_days_clamped_below_lower() {
+    let _guard = ConfigGuard::new("TRADE_LST_CARRY_MIN_HOLD_DAYS", "7");
+    assert_eq!(
+        typed().trade_lst_carry_min_hold_days(),
+        TRADE_LST_CARRY_MIN_HOLD_DAYS_LOWER,
+        "below-floor holds must clamp up to preserve the positive-return guarantee"
+    );
+}
+
+#[test]
+#[serial]
+fn test_trade_lst_carry_min_hold_days_clamped_above_upper() {
+    let _guard = ConfigGuard::new("TRADE_LST_CARRY_MIN_HOLD_DAYS", "4294967295"); // u32::MAX
+    assert_eq!(
+        typed().trade_lst_carry_min_hold_days(),
+        TRADE_LST_CARRY_MIN_HOLD_DAYS_UPPER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_trade_lst_carry_max_depeg_default() {
+    let _env = EnvGuard::remove("TRADE_LST_CARRY_MAX_DEPEG");
+    crate::config::store::remove("TRADE_LST_CARRY_MAX_DEPEG");
+    assert_eq!(typed().trade_lst_carry_max_depeg(), 0.05);
+}
+
+#[test]
+#[serial]
+fn test_trade_lst_carry_max_depeg_clamped_above_upper() {
+    let _guard = ConfigGuard::new("TRADE_LST_CARRY_MAX_DEPEG", "0.9");
+    assert_eq!(
+        typed().trade_lst_carry_max_depeg(),
+        TRADE_LST_CARRY_MAX_DEPEG_UPPER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_trade_lst_carry_max_depeg_clamped_below_lower() {
+    let _guard = ConfigGuard::new("TRADE_LST_CARRY_MAX_DEPEG", "0.0");
+    assert_eq!(
+        typed().trade_lst_carry_max_depeg(),
+        TRADE_LST_CARRY_MAX_DEPEG_LOWER,
+    );
+}
+
+#[test]
+#[serial]
+fn test_trade_lst_carry_max_depeg_maps_nan_to_fallback() {
+    let _guard = ConfigGuard::new("TRADE_LST_CARRY_MAX_DEPEG", "NaN");
+    assert_eq!(
+        typed().trade_lst_carry_max_depeg(),
+        TRADE_LST_CARRY_MAX_DEPEG_NAN_FALLBACK,
     );
 }
 

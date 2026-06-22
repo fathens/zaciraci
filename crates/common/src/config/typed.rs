@@ -599,6 +599,75 @@ fn clamp_trade_max_price_impact(v: f64) -> f64 {
     }
 }
 
+/// Lower bound for [`ConfigAccess::trade_lst_carry_min_hold_days`].
+///
+/// `30` is the floor: the liquid-staking carry backtest showed that holding
+/// windows shorter than 30 days are not reliably positive (7–14 day windows
+/// won only 55–77 % of the time as rate noise swamps the ~4 %/yr drift),
+/// whereas every window of 30 days or more was net-positive. The min-hold
+/// gate is the sole guarantor of the positive-return property, so the floor
+/// must not drop below it.
+const TRADE_LST_CARRY_MIN_HOLD_DAYS_LOWER: u32 = 30;
+
+/// Upper bound for [`ConfigAccess::trade_lst_carry_min_hold_days`].
+///
+/// `90` caps the hold so the forced-liquidation fee drag at period boundaries
+/// stays amortized over a reasonable horizon without locking capital
+/// indefinitely. Longer holds give diminishing carry benefit and reduce the
+/// strategy's ability to react to a de-peg.
+const TRADE_LST_CARRY_MIN_HOLD_DAYS_UPPER: u32 = 90;
+
+/// Idempotent clamp applied to `trade_lst_carry_min_hold_days` reads.
+///
+/// `u32` cannot be `NaN` or negative, so the only failure modes are values
+/// below the 30-day positive-return floor or above the 90-day cap; both are
+/// brought into range by `u32::clamp`.
+fn clamp_trade_lst_carry_min_hold_days(v: u32) -> u32 {
+    v.clamp(
+        TRADE_LST_CARRY_MIN_HOLD_DAYS_LOWER,
+        TRADE_LST_CARRY_MIN_HOLD_DAYS_UPPER,
+    )
+}
+
+/// Lower bound for [`ConfigAccess::trade_lst_carry_max_depeg`].
+///
+/// `0.01` (1 %) is the floor: a tolerance below one percent would reject the
+/// normal day-to-day rate noise of a healthy LST pool and collapse the carry
+/// strategy into permanent Hold.
+const TRADE_LST_CARRY_MAX_DEPEG_LOWER: f64 = 0.01;
+
+/// Upper bound for [`ConfigAccess::trade_lst_carry_max_depeg`].
+///
+/// `0.5` (50 %) is the ceiling: the guard exists to detect a liquid-staking
+/// de-peg (the pool rate moving sharply against the token's intrinsic value),
+/// so a tolerance at or above half the position value would let a genuine
+/// de-peg through and defeat the purpose.
+const TRADE_LST_CARRY_MAX_DEPEG_UPPER: f64 = 0.5;
+
+/// NaN fallback for [`ConfigAccess::trade_lst_carry_max_depeg`].
+///
+/// A poisoned config read must not disable the de-peg guard: a `NaN`
+/// tolerance would make every comparison `deviation > tolerance` evaluate to
+/// false and silently allow buying into a de-pegged pool. The fallback
+/// matches the documented default.
+const TRADE_LST_CARRY_MAX_DEPEG_NAN_FALLBACK: f64 = 0.05;
+
+/// Idempotent clamp applied to `trade_lst_carry_max_depeg` reads.
+///
+/// `NaN` is mapped to the documented default (keeping the guard active)
+/// rather than poisoning the comparison. `±INFINITY` is handled by
+/// `f64::clamp` itself.
+fn clamp_trade_lst_carry_max_depeg(v: f64) -> f64 {
+    if v.is_nan() {
+        TRADE_LST_CARRY_MAX_DEPEG_NAN_FALLBACK
+    } else {
+        v.clamp(
+            TRADE_LST_CARRY_MAX_DEPEG_LOWER,
+            TRADE_LST_CARRY_MAX_DEPEG_UPPER,
+        )
+    }
+}
+
 /// Idempotent clamp applied to `portfolio_cost_iteration_damping` reads.
 ///
 /// `NaN` is mapped to [`PORTFOLIO_COST_ITERATION_DAMPING_NAN_FALLBACK`] so
@@ -1363,6 +1432,54 @@ define_typed_config! {
         key: "TRADE_MAX_PRICE_IMPACT",
         default: 0.5,
         clamp: clamp_trade_max_price_impact
+    }
+
+    /// Enable the Tier-1 liquid-staking carry strategy.
+    ///
+    /// When `true`, the trade engine runs a dedicated low-turnover mode that
+    /// buys-and-holds an equal weight of the liquid-staking tokens (LiNEAR,
+    /// stNEAR) to capture their structural ~4 %/yr appreciation against NEAR,
+    /// bypassing the volatility-portfolio pipeline (prediction, CoV ranking,
+    /// alpha gate, Markowitz optimizer) entirely. The legacy/all-predicted
+    /// modes are untouched when this is `false` (the default), so the carry
+    /// mode can be A/B compared via `simulate` before shipping.
+    fn trade_lst_carry_enabled() -> bool {
+        key: "TRADE_LST_CARRY_ENABLED",
+        default: false
+    }
+
+    /// Minimum holding horizon (in days) for the liquid-staking carry mode.
+    ///
+    /// The carry backtest showed positive returns only for holds of at least
+    /// 30 days (shorter windows lose to rate noise), so this is both the
+    /// floor of the `[30, 90]` clamp and the default. The value is propagated
+    /// into the evaluation-period length so the period machinery does not
+    /// force-liquidate the position before the hold completes; it also bounds
+    /// the forced-liquidation fee drag at period boundaries
+    /// (`round_trip_cost × 365 / N`, which must stay small relative to the
+    /// carry). Has no effect when `trade_lst_carry_enabled` is `false`.
+    fn trade_lst_carry_min_hold_days() -> u32 {
+        key: "TRADE_LST_CARRY_MIN_HOLD_DAYS",
+        default: 30,
+        clamp: clamp_trade_lst_carry_min_hold_days
+    }
+
+    /// Maximum tolerated de-peg deviation for a liquid-staking token before
+    /// the carry mode refuses to buy it.
+    ///
+    /// Because the carry mode bypasses the optimizer and CoV ranking, it
+    /// loses their implicit protection against distorted exchange rates. This
+    /// guard re-introduces a sanity bound: when an LST's observed rate
+    /// deviates from its expected (slowly, monotonically drifting) value by
+    /// more than this fraction — the signature of a liquidity-crisis de-peg —
+    /// the token is held/skipped rather than bought into. Defaults to `0.05`
+    /// (5 %); the `[0.01, 0.5]` clamp keeps it from collapsing into permanent
+    /// Hold (too low) or letting a genuine de-peg through (too high). Has no
+    /// effect when `trade_lst_carry_enabled` is `false`.
+    fn trade_lst_carry_max_depeg() -> f64 {
+        key: "TRADE_LST_CARRY_MAX_DEPEG",
+        default: 0.05,
+        clamp: clamp_trade_lst_carry_max_depeg
     }
 
     // ── arbitrage ──
