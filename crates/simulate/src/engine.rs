@@ -95,6 +95,11 @@ pub async fn run_simulation(cli: &RunArgs) -> Result<SimulationResult> {
 
         let sim_day = match earliest {
             Some(t) => Utc.from_utc_datetime(&t),
+            // The LST carry mode does not consume predictions, so it must not
+            // gate on their availability — advance on the calendar using
+            // midnight as the cycle clock. (Predictive modes still wait for a
+            // fresh prediction, matching production's runtime behavior.)
+            None if cli.lst_carry => Utc.from_utc_datetime(&day_start),
             None => {
                 info!(log, "skipping day: no fresh predictions available";
                     "date" => %current_date, "day" => day_count);
