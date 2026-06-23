@@ -156,6 +156,5 @@ rm -rf /tmp/zaciraci_copy
 ## 注意・ハマりどころ
 
 - **タイムアウト**: `fly mpg connect` 経由のダンプは proxy 越しで遅い（~1500行/秒）。token_rates / pool_info は必ず `timeout 1800` 級＋バックグラウンドで。`COPY <N>` が出ない／最終行のタイムスタンプが古い → 途中切断を疑う。
-- **`&&` 連結禁止**（このプロジェクトのフック）。各コマンドは個別の Bash 呼び出しにする。
 - **simulate 連続実行時の状態リセット**は別途必要（`portfolio_holdings` / `evaluation_periods` / `trade_transactions` を case 毎に TRUNCATE）。本コマンドは履歴データ投入のみで結果テーブルは触らない。
 - 全件再構築が必要な場合は本コマンドではなく `run_test/copy_data.sh`（run_local→run_test の TRUNCATE フルコピー）を使う。
