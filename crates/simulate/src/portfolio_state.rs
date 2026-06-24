@@ -158,6 +158,10 @@ pub enum SwapMethod {
     PoolBased,
     /// Fallback to DB rate conversion (no fee/slippage)
     DbRate,
+    /// Liquid-staking carry: priced from token_rates (correct for rated
+    /// pools, whose raw reserves do not yield the price via constant product)
+    /// with an explicit per-swap fee applied.
+    RatedCarry,
 }
 
 /// Record of a single swap operation during simulation.

@@ -48,7 +48,7 @@ pub trait PredictionProvider: Send + Sync {
 }
 
 /// 予測の時間軸（何時間先の価格を予測するか）
-pub const PREDICTION_HORIZON_HOURS: usize = 24;
+pub const PREDICTION_HORIZON_HOURS: usize = 168;
 
 impl TokenPredictionResult {
     /// 指定した時間軸に最も近い予測ポイントを取得（±1h の許容範囲）

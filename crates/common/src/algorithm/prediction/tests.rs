@@ -206,7 +206,8 @@ mod prediction_tests {
     #[tokio::test]
     async fn test_prediction_data_conversion() {
         let data_cutoff_time = create_test_timestamp();
-        let predicted_timestamp = data_cutoff_time + TimeDelta::hours(24);
+        let predicted_timestamp =
+            data_cutoff_time + TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64);
 
         // 予測価格を price 形式（NEAR/token）で作成
         let predicted_price_value = BigDecimal::from_f64(110.0).unwrap();
@@ -298,9 +299,10 @@ mod prediction_tests {
     /// data_cutoff_time が現在時刻より大幅に過去でも、24hフィルタが data_cutoff_time 基準で動作すること
     #[tokio::test]
     async fn test_prediction_data_conversion_with_past_data_cutoff_time() {
-        // 3日前のデータカットオフ時刻
-        let data_cutoff_time = Utc::now() - TimeDelta::days(3);
-        let predicted_timestamp = data_cutoff_time + TimeDelta::hours(24);
+        // 予測ホライズンより十分過去のデータカットオフ時刻
+        let data_cutoff_time = Utc::now() - TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64 + 72);
+        let predicted_timestamp =
+            data_cutoff_time + TimeDelta::hours(PREDICTION_HORIZON_HOURS as i64);
 
         let token: TokenOutAccount = "test_token".parse().unwrap();
         let quote_token: TokenInAccount = "wrap.near".parse().unwrap();

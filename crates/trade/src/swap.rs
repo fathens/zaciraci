@@ -1,4 +1,5 @@
 use crate::Result;
+use crate::execution_guard;
 use crate::recorder::TradeRecorder;
 use crate::slippage::{self, SlippagePolicy};
 use bigdecimal::BigDecimal;
@@ -161,8 +162,36 @@ where
     )
     .await?;
 
-    // AMM 理論出力を事前計算し、スリッページポリシーに基づいて min_out を算出
+    // AMM 理論出力を事前計算
     let estimated_output = path.calc_value(swap_amount)?;
+
+    // Execution-quality ガード: 実サイズの実効レートを微小サイズの限界レートと
+    // 比較し、薄プール/死にプール経由で大半が slippage に化ける経路を約定前に
+    // 弾く。SlippagePolicy/min_out とは独立(min_out は estimated_output からの
+    // 追加劣化のみ・Unprotected では 0)で、全 policy に一律適用する。
+    let reference_input = execution_guard::reference_input(swap_amount);
+    let reference_output = path.calc_value(reference_input)?;
+    let price_impact = execution_guard::price_impact_ratio(
+        swap_amount,
+        estimated_output,
+        reference_input,
+        reference_output,
+    );
+    let max_price_impact = cfg.trade_max_price_impact();
+    if price_impact > max_price_impact {
+        warn!(log, "swap skipped: price impact exceeds threshold";
+            "from" => %from_token,
+            "to" => %to_token,
+            "swap_amount" => swap_amount,
+            "estimated_output" => estimated_output,
+            "price_impact" => price_impact,
+            "max_price_impact" => max_price_impact,
+            "path_len" => path.len(),
+        );
+        return Ok(());
+    }
+
+    // スリッページポリシーに基づいて min_out を算出
     let min_out = slippage::calculate_min_out(estimated_output, policy)?;
 
     debug!(log, "slippage protection";

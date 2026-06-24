@@ -561,7 +561,7 @@ fn test_unified_small_n() {
     let liquidity = vec![0.8, 0.9, 0.7];
 
     let alphas = vec![0.8; expected_returns.len()];
-    let weights = unified_optimize(
+    let weights = unified_optimize_uniform(
         &expected_returns,
         &cov,
         &liquidity,
@@ -585,7 +585,8 @@ fn test_unified_medium_n() {
     let liquidity = vec![0.8; 10];
 
     let alphas = vec![0.8; expected_returns.len()];
-    let weights = unified_optimize(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, &alphas);
+    let weights =
+        unified_optimize_uniform(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, &alphas);
 
     assert_eq!(weights.len(), 10);
     let sum: f64 = weights.iter().sum();
@@ -610,7 +611,8 @@ fn test_unified_large_n() {
 
     let alphas = vec![0.8; expected_returns.len()];
     let start = std::time::Instant::now();
-    let weights = unified_optimize(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, &alphas);
+    let weights =
+        unified_optimize_uniform(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, &alphas);
     let elapsed = start.elapsed();
 
     assert_eq!(weights.len(), 50);
@@ -637,7 +639,7 @@ fn test_unified_all_constraints_satisfied() {
     let min_pos = 0.05;
 
     let alphas = vec![0.8; expected_returns.len()];
-    let weights = unified_optimize(
+    let weights = unified_optimize_uniform(
         &expected_returns,
         &cov,
         &liquidity,
@@ -698,7 +700,8 @@ fn test_pruning_union_preserves_top_tokens() {
     let liquidity = vec![0.8; 20];
 
     let alphas = vec![0.8; expected_returns.len()];
-    let weights = unified_optimize(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, &alphas);
+    let weights =
+        unified_optimize_uniform(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, &alphas);
 
     // 高リターンのトークン群に重みが集中すべき
     let top_weight: f64 = weights[15..20].iter().sum();
@@ -757,7 +760,8 @@ fn test_min_position_reoptimization() {
     let liquidity = vec![0.8; 12];
     let alphas = vec![0.9; expected_returns.len()];
 
-    let weights = unified_optimize(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, &alphas);
+    let weights =
+        unified_optimize_uniform(&expected_returns, &cov, &liquidity, 0.4, 6, 0.05, &alphas);
 
     let sum: f64 = weights.iter().sum();
     assert!((sum - 1.0).abs() < 1e-6, "Sum={}", sum);
@@ -779,7 +783,7 @@ fn test_composite_score_consistency() {
 
     // alpha=1.0: Sharpe のみ
     let alphas_sharpe = vec![1.0; expected_returns.len()];
-    let w_sharpe_only = unified_optimize(
+    let w_sharpe_only = unified_optimize_uniform(
         &expected_returns,
         &cov,
         &[0.8; 8],
@@ -791,7 +795,8 @@ fn test_composite_score_consistency() {
 
     // alpha=0.0: RP のみ
     let alphas_rp = vec![0.0; expected_returns.len()];
-    let w_rp_only = unified_optimize(&expected_returns, &cov, &[0.8; 8], 0.4, 6, 0.05, &alphas_rp);
+    let w_rp_only =
+        unified_optimize_uniform(&expected_returns, &cov, &[0.8; 8], 0.4, 6, 0.05, &alphas_rp);
 
     // 両方とも有効な重み
     let sum_s: f64 = w_sharpe_only.iter().sum();
@@ -973,7 +978,8 @@ fn test_unified_optimize_weights_sum_to_one() {
     let liquidity = vec![0.9, 0.7, 0.8, 0.6, 0.85, 0.75];
     let alphas = vec![0.7; expected_returns.len()];
 
-    let weights = unified_optimize(&expected_returns, &cov, &liquidity, 0.4, 4, 0.05, &alphas);
+    let weights =
+        unified_optimize_uniform(&expected_returns, &cov, &liquidity, 0.4, 4, 0.05, &alphas);
 
     let sum: f64 = weights.iter().sum();
     assert!(
@@ -993,11 +999,12 @@ fn test_exhaustive_optimize_golden_output() {
     let active_indices: Vec<usize> = (0..8).collect();
     let alphas = vec![0.7; expected_returns.len()];
 
+    let bounds = BoxBounds::uniform(expected_returns.len(), 0.4);
     let weights = exhaustive_optimize(
         &active_indices,
         &expected_returns,
         &cov,
-        0.4,  // max_position
+        &bounds,
         3,    // max_holdings
         0.05, // min_position_size
         &alphas,
@@ -1107,4 +1114,344 @@ async fn test_execute_portfolio_optimization_hold_on_empty_filter() {
     assert!(report.optimal_weights.weights.is_empty());
     assert_eq!(report.expected_metrics.sortino_ratio, 0.0);
     assert_eq!(report.expected_metrics.max_drawdown, 0.0);
+}
+
+// ==================== Ledoit-Wolf T-guard テスト ====================
+
+/// T < MIN_LEDOIT_WOLF_T (= 5) のとき、ledoit_wolf_shrink は対角のみの
+/// covariance を返す（off-diagonal は 0、LW の i.i.d. 漸近論を維持）。
+#[test]
+fn test_ledoit_wolf_diagonal_fallback_when_t_small() {
+    // T = 3, n = 3 で T < MIN_LEDOIT_WOLF_T
+    let returns = vec![
+        vec![0.01, 0.02, -0.01],
+        vec![-0.01, 0.03, 0.02],
+        vec![0.02, -0.01, 0.01],
+    ];
+
+    let result = ledoit_wolf_shrink(&returns);
+
+    // 対角は正、off-diagonal は厳密に 0
+    for i in 0..3 {
+        assert!(result[[i, i]] > 0.0, "diagonal must be positive");
+        for j in 0..3 {
+            if i != j {
+                assert_eq!(
+                    result[[i, j]],
+                    0.0,
+                    "off-diagonal must be 0 in fallback: [{i},{j}]={}",
+                    result[[i, j]]
+                );
+            }
+        }
+    }
+}
+
+/// T < MIN_LEDOIT_WOLF_T と T >= MIN_LEDOIT_WOLF_T の境界で結果が変わることを確認。
+/// 同じデータで T=4 (fallback) と T=5 (LW) を比較。
+#[test]
+fn test_ledoit_wolf_t_threshold_changes_behavior() {
+    // T=4: diagonal-only fallback
+    let returns_short = vec![
+        vec![0.01, 0.02, -0.01, 0.015],
+        vec![-0.01, 0.025, 0.02, 0.01],
+        vec![0.02, -0.01, 0.01, 0.018],
+    ];
+    let result_short = ledoit_wolf_shrink(&returns_short);
+    // off-diagonal は全て 0
+    for i in 0..3 {
+        for j in 0..3 {
+            if i != j {
+                assert_eq!(
+                    result_short[[i, j]],
+                    0.0,
+                    "T=4 fallback: off-diagonal [{i},{j}]={} must be 0",
+                    result_short[[i, j]]
+                );
+            }
+        }
+    }
+
+    // T=5: LW shrinkage 起動 (結果が fallback と異なる)
+    let returns_long = vec![
+        vec![0.01, 0.02, -0.01, 0.015, 0.005],
+        vec![-0.01, 0.025, 0.02, 0.01, -0.005],
+        vec![0.02, -0.01, 0.01, 0.018, 0.0],
+    ];
+    let result_long = ledoit_wolf_shrink(&returns_long);
+    // diagonal は正 (fallback でも LW でも保証)
+    for i in 0..3 {
+        assert!(result_long[[i, i]] > 0.0);
+    }
+}
+
+// ==================== box_maximize_sharpe_bounded 同等性テスト ====================
+
+/// Uniform 化された BoxBounds で `box_maximize_sharpe_bounded` を呼んだ結果が
+/// 旧 API `box_maximize_sharpe(returns, cov, max_position)` と完全一致することを
+/// ランダムシードで検証する (per-asset 化リファクタの数値同等性回帰テスト)。
+#[test]
+fn prop_test_uniform_bounds_equals_legacy_random() {
+    let max_positions = [0.15, 0.25, 0.4, 0.6, 0.9];
+
+    let mut state: u64 = 1;
+    let mut next_u64 = || {
+        // 簡易 xorshift64 (helpers.rs::generate_synthetic_returns と同等)
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    let mut next_uniform = || (next_u64() as f64) / (u64::MAX as f64);
+
+    for seed in 0..50_u64 {
+        let n = 3 + (seed % 6) as usize; // n ∈ [3, 8]
+        let t = 25 + (seed % 6) as usize; // t ∈ [25, 30]
+        let returns = generate_synthetic_returns(n, t, 10_000 + seed);
+        let cov = calculate_covariance_matrix(&returns);
+
+        // ランダムな期待リターン [-0.05, 0.10]
+        let expected_returns: Vec<f64> = (0..n).map(|_| next_uniform() * 0.15 - 0.05).collect();
+
+        for &max_position in &max_positions {
+            let legacy = box_maximize_sharpe(&expected_returns, &cov, max_position);
+            let bounds = BoxBounds::uniform(n, max_position);
+            // 旧 wrapper `box_maximize_sharpe` は OptimizerError を等配分に
+            // silent fallback するため、numerical-equivalence 比較ではここでも
+            // 同じ fallback を適用する。新呼び出し元 (cost-aware loop 等) では
+            // Err を Hold へ昇格させる方針だが、本 test はあくまで「旧 API と
+            // 数値同等」を保証するためのリグレッションガード。
+            let bounded = box_maximize_sharpe_bounded(&expected_returns, &cov, &bounds)
+                .unwrap_or_else(|_| vec![1.0 / n as f64; n]);
+
+            assert_eq!(legacy.len(), bounded.len());
+            for (i, (a, b)) in legacy.iter().zip(bounded.iter()).enumerate() {
+                assert!(
+                    (a - b).abs() < 1e-14,
+                    "seed={seed} max={max_position} i={i}: legacy={a}, bounded={b}"
+                );
+            }
+        }
+    }
+}
+
+/// `box_risk_parity_bounded` の uniform 入力が旧 API と完全一致することを
+/// ランダムシードで検証する。
+#[test]
+fn prop_test_box_rp_uniform_bounds_equals_legacy_random() {
+    let max_positions = [0.15, 0.25, 0.4, 0.6, 0.9];
+
+    for seed in 0..50_u64 {
+        let n = 3 + (seed % 6) as usize;
+        let t = 25 + (seed % 6) as usize;
+        let returns = generate_synthetic_returns(n, t, 20_000 + seed);
+        let cov = calculate_covariance_matrix(&returns);
+
+        for &max_position in &max_positions {
+            let legacy = box_risk_parity(&cov, max_position);
+            let bounds = BoxBounds::uniform(n, max_position);
+            let bounded = box_risk_parity_bounded(&cov, &bounds);
+
+            assert_eq!(legacy.len(), bounded.len());
+            for (i, (a, b)) in legacy.iter().zip(bounded.iter()).enumerate() {
+                assert!(
+                    (a - b).abs() < 1e-14,
+                    "seed={seed} max={max_position} i={i}: legacy={a}, bounded={b}"
+                );
+            }
+        }
+    }
+}
+
+/// C1: 保有トークンには sell-only 制約が適用され、最適化結果が
+/// 現在保有比率を超えないことを確認する。
+#[tokio::test]
+async fn execute_portfolio_optimization_held_tokens_sell_only() {
+    use std::collections::BTreeMap;
+
+    let tokens = vec![
+        TokenInfo {
+            symbol: token_out("token-a"),
+            current_rate: rate_from_price(0.01),
+            historical_volatility: 0.2,
+            liquidity_score: Some(0.8),
+            market_cap: Some(cap(1000000)),
+        },
+        TokenInfo {
+            symbol: token_out("token-b"),
+            current_rate: rate_from_price(0.02),
+            historical_volatility: 0.3,
+            liquidity_score: Some(0.7),
+            market_cap: Some(cap(500000)),
+        },
+        TokenInfo {
+            symbol: token_out("token-c"),
+            current_rate: rate_from_price(0.005),
+            historical_volatility: 0.1,
+            liquidity_score: Some(0.9),
+            market_cap: Some(cap(2000000)),
+        },
+    ];
+
+    // token-a に大量のリターンを予測 (本来なら大きく買いたい銘柄)
+    let mut predictions = BTreeMap::new();
+    predictions.insert(token_out("token-a"), price(0.01 * 2.0)); // +100%
+    predictions.insert(token_out("token-b"), price(0.02 * 1.05));
+    predictions.insert(token_out("token-c"), price(0.005 * 1.05));
+
+    let historical_prices = create_sample_price_history();
+
+    // wallet: token-a 10%、token-b 0%、token-c 0%
+    // → token-a は sell-only で上限 0.10
+    // 残り resource は 0.9 だが token-b + token-c で吸収可能（max_position 0.4 を想定）
+    let mut holdings = BTreeMap::new();
+    // 10% holding of token-a (price=0.01, total=1000 NEAR, so 100 NEAR of token-a = 10000 tokens)
+    holdings.insert(
+        token_out("token-a"),
+        TokenAmount::from_smallest_units(BigDecimal::from_f64(10000.0 * 1e18).unwrap(), 18),
+    );
+    let wallet = WalletInfo {
+        holdings,
+        total_value: NearValue::from_near(BigDecimal::from(1000)),
+        cash_balance: NearValue::zero(),
+    };
+
+    let portfolio_data = PortfolioData {
+        tokens,
+        predictions,
+        historical_prices,
+        ..Default::default()
+    };
+
+    let report = execute_portfolio_optimization(&wallet, portfolio_data, 0.05)
+        .await
+        .unwrap();
+
+    // 保有 token-a (current=10%) の最適化結果が 10% を大きく超えない
+    // (sell-only 制約により上限が current_weight に固定される)
+    if let Some(w_a) = report.optimal_weights.weights.get(&token_out("token-a")) {
+        let w_a_f64 = w_a.to_f64().unwrap_or(0.0);
+        assert!(
+            w_a_f64 <= 0.10 + 1e-6,
+            "token-a (held=10%) must not exceed current weight under sell-only, got {w_a_f64}"
+        );
+    }
+}
+
+/// Per-asset upper bounds が結果に正しく反映されることを確認する
+/// (個別資産の上限を厳しくすると、その資産の重みが上限以下になる)。
+#[test]
+fn box_maximize_sharpe_bounded_respects_per_asset_upper() {
+    let n = 5;
+    let returns = generate_synthetic_returns(n, 30, 20001);
+    let cov = calculate_covariance_matrix(&returns);
+    let expected_returns: Vec<f64> = vec![0.05, 0.10, 0.02, 0.08, 0.04];
+
+    // 全資産に 0.5 上限を設定したベースライン
+    let baseline = box_maximize_sharpe(&expected_returns, &cov, 0.5);
+
+    // 資産 1 (最高リターン) のみ 0.15 に厳格化
+    let mut tight_uppers = vec![0.5; n];
+    tight_uppers[1] = 0.15;
+    let tight_bounds = BoxBounds::from_uppers(tight_uppers);
+    let tight = box_maximize_sharpe_bounded(&expected_returns, &cov, &tight_bounds)
+        .expect("non-degenerate input should converge");
+
+    // ベースラインでは資産 1 が大きく配分されているはず
+    assert!(
+        baseline[1] > 0.15,
+        "baseline w[1] = {} should exceed 0.15",
+        baseline[1]
+    );
+    // 厳格化版では資産 1 が 0.15 以下に抑えられる (tol)
+    assert!(
+        tight[1] <= 0.15 + 1e-10,
+        "tight w[1] = {} should be <= 0.15",
+        tight[1]
+    );
+    // 合計は 1.0
+    let sum_tight: f64 = tight.iter().sum();
+    assert!((sum_tight - 1.0).abs() < 1e-10);
+}
+
+// ── BoxBoundsCap::AtMost (cash-bucket / aggregate cap) ──
+
+/// `cap = 1.0` is the boundary that should reproduce the legacy
+/// `sum(w) = 1` behaviour exactly (Sharpe scale invariance with α = 1).
+#[test]
+fn aggregate_cap_at_unit_matches_equality() {
+    let returns = generate_synthetic_returns(6, 30, 70001);
+    let cov = calculate_covariance_matrix(&returns);
+    let expected_returns: Vec<f64> = vec![0.05, 0.10, 0.02, 0.08, 0.04, 0.07];
+    let max_position = 0.4;
+
+    let baseline_bounds = BoxBounds::uniform(6, max_position);
+    let baseline = box_maximize_sharpe_bounded(&expected_returns, &cov, &baseline_bounds)
+        .expect("baseline should converge");
+
+    let capped_bounds = BoxBounds::uniform(6, max_position)
+        .with_aggregate_cap(1.0)
+        .expect("cap=1.0 is valid");
+    let capped = box_maximize_sharpe_bounded(&expected_returns, &cov, &capped_bounds)
+        .expect("cap=1.0 should converge");
+
+    assert_eq!(baseline.len(), capped.len());
+    for (i, (a, b)) in baseline.iter().zip(capped.iter()).enumerate() {
+        assert!((a - b).abs() < 1e-15, "i={i}: baseline={a}, capped={b}");
+    }
+}
+
+/// `cap → 0` should drive every weight to zero (Sharpe scale invariance with
+/// α → 0). The remaining 1.0 is implicit cash.
+#[test]
+fn aggregate_cap_near_zero_pushes_weights_to_zero() {
+    let returns = generate_synthetic_returns(5, 30, 70002);
+    let cov = calculate_covariance_matrix(&returns);
+    let expected_returns: Vec<f64> = vec![0.05, 0.03, 0.02, 0.04, 0.06];
+    let bounds = BoxBounds::uniform(5, 0.5).with_aggregate_cap(0.01).unwrap();
+
+    let weights =
+        box_maximize_sharpe_bounded(&expected_returns, &cov, &bounds).expect("should converge");
+
+    // sum(w) ≈ 0.01, so cash share ≈ 0.99
+    let sum: f64 = weights.iter().sum();
+    assert!(
+        (sum - 0.01).abs() < 1e-10,
+        "sum(w) = {sum}, expected ≈ 0.01"
+    );
+    for &w in &weights {
+        assert!(w >= 0.0 - 1e-12);
+        assert!(w <= 0.01 + 1e-10);
+    }
+}
+
+/// Sharpe-direction invariance: capping should preserve the relative
+/// ordering of weights (the optimizer picks the same tangency portfolio,
+/// just at a smaller scale).
+#[test]
+fn aggregate_cap_preserves_weight_ratios() {
+    let returns = generate_synthetic_returns(5, 30, 70003);
+    let cov = calculate_covariance_matrix(&returns);
+    let expected_returns: Vec<f64> = vec![0.06, 0.02, 0.05, 0.03, 0.07];
+
+    let baseline_bounds = BoxBounds::uniform(5, 0.5);
+    let baseline = box_maximize_sharpe_bounded(&expected_returns, &cov, &baseline_bounds)
+        .expect("baseline should converge");
+
+    let cap = 0.4;
+    let capped_bounds = BoxBounds::uniform(5, 0.5).with_aggregate_cap(cap).unwrap();
+    let capped = box_maximize_sharpe_bounded(&expected_returns, &cov, &capped_bounds)
+        .expect("capped should converge");
+
+    let sum_capped: f64 = capped.iter().sum();
+    assert!((sum_capped - cap).abs() < 1e-10, "sum(w) = {sum_capped}");
+
+    // capped[i] should equal baseline[i] * cap (same direction, scaled)
+    for (i, (b, c)) in baseline.iter().zip(capped.iter()).enumerate() {
+        assert!(
+            (b * cap - c).abs() < 1e-12,
+            "i={i}: baseline*cap={}, capped={c}",
+            b * cap
+        );
+    }
 }

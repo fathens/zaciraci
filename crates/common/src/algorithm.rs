@@ -1,3 +1,9 @@
+pub mod aggregate_cap;
+pub mod half_kelly;
 pub mod portfolio;
 pub mod prediction;
+pub mod regime;
+pub mod shrinkage;
+pub mod stop_loss;
 pub mod types;
+pub mod vol_targeting;

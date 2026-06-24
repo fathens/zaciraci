@@ -19,7 +19,7 @@ fn base_time() -> NaiveDateTime {
 /// evaluated_at の順序が target_time と異なるデータで検証し、
 /// ORDER BY evaluated_at DESC に戻すとこのテストが失敗することを保証する
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_sort_order_by_target_time_desc() -> Result<()> {
     clean_table().await?;
 
@@ -104,7 +104,7 @@ async fn test_sort_order_by_target_time_desc() -> Result<()> {
 /// LIMIT テスト: limit=N で正しく N 件に切り詰められ、
 /// 切り詰め対象が target_time 基準であること（最新 N 件が返る）
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_limit_returns_most_recent_by_target_time() -> Result<()> {
     clean_table().await?;
 
@@ -144,7 +144,7 @@ async fn test_limit_returns_most_recent_by_target_time() -> Result<()> {
 
 /// トークンフィルタテスト: 指定トークンのレコードのみ返すこと
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_token_filter() -> Result<()> {
     clean_table().await?;
 
@@ -188,7 +188,7 @@ async fn test_token_filter() -> Result<()> {
 
 /// 空トークンリストテスト: 空 Vec → 空結果
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_empty_token_list_returns_empty() -> Result<()> {
     clean_table().await?;
 
@@ -214,7 +214,7 @@ async fn test_empty_token_list_returns_empty() -> Result<()> {
 
 /// evaluated_at NULL 除外テスト: 未評価レコードが結果に含まれないこと
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_excludes_unevaluated_records() -> Result<()> {
     clean_table().await?;
 
@@ -258,7 +258,7 @@ async fn test_excludes_unevaluated_records() -> Result<()> {
 
 /// target_time フィルタ: target_time が as_of 以前のレコードは除外されること
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_fresh_predictions_filters_by_target_time() -> Result<()> {
     clean_table().await?;
 
@@ -287,7 +287,7 @@ async fn test_fresh_predictions_filters_by_target_time() -> Result<()> {
 
 /// 最新1件選択: 同一トークンに複数予測がある場合、最新の data_cutoff_time が返ること
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_fresh_predictions_returns_latest_per_token() -> Result<()> {
     clean_table().await?;
 
@@ -324,7 +324,7 @@ async fn test_fresh_predictions_returns_latest_per_token() -> Result<()> {
 
 /// トークン分離: 異なるトークンの予測が正しく分離されること
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_fresh_predictions_separates_tokens() -> Result<()> {
     clean_table().await?;
 
@@ -354,7 +354,7 @@ async fn test_fresh_predictions_separates_tokens() -> Result<()> {
 
 /// 空トークンリスト: 空リストで空結果が返ること
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_fresh_predictions_empty_tokens() -> Result<()> {
     clean_table().await?;
 
@@ -380,7 +380,7 @@ async fn test_fresh_predictions_empty_tokens() -> Result<()> {
 /// (target_time も 4/7 以降) が "latest" として選ばれ、optimizer が未来知識
 /// で動いてしまう (period 21 の simulate 乖離の原因)。
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_fresh_predictions_filters_by_created_at() -> Result<()> {
     clean_table().await?;
 
@@ -436,7 +436,7 @@ async fn test_fresh_predictions_filters_by_created_at() -> Result<()> {
 
 /// 境界値: target_time が as_of ちょうどのレコードは除外されること（gt の確認）
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_fresh_predictions_boundary_excluded() -> Result<()> {
     clean_table().await?;
 
@@ -462,7 +462,7 @@ async fn test_fresh_predictions_boundary_excluded() -> Result<()> {
 
 /// 区間内に複数の予測がある場合、最早の `created_at` が返ること
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_earliest_fresh_visible_returns_min_created_at() -> Result<()> {
     clean_table().await?;
 
@@ -488,7 +488,7 @@ async fn test_earliest_fresh_visible_returns_min_created_at() -> Result<()> {
 
 /// 区間内に予測が存在しない場合は `None` が返ること
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_earliest_fresh_visible_empty_returns_none() -> Result<()> {
     clean_table().await?;
 
@@ -512,7 +512,7 @@ async fn test_earliest_fresh_visible_empty_returns_none() -> Result<()> {
 
 /// `target_time <= created_at` のレコード (= 自分より過去を予測) は除外されること
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_earliest_fresh_visible_filters_stale_target() -> Result<()> {
     clean_table().await?;
 
@@ -562,7 +562,7 @@ async fn test_earliest_fresh_visible_filters_stale_target() -> Result<()> {
 
 /// 区間境界: `since` ちょうどは含む、`until` ちょうどは含まない (半開区間)
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_earliest_fresh_visible_boundary_half_open() -> Result<()> {
     clean_table().await?;
 
@@ -587,7 +587,7 @@ async fn test_earliest_fresh_visible_boundary_half_open() -> Result<()> {
 
 /// `since >= until` の不正な範囲は `None` を返す (panic しない)
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_earliest_fresh_visible_invalid_range_returns_none() -> Result<()> {
     let base = base_time();
 
@@ -606,7 +606,7 @@ async fn test_earliest_fresh_visible_invalid_range_returns_none() -> Result<()> 
 
 /// start > end の場合はエラーを返すこと
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_delete_by_target_time_range_invalid_range() -> Result<()> {
     let base = base_time();
     let start = base + chrono::TimeDelta::hours(10);
@@ -626,7 +626,7 @@ async fn test_delete_by_target_time_range_invalid_range() -> Result<()> {
 
 /// 空テーブルでも正常に 0 件削除として返ること
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_delete_by_target_time_range_empty_table() -> Result<()> {
     clean_table().await?;
 
@@ -642,7 +642,7 @@ async fn test_delete_by_target_time_range_empty_table() -> Result<()> {
 
 /// start == end（1点）の場合、target_time がちょうどその時刻のレコードのみ削除されること
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_delete_by_target_time_range_single_point() -> Result<()> {
     clean_table().await?;
 
@@ -676,7 +676,7 @@ async fn test_delete_by_target_time_range_single_point() -> Result<()> {
 
 /// inclusive range: start と end ちょうどのレコードが削除に含まれること（ge + le）
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_delete_by_target_time_range_inclusive_boundary() -> Result<()> {
     clean_table().await?;
 
@@ -737,7 +737,7 @@ async fn test_delete_by_target_time_range_inclusive_boundary() -> Result<()> {
 /// `new_unchecked` で Layer 1/2 をバイパスし、DB レイヤが想定通り違反を弾くことを
 /// run_test 環境で検証する。
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_layer3_check_rejects_created_at_before_data_cutoff() -> Result<()> {
     clean_table().await?;
 
@@ -791,7 +791,7 @@ async fn test_layer3_check_rejects_created_at_before_data_cutoff() -> Result<()>
 /// Layer 4 filter (`prediction_records::created_at.ge(prediction_records::data_cutoff_time)`)
 /// が optimizer に「データ取得時刻より古い予測」を fresh と誤認させない経路を pin する。
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_layer4_get_latest_fresh_excludes_violator_row() -> Result<()> {
     clean_table().await?;
 
@@ -859,7 +859,7 @@ async fn test_layer4_get_latest_fresh_excludes_violator_row() -> Result<()> {
 /// Layer 4 filter が無ければ MIN(created_at) として違反行が選ばれてしまう状況を
 /// 再現する。
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_layer4_earliest_fresh_visible_excludes_violator_row() -> Result<()> {
     clean_table().await?;
 
@@ -914,7 +914,7 @@ async fn test_layer4_earliest_fresh_visible_excludes_violator_row() -> Result<()
 
 /// Layer 3 境界値: `created_at == data_cutoff_time` は許可されること (>=)。
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_layer3_check_allows_created_at_equal_data_cutoff() -> Result<()> {
     clean_table().await?;
 
@@ -942,7 +942,7 @@ async fn test_layer3_check_allows_created_at_equal_data_cutoff() -> Result<()> {
 
 /// as_of == target_time のレコードが含まれること（le の確認）
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_pending_evaluations_as_of_boundary_included() -> Result<()> {
     clean_table().await?;
 
@@ -968,7 +968,7 @@ async fn test_pending_evaluations_as_of_boundary_included() -> Result<()> {
 
 /// target_time > as_of のレコードは除外されること
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_pending_evaluations_as_of_future_excluded() -> Result<()> {
     clean_table().await?;
 
@@ -994,7 +994,7 @@ async fn test_pending_evaluations_as_of_future_excluded() -> Result<()> {
 
 /// evaluated_at が非 NULL のレコードは除外されること
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_pending_evaluations_as_of_excludes_evaluated() -> Result<()> {
     clean_table().await?;
 
@@ -1023,7 +1023,7 @@ async fn test_pending_evaluations_as_of_excludes_evaluated() -> Result<()> {
 
 /// target_time ASC でソートされて返ること
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_pending_evaluations_as_of_ordered_by_target_time_asc() -> Result<()> {
     clean_table().await?;
 
@@ -1058,7 +1058,7 @@ async fn test_pending_evaluations_as_of_ordered_by_target_time_asc() -> Result<(
 /// target_time 優先: 同一トークン・同一 data_cutoff_time で異なる target_time がある場合、
 /// 最新の target_time を持つレコードが返ること
 #[tokio::test]
-#[serial]
+#[serial(prediction_record)]
 async fn test_fresh_predictions_prefers_latest_target_time() -> Result<()> {
     clean_table().await?;
 

@@ -6,6 +6,7 @@ use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx, ViewContract};
 use blockchain::ref_finance::swap::SwapAction;
 use blockchain::types::gas_price::GasPrice;
 use chrono::{DateTime, Utc};
+use common::config::ConfigAccess;
 use common::types::{TokenAccount, TokenAmount, YoctoValue};
 use logging::*;
 use near_crypto::InMemorySigner;
@@ -188,6 +189,22 @@ fn estimate_no_impact_swap_via_pools(
     current_amount.to_u128()
 }
 
+/// Per-swap fee, in basis points, for the rated liquid-staking carry pools
+/// (LiNEAR pool 3515 / stNEAR pool 3514 are both 5 bps). Used by the carry
+/// execution path, which prices via token_rates and must apply the fee
+/// explicitly. Expressed against [`dex::FEE_DIVISOR`].
+const CARRY_SWAP_FEE_BPS: u32 = 5;
+
+/// Apply one carry pool fee to a gross (no-fee) swap output, mirroring the AMM
+/// fee convention in `dex::pool_info` (BigDecimal, no floating point). Two
+/// applications across a buy+sell round trip yield the ~`2 × CARRY_SWAP_FEE_BPS`
+/// round-trip cost the carry economics depend on.
+fn apply_carry_swap_fee(gross: u128) -> u128 {
+    let net = BigDecimal::from(gross) * BigDecimal::from(dex::FEE_DIVISOR - CARRY_SWAP_FEE_BPS)
+        / BigDecimal::from(dex::FEE_DIVISOR);
+    to_u128_or_warn(&net, "carry_swap_net")
+}
+
 impl SimulationClient {
     /// Calculate the actual and no-impact swap outputs from a single sim_day
     /// pool snapshot. Returns `None` if pool data is unavailable or the actual
@@ -260,6 +277,27 @@ impl SimulationClient {
         }
     }
 
+    /// Liquid-staking carry swap output: priced from token_rates (correct for
+    /// the rated LiNEAR/stNEAR pools, whose raw reserves do not give the price
+    /// via constant product) with one explicit pool fee applied.
+    ///
+    /// The pool path's raw-reserve `estimate_return` mis-prices rated pools,
+    /// and the DB-rate fallback applies no fee at all; this path combines the
+    /// correct (token_rates) price with the fee so the round-trip cost
+    /// (~`2 × CARRY_SWAP_FEE_BPS`) is never under-counted in carry backtests.
+    async fn calculate_swap_output_via_rated_carry(
+        &self,
+        token_in: &TokenAccount,
+        amount_in: u128,
+        token_out: &TokenAccount,
+        sim_day: DateTime<Utc>,
+    ) -> u128 {
+        let gross = self
+            .calculate_swap_output_via_rates(token_in, amount_in, token_out, sim_day)
+            .await;
+        apply_carry_swap_fee(gross)
+    }
+
     async fn handle_swap(&self, args_value: serde_json::Value) -> anyhow::Result<u128> {
         let log = DEFAULT.new(o!("function" => "SimulationClient::handle_swap"));
 
@@ -288,54 +326,73 @@ impl SimulationClient {
             return Ok(0);
         }
 
-        // Try pool-based estimate_return first (fee + slippage aware). The
-        // same sim_day pool snapshot also feeds the no-impact reference used
-        // for `price_impact_ratio`; the DbRate fallback skips it because
-        // mixing DB rates with pool reserves would muddle the ratio's
-        // semantics.
-        let (amount_out, swap_method, price_impact_ratio) = match self
-            .calculate_swap_outputs_via_pools(&swap_actions, amount_in, sim_day)
-            .await
-        {
-            Some((out, no_impact)) => {
-                // Compute the ratio as (n - out) / n via i128 subtraction so the
-                // small AMM impact survives f64 quantization. Doing `1.0 - out/n`
-                // directly cancels at most-significant digits — for u128 inputs
-                // near 1e24 yocto, the relative precision drops to ~10^-8 when
-                // the true ratio is near zero. Promoting to i128 keeps the
-                // subtraction exact; the final f64 division then preserves the
-                // sign (negative noise just below zero remains visible to
-                // consumers, per SwapEvent::price_impact_ratio docs).
-                //
-                // u128 → i128 is `try_from` rather than `as`: pool reserves above
-                // i128::MAX (~1.7e38) are off-spec — would require e.g. a
-                // 24-decimals × 100T-supply token fully concentrated in one
-                // pool — and `as` would silently wrap to a negative i128,
-                // producing a bogus positive ratio. fail-closed to `None` so
-                // hostile sim snapshots cannot quietly skew observation stats.
-                let ratio = no_impact.and_then(|n| {
-                    let n_i128 = i128::try_from(n).ok()?;
-                    let out_i128 = i128::try_from(out).ok()?;
-                    Some((n_i128 - out_i128) as f64 / n as f64)
-                });
-                (out, SwapMethod::PoolBased, ratio)
-            }
-            None => {
-                // Fallback to DB rate conversion (no fee/slippage)
-                warn!(log, "pool data unavailable, falling back to DB rate";
-                    "token_in" => %token_in_account, "token_out" => %token_out_account
-                );
+        // Carry mode prices LST swaps via token_rates (the rated LiNEAR/stNEAR
+        // pools cannot be priced from raw reserves via constant product) and
+        // applies an explicit fee. It takes precedence over the pool path,
+        // which would otherwise mis-price these rated pools. price_impact is
+        // `None` because the secant reference would require the same
+        // raw-reserve math the rated pools defeat.
+        let (amount_out, swap_method, price_impact_ratio) =
+            if common::config::typed().trade_lst_carry_enabled() {
                 let out = self
-                    .calculate_swap_output_via_rates(
+                    .calculate_swap_output_via_rated_carry(
                         &token_in_account,
                         amount_in,
                         &token_out_account,
                         sim_day,
                     )
                     .await;
-                (out, SwapMethod::DbRate, None)
-            }
-        };
+                (out, SwapMethod::RatedCarry, None)
+            } else {
+                // Try pool-based estimate_return first (fee + slippage aware). The
+                // same sim_day pool snapshot also feeds the no-impact reference used
+                // for `price_impact_ratio`; the DbRate fallback skips it because
+                // mixing DB rates with pool reserves would muddle the ratio's
+                // semantics.
+                match self
+                    .calculate_swap_outputs_via_pools(&swap_actions, amount_in, sim_day)
+                    .await
+                {
+                    Some((out, no_impact)) => {
+                        // Compute the ratio as (n - out) / n via i128 subtraction so the
+                        // small AMM impact survives f64 quantization. Doing `1.0 - out/n`
+                        // directly cancels at most-significant digits — for u128 inputs
+                        // near 1e24 yocto, the relative precision drops to ~10^-8 when
+                        // the true ratio is near zero. Promoting to i128 keeps the
+                        // subtraction exact; the final f64 division then preserves the
+                        // sign (negative noise just below zero remains visible to
+                        // consumers, per SwapEvent::price_impact_ratio docs).
+                        //
+                        // u128 → i128 is `try_from` rather than `as`: pool reserves above
+                        // i128::MAX (~1.7e38) are off-spec — would require e.g. a
+                        // 24-decimals × 100T-supply token fully concentrated in one
+                        // pool — and `as` would silently wrap to a negative i128,
+                        // producing a bogus positive ratio. fail-closed to `None` so
+                        // hostile sim snapshots cannot quietly skew observation stats.
+                        let ratio = no_impact.and_then(|n| {
+                            let n_i128 = i128::try_from(n).ok()?;
+                            let out_i128 = i128::try_from(out).ok()?;
+                            Some((n_i128 - out_i128) as f64 / n as f64)
+                        });
+                        (out, SwapMethod::PoolBased, ratio)
+                    }
+                    None => {
+                        // Fallback to DB rate conversion (no fee/slippage)
+                        warn!(log, "pool data unavailable, falling back to DB rate";
+                            "token_in" => %token_in_account, "token_out" => %token_out_account
+                        );
+                        let out = self
+                            .calculate_swap_output_via_rates(
+                                &token_in_account,
+                                amount_in,
+                                &token_out_account,
+                                sim_day,
+                            )
+                            .await;
+                        (out, SwapMethod::DbRate, None)
+                    }
+                }
+            };
 
         if amount_out == 0 {
             warn!(log, "swap output is zero, skipping";

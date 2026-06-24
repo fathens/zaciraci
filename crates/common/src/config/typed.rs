@@ -532,6 +532,142 @@ fn clamp_portfolio_pred_err_diagonal_k(v: f64) -> f64 {
     }
 }
 
+/// Lower bound for [`ConfigAccess::trade_prediction_shrinkage_lambda`].
+///
+/// `0.0` disables shrinkage entirely (the formula reduces to the identity
+/// `μ_adj = μ`). Negative values would *amplify* the raw expected return
+/// against its prediction error, which inverts the intent of the
+/// uncertainty-aware adjustment.
+const TRADE_PREDICTION_SHRINKAGE_LAMBDA_LOWER: f64 = 0.0;
+
+/// Upper bound for [`ConfigAccess::trade_prediction_shrinkage_lambda`].
+///
+/// At `λ = 1.0`, a typical 10 % MAPE prediction (√MSRE ≈ 0.10) fully nulls
+/// a typical 3 % expected return through the soft-threshold. Higher values
+/// are not analytically wrong but would routinely zero out all signals,
+/// reducing the optimizer to a cost-deduction-only mode.
+const TRADE_PREDICTION_SHRINKAGE_LAMBDA_UPPER: f64 = 1.0;
+
+/// Idempotent clamp applied to `trade_prediction_shrinkage_lambda` reads.
+///
+/// `NaN` is mapped to the lower bound (disabling shrinkage) rather than
+/// poisoning the optimizer. `±INFINITY` is handled by `f64::clamp` itself.
+fn clamp_trade_prediction_shrinkage_lambda(v: f64) -> f64 {
+    if v.is_nan() {
+        TRADE_PREDICTION_SHRINKAGE_LAMBDA_LOWER
+    } else {
+        v.clamp(
+            TRADE_PREDICTION_SHRINKAGE_LAMBDA_LOWER,
+            TRADE_PREDICTION_SHRINKAGE_LAMBDA_UPPER,
+        )
+    }
+}
+
+/// Lower bound for [`ConfigAccess::trade_max_price_impact`].
+///
+/// `0.005` (0.5 %) is the floor: thresholds below half a percent would
+/// reject almost every realistic swap (normal multi-hop AMM routing incurs
+/// fractions of a percent of depth impact), collapsing the strategy into
+/// permanent Hold.
+const TRADE_MAX_PRICE_IMPACT_LOWER: f64 = 0.005;
+
+/// Upper bound for [`ConfigAccess::trade_max_price_impact`].
+///
+/// `0.95` (95 %) is the ceiling: the guard exists to block catastrophic
+/// thin-pool routes (observed up to 97 % impact), so a threshold at or above
+/// 95 % would let essentially all of them through and defeat the purpose.
+const TRADE_MAX_PRICE_IMPACT_UPPER: f64 = 0.95;
+
+/// NaN fallback for [`ConfigAccess::trade_max_price_impact`].
+///
+/// A poisoned config read must not disable the guard: a `NaN` threshold in
+/// the comparison `impact > threshold` would always evaluate to false and
+/// silently allow catastrophic swaps. The fallback matches the documented
+/// default.
+const TRADE_MAX_PRICE_IMPACT_NAN_FALLBACK: f64 = 0.5;
+
+/// Idempotent clamp applied to `trade_max_price_impact` reads.
+///
+/// `NaN` is mapped to the documented default (keeping the guard active)
+/// rather than poisoning the comparison. `±INFINITY` is handled by
+/// `f64::clamp` itself.
+fn clamp_trade_max_price_impact(v: f64) -> f64 {
+    if v.is_nan() {
+        TRADE_MAX_PRICE_IMPACT_NAN_FALLBACK
+    } else {
+        v.clamp(TRADE_MAX_PRICE_IMPACT_LOWER, TRADE_MAX_PRICE_IMPACT_UPPER)
+    }
+}
+
+/// Lower bound for [`ConfigAccess::trade_lst_carry_min_hold_days`].
+///
+/// `30` is the floor: the liquid-staking carry backtest showed that holding
+/// windows shorter than 30 days are not reliably positive (7–14 day windows
+/// won only 55–77 % of the time as rate noise swamps the ~4 %/yr drift),
+/// whereas every window of 30 days or more was net-positive. The min-hold
+/// gate is the sole guarantor of the positive-return property, so the floor
+/// must not drop below it.
+const TRADE_LST_CARRY_MIN_HOLD_DAYS_LOWER: u32 = 30;
+
+/// Upper bound for [`ConfigAccess::trade_lst_carry_min_hold_days`].
+///
+/// `90` caps the hold so the forced-liquidation fee drag at period boundaries
+/// stays amortized over a reasonable horizon without locking capital
+/// indefinitely. Longer holds give diminishing carry benefit and reduce the
+/// strategy's ability to react to a de-peg.
+const TRADE_LST_CARRY_MIN_HOLD_DAYS_UPPER: u32 = 90;
+
+/// Idempotent clamp applied to `trade_lst_carry_min_hold_days` reads.
+///
+/// `u32` cannot be `NaN` or negative, so the only failure modes are values
+/// below the 30-day positive-return floor or above the 90-day cap; both are
+/// brought into range by `u32::clamp`.
+fn clamp_trade_lst_carry_min_hold_days(v: u32) -> u32 {
+    v.clamp(
+        TRADE_LST_CARRY_MIN_HOLD_DAYS_LOWER,
+        TRADE_LST_CARRY_MIN_HOLD_DAYS_UPPER,
+    )
+}
+
+/// Lower bound for [`ConfigAccess::trade_lst_carry_max_depeg`].
+///
+/// `0.01` (1 %) is the floor: a tolerance below one percent would reject the
+/// normal day-to-day rate noise of a healthy LST pool and collapse the carry
+/// strategy into permanent Hold.
+const TRADE_LST_CARRY_MAX_DEPEG_LOWER: f64 = 0.01;
+
+/// Upper bound for [`ConfigAccess::trade_lst_carry_max_depeg`].
+///
+/// `0.5` (50 %) is the ceiling: the guard exists to detect a liquid-staking
+/// de-peg (the pool rate moving sharply against the token's intrinsic value),
+/// so a tolerance at or above half the position value would let a genuine
+/// de-peg through and defeat the purpose.
+const TRADE_LST_CARRY_MAX_DEPEG_UPPER: f64 = 0.5;
+
+/// NaN fallback for [`ConfigAccess::trade_lst_carry_max_depeg`].
+///
+/// A poisoned config read must not disable the de-peg guard: a `NaN`
+/// tolerance would make every comparison `deviation > tolerance` evaluate to
+/// false and silently allow buying into a de-pegged pool. The fallback
+/// matches the documented default.
+const TRADE_LST_CARRY_MAX_DEPEG_NAN_FALLBACK: f64 = 0.05;
+
+/// Idempotent clamp applied to `trade_lst_carry_max_depeg` reads.
+///
+/// `NaN` is mapped to the documented default (keeping the guard active)
+/// rather than poisoning the comparison. `±INFINITY` is handled by
+/// `f64::clamp` itself.
+fn clamp_trade_lst_carry_max_depeg(v: f64) -> f64 {
+    if v.is_nan() {
+        TRADE_LST_CARRY_MAX_DEPEG_NAN_FALLBACK
+    } else {
+        v.clamp(
+            TRADE_LST_CARRY_MAX_DEPEG_LOWER,
+            TRADE_LST_CARRY_MAX_DEPEG_UPPER,
+        )
+    }
+}
+
 /// Idempotent clamp applied to `portfolio_cost_iteration_damping` reads.
 ///
 /// `NaN` is mapped to [`PORTFOLIO_COST_ITERATION_DAMPING_NAN_FALLBACK`] so
@@ -607,6 +743,235 @@ fn clamp_trade_max_position_vs_pool_ratio(v: f64) -> f64 {
     }
 }
 
+// ── TRADE_ALPHA_GATE_MULTIPLIER ──
+
+/// Lower bound for [`ConfigAccess::trade_alpha_gate_multiplier`].
+///
+/// `0.1` is the floor: the gate filter `H × ER > k × round_trip_cost`
+/// degenerates for `k < 0.1` because even break-even alpha would pass.
+const TRADE_ALPHA_GATE_MULTIPLIER_LOWER: f64 = 0.1;
+
+/// Upper bound for [`ConfigAccess::trade_alpha_gate_multiplier`].
+///
+/// `10.0` is the ceiling: thresholds above 10x round-trip cost reject
+/// essentially every realistic alpha and collapse the strategy into
+/// permanent Hold; the dedicated `TRADE_ALPHA_GATE_ENABLED` flag should
+/// be used to disable the gate instead.
+const TRADE_ALPHA_GATE_MULTIPLIER_UPPER: f64 = 10.0;
+
+/// NaN fallback for [`ConfigAccess::trade_alpha_gate_multiplier`].
+///
+/// A poisoned config read does not propagate `NaN` into the gate
+/// comparison `H × ER > k × round_trip_cost` (a `NaN` comparison
+/// would always evaluate to false and silently disable the gate).
+/// The fallback matches the documented default.
+const TRADE_ALPHA_GATE_MULTIPLIER_NAN_FALLBACK: f64 = 2.0;
+
+/// Idempotent clamp applied to `trade_alpha_gate_multiplier` reads.
+fn clamp_trade_alpha_gate_multiplier(v: f64) -> f64 {
+    if v.is_nan() {
+        TRADE_ALPHA_GATE_MULTIPLIER_NAN_FALLBACK
+    } else {
+        v.clamp(
+            TRADE_ALPHA_GATE_MULTIPLIER_LOWER,
+            TRADE_ALPHA_GATE_MULTIPLIER_UPPER,
+        )
+    }
+}
+
+/// Lower bound for [`ConfigAccess::trade_dd_threshold`].
+///
+/// `0.01` (= 1% drawdown) is the floor for any meaningful circuit breaker;
+/// thresholds below 1% would fire on routine intraday volatility and turn
+/// the breaker into a churn generator.
+const TRADE_DD_THRESHOLD_LOWER: f64 = 0.01;
+
+/// Upper bound for [`ConfigAccess::trade_dd_threshold`].
+///
+/// `0.99` (= 99% drawdown) keeps the breaker at least notionally enabled.
+/// `1.0` would mean "only fire when the entire portfolio is gone", which is
+/// equivalent to disabling the feature; the dedicated
+/// `TRADE_DD_CIRCUIT_BREAKER_ENABLED` flag should be used to disable it.
+const TRADE_DD_THRESHOLD_UPPER: f64 = 0.99;
+
+/// NaN fallback for [`ConfigAccess::trade_dd_threshold`].
+///
+/// A poisoned config read does not propagate `NaN` into the period-end
+/// comparison `current/initial < 1 - threshold`. The conservative fallback
+/// (15%) matches the documented default and preserves the same semantics
+/// as if the operator had not set the variable at all.
+const TRADE_DD_THRESHOLD_NAN_FALLBACK: f64 = 0.15;
+
+/// Idempotent clamp applied to `trade_dd_threshold` reads.
+///
+/// `NaN` is mapped to [`TRADE_DD_THRESHOLD_NAN_FALLBACK`] so that an
+/// injected `NaN` does not silently disable the circuit breaker (a `NaN`
+/// comparison would always evaluate to false). `±INFINITY` is handled
+/// correctly by `f64::clamp` itself.
+fn clamp_trade_dd_threshold(v: f64) -> f64 {
+    if v.is_nan() {
+        TRADE_DD_THRESHOLD_NAN_FALLBACK
+    } else {
+        v.clamp(TRADE_DD_THRESHOLD_LOWER, TRADE_DD_THRESHOLD_UPPER)
+    }
+}
+
+// ── PORTFOLIO_VOLATILITY_TARGET (Phase 1: vol targeting) ──
+
+/// Lower bound for [`ConfigAccess::portfolio_volatility_target`].
+///
+/// `0.005` (= 0.5 %/day, ~8 % annualized) is the floor for any nontrivial
+/// vol-targeting signal; below this every realistic crypto-portfolio
+/// volatility forces the cap to the absolute floor (10 %) and the signal
+/// degenerates into a constant-cash regime.
+const PORTFOLIO_VOLATILITY_TARGET_LOWER: f64 = 0.005;
+
+/// Upper bound for [`ConfigAccess::portfolio_volatility_target`].
+///
+/// `0.05` (= 5 %/day, ~80 % annualized) is the ceiling at which the
+/// vol-targeting signal saturates almost always at `cap = 1.0` for typical
+/// diversified crypto portfolios; beyond that the signal is effectively
+/// disabled regardless of the flag, so we clamp here for a clearer
+/// "this is the supported range" error rather than silent no-op.
+const PORTFOLIO_VOLATILITY_TARGET_UPPER: f64 = 0.05;
+
+/// NaN fallback for [`ConfigAccess::portfolio_volatility_target`].
+const PORTFOLIO_VOLATILITY_TARGET_NAN_FALLBACK: f64 = 0.015;
+
+fn clamp_portfolio_volatility_target(v: f64) -> f64 {
+    if v.is_nan() {
+        PORTFOLIO_VOLATILITY_TARGET_NAN_FALLBACK
+    } else {
+        v.clamp(
+            PORTFOLIO_VOLATILITY_TARGET_LOWER,
+            PORTFOLIO_VOLATILITY_TARGET_UPPER,
+        )
+    }
+}
+
+// ── PORTFOLIO_HALF_KELLY_FRACTION (Phase 3a: half-Kelly) ──
+
+/// Lower bound for [`ConfigAccess::portfolio_half_kelly_fraction`].
+///
+/// `0.1` (= one-tenth Kelly) is the floor; lower values turn the Kelly cap
+/// into a per-asset rounding-down, indistinguishable from the existing
+/// `MAX_POSITION_SIZE` cap.
+const PORTFOLIO_HALF_KELLY_FRACTION_LOWER: f64 = 0.1;
+
+/// Upper bound for [`ConfigAccess::portfolio_half_kelly_fraction`].
+///
+/// `0.5` (= half Kelly, the namesake of the module) is the ceiling. Full
+/// Kelly is famously fragile to ER estimation noise and a 10 % MAPE on `μ_i`
+/// translates to ~100 % error on `f_i`; we keep the operator from accidentally
+/// dialing in unstable territory.
+const PORTFOLIO_HALF_KELLY_FRACTION_UPPER: f64 = 0.5;
+
+const PORTFOLIO_HALF_KELLY_FRACTION_NAN_FALLBACK: f64 = 0.25;
+
+fn clamp_portfolio_half_kelly_fraction(v: f64) -> f64 {
+    if v.is_nan() {
+        PORTFOLIO_HALF_KELLY_FRACTION_NAN_FALLBACK
+    } else {
+        v.clamp(
+            PORTFOLIO_HALF_KELLY_FRACTION_LOWER,
+            PORTFOLIO_HALF_KELLY_FRACTION_UPPER,
+        )
+    }
+}
+
+// ── PORTFOLIO_STOP_LOSS_THRESHOLD (Phase 3b: per-token stop-loss) ──
+
+/// Lower bound for [`ConfigAccess::portfolio_stop_loss_threshold`].
+///
+/// `0.05` (= 5 % drawdown) is the floor; tighter thresholds fire on routine
+/// intraday volatility (~3-6 %/day for crypto) and turn the stop-loss into
+/// a churn generator.
+const PORTFOLIO_STOP_LOSS_THRESHOLD_LOWER: f64 = 0.05;
+
+/// Upper bound for [`ConfigAccess::portfolio_stop_loss_threshold`].
+///
+/// `0.30` (= 30 % drawdown) is the ceiling; beyond that the trigger rarely
+/// fires in practice and the stop-loss becomes a silent no-op.
+const PORTFOLIO_STOP_LOSS_THRESHOLD_UPPER: f64 = 0.30;
+
+const PORTFOLIO_STOP_LOSS_THRESHOLD_NAN_FALLBACK: f64 = 0.10;
+
+fn clamp_portfolio_stop_loss_threshold(v: f64) -> f64 {
+    if v.is_nan() {
+        PORTFOLIO_STOP_LOSS_THRESHOLD_NAN_FALLBACK
+    } else {
+        v.clamp(
+            PORTFOLIO_STOP_LOSS_THRESHOLD_LOWER,
+            PORTFOLIO_STOP_LOSS_THRESHOLD_UPPER,
+        )
+    }
+}
+
+// ── PORTFOLIO_REGIME_SMA_PERIOD (Phase 2: market breadth) ──
+
+/// Lower bound for [`ConfigAccess::portfolio_regime_sma_period`].
+///
+/// `5` (= 5 days) is the floor; shorter windows make the breadth indicator
+/// indistinguishable from the latest price tick and produce noise rather
+/// than signal.
+const PORTFOLIO_REGIME_SMA_PERIOD_LOWER: u32 = 5;
+
+/// Upper bound for [`ConfigAccess::portfolio_regime_sma_period`].
+///
+/// `60` (= 60 days) is the ceiling. Beyond that the simulate window
+/// (typically 10-30 days) cannot supply enough history for any token, and
+/// every breadth call collapses to the `Neutral` defensive fallback,
+/// which is equivalent to disabling the flag.
+const PORTFOLIO_REGIME_SMA_PERIOD_UPPER: u32 = 60;
+
+fn clamp_portfolio_regime_sma_period(v: u32) -> u32 {
+    v.clamp(
+        PORTFOLIO_REGIME_SMA_PERIOD_LOWER,
+        PORTFOLIO_REGIME_SMA_PERIOD_UPPER,
+    )
+}
+
+// ── PORTFOLIO_REGIME_*_EXPOSURE (Phase 2: regime → cap mapping) ──
+
+const PORTFOLIO_REGIME_EXPOSURE_LOWER: f64 = 0.0;
+const PORTFOLIO_REGIME_EXPOSURE_UPPER: f64 = 1.0;
+const PORTFOLIO_REGIME_BULL_EXPOSURE_NAN_FALLBACK: f64 = 1.0;
+const PORTFOLIO_REGIME_NEUTRAL_EXPOSURE_NAN_FALLBACK: f64 = 0.75;
+const PORTFOLIO_REGIME_BEAR_EXPOSURE_NAN_FALLBACK: f64 = 0.5;
+
+fn clamp_portfolio_regime_bull_exposure(v: f64) -> f64 {
+    if v.is_nan() {
+        PORTFOLIO_REGIME_BULL_EXPOSURE_NAN_FALLBACK
+    } else {
+        v.clamp(
+            PORTFOLIO_REGIME_EXPOSURE_LOWER,
+            PORTFOLIO_REGIME_EXPOSURE_UPPER,
+        )
+    }
+}
+
+fn clamp_portfolio_regime_neutral_exposure(v: f64) -> f64 {
+    if v.is_nan() {
+        PORTFOLIO_REGIME_NEUTRAL_EXPOSURE_NAN_FALLBACK
+    } else {
+        v.clamp(
+            PORTFOLIO_REGIME_EXPOSURE_LOWER,
+            PORTFOLIO_REGIME_EXPOSURE_UPPER,
+        )
+    }
+}
+
+fn clamp_portfolio_regime_bear_exposure(v: f64) -> f64 {
+    if v.is_nan() {
+        PORTFOLIO_REGIME_BEAR_EXPOSURE_NAN_FALLBACK
+    } else {
+        v.clamp(
+            PORTFOLIO_REGIME_EXPOSURE_LOWER,
+            PORTFOLIO_REGIME_EXPOSURE_UPPER,
+        )
+    }
+}
+
 define_typed_config! {
     // ── trade ──
 
@@ -674,6 +1039,139 @@ define_typed_config! {
     fn trade_unwrap_on_stop() -> bool {
         key: "TRADE_UNWRAP_ON_STOP",
         default: false
+    }
+
+    /// Enable the period-mid drawdown circuit breaker.
+    ///
+    /// When `true`, `manage_evaluation_period` checks the current portfolio
+    /// value against `period.initial_value` on every cycle and forces an
+    /// early end-of-period (liquidation + new period) once drawdown exceeds
+    /// `trade_dd_threshold`. When `false` (default), the legacy behavior is
+    /// preserved: positions are held until the scheduled
+    /// `trade_evaluation_days` boundary regardless of intra-period loss.
+    fn trade_dd_circuit_breaker_enabled() -> bool {
+        key: "TRADE_DD_CIRCUIT_BREAKER_ENABLED",
+        default: false
+    }
+
+    /// Drawdown threshold (as a fraction of the period's initial value)
+    /// above which the circuit breaker fires.
+    ///
+    /// The trigger condition is `current_value / initial_value < 1 - threshold`,
+    /// i.e. a 0.15 threshold fires when the portfolio has lost more than 15%
+    /// of its period-start value. Has no effect when
+    /// `trade_dd_circuit_breaker_enabled` is `false`.
+    fn trade_dd_threshold() -> f64 {
+        key: "TRADE_DD_THRESHOLD",
+        default: 0.15,
+        clamp: clamp_trade_dd_threshold
+    }
+
+    /// Phase 1: enable volatility targeting for the aggregate cap.
+    ///
+    /// When `true`, `compute_vol_target_cap(σ_target, σ_portfolio)` runs
+    /// every cycle and contributes a `Volatility(cap)` signal to
+    /// `compose_aggregate_cap`. Default `false` (legacy behaviour: no
+    /// vol-targeting de-risk).
+    fn portfolio_volatility_target_enabled() -> bool {
+        key: "PORTFOLIO_VOLATILITY_TARGET_ENABLED",
+        default: false
+    }
+
+    /// Daily volatility target for `compute_vol_target_cap`.
+    ///
+    /// `cap = σ_target / σ_portfolio`, so smaller values force more cash.
+    /// Default 0.015 (= 1.5 %/day, ~24 % annualized) matches hedge-fund VaR
+    /// conventions and is conservative enough that typical crypto
+    /// portfolios get meaningful de-risk in volatile regimes without
+    /// collapsing to full cash in calm ones. Has no effect when
+    /// `portfolio_volatility_target_enabled` is `false`.
+    fn portfolio_volatility_target() -> f64 {
+        key: "PORTFOLIO_VOLATILITY_TARGET",
+        default: 0.015,
+        clamp: clamp_portfolio_volatility_target
+    }
+
+    /// Phase 2: enable market-breadth regime detection.
+    ///
+    /// When `true`, `detect_regime_from_prices` runs every cycle and
+    /// contributes a `Breadth(MarketRegime::aggregate_cap(scales))` signal
+    /// to `compose_aggregate_cap`. Default `false`.
+    fn portfolio_regime_breadth_enabled() -> bool {
+        key: "PORTFOLIO_REGIME_BREADTH_ENABLED",
+        default: false
+    }
+
+    /// SMA window length (days) used by the breadth indicator.
+    fn portfolio_regime_sma_period() -> u32 {
+        key: "PORTFOLIO_REGIME_SMA_PERIOD",
+        default: 20,
+        clamp: clamp_portfolio_regime_sma_period
+    }
+
+    /// Aggregate cap for the `Bull` regime.
+    fn portfolio_regime_bull_exposure() -> f64 {
+        key: "PORTFOLIO_REGIME_BULL_EXPOSURE",
+        default: 1.0,
+        clamp: clamp_portfolio_regime_bull_exposure
+    }
+
+    /// Aggregate cap for the `Neutral` regime.
+    fn portfolio_regime_neutral_exposure() -> f64 {
+        key: "PORTFOLIO_REGIME_NEUTRAL_EXPOSURE",
+        default: 0.75,
+        clamp: clamp_portfolio_regime_neutral_exposure
+    }
+
+    /// Aggregate cap for the `Bear` regime.
+    fn portfolio_regime_bear_exposure() -> f64 {
+        key: "PORTFOLIO_REGIME_BEAR_EXPOSURE",
+        default: 0.5,
+        clamp: clamp_portfolio_regime_bear_exposure
+    }
+
+    /// Phase 3a: enable per-asset half-Kelly upper bound.
+    ///
+    /// When `true`, `compute_half_kelly_uppers` runs every cycle and the
+    /// resulting per-asset uppers tighten `BoxBounds` via
+    /// `apply_half_kelly`. Default `false`.
+    fn portfolio_half_kelly_enabled() -> bool {
+        key: "PORTFOLIO_HALF_KELLY_ENABLED",
+        default: false
+    }
+
+    /// Kelly fraction for `compute_half_kelly_uppers`.
+    ///
+    /// Default `0.25` (Quarter Kelly) — Kelly sizing is fragile to ER
+    /// estimation noise; 10 % MAPE on `μ_i` translates to ~100 % error on
+    /// `f_i = (μ_i - rf) / σ²_i`. A fractional Kelly tames this. Has no
+    /// effect when `portfolio_half_kelly_enabled` is `false`.
+    fn portfolio_half_kelly_fraction() -> f64 {
+        key: "PORTFOLIO_HALF_KELLY_FRACTION",
+        default: 0.25,
+        clamp: clamp_portfolio_half_kelly_fraction
+    }
+
+    /// Phase 3b: enable per-token stop-loss override.
+    ///
+    /// When `true`, every held token whose realised drawdown exceeds
+    /// `portfolio_stop_loss_threshold` gets its per-asset upper forced to
+    /// `0` (sell-only). Default `false`.
+    fn portfolio_stop_loss_enabled() -> bool {
+        key: "PORTFOLIO_STOP_LOSS_ENABLED",
+        default: false
+    }
+
+    /// Drawdown threshold (as a fraction of entry price) above which the
+    /// per-token stop-loss fires.
+    ///
+    /// Default `0.10` (= 10 % drawdown) matches the ~2σ-event heuristic
+    /// for typical 3-6 %/day crypto volatility — tight enough to cap
+    /// realised loss without firing on routine intraday swings.
+    fn portfolio_stop_loss_threshold() -> f64 {
+        key: "PORTFOLIO_STOP_LOSS_THRESHOLD",
+        default: 0.10,
+        clamp: clamp_portfolio_stop_loss_threshold
     }
 
     /// Parallel prediction tasks
@@ -766,6 +1264,222 @@ define_typed_config! {
     fn trade_bias_correction_enabled() -> bool {
         key: "TRADE_BIAS_CORRECTION_ENABLED",
         default: false
+    }
+
+    /// Use all-token candidate selection per cycle instead of locking in the
+    /// top-N volatility tokens at the start of each evaluation period.
+    ///
+    /// When `false` (default), the legacy behavior is preserved: at the start
+    /// of a new evaluation period, `select_top_volatility_tokens` picks the
+    /// top `TRADE_TOP_TOKENS` tokens, and those same tokens are used for the
+    /// entire period.
+    ///
+    /// When `true`, each cycle re-evaluates the full candidate set: every
+    /// token with a fresh prediction is unioned with the currently held
+    /// tokens (so sell-only liquidation paths are always available), and the
+    /// portfolio optimizer chooses among them. The set is *not* truncated to
+    /// `TRADE_TOP_TOKENS` — the optimizer applies its own bounds and cost
+    /// model. Held tokens remain in the candidate set even if their pool
+    /// liquidity has fallen below the entry threshold, so they can still be
+    /// exited.
+    ///
+    /// This is gated behind a feature flag so the legacy fixed-set behavior
+    /// can be A/B compared against the all-token policy via the `simulate`
+    /// crate before it ships as the production default.
+    fn trade_all_predicted_enabled() -> bool {
+        key: "TRADE_ALL_PREDICTED_ENABLED",
+        default: false
+    }
+
+    /// Cap on the number of candidates handed to the portfolio optimizer
+    /// after the confidence filter, when all-token mode is enabled.
+    ///
+    /// When `0` (default), no Top-N pruning is applied — every candidate
+    /// surviving confidence + liquidity filters reaches the optimizer.
+    /// When `> 0`, a composite score
+    /// `confidence × liquidity_score × max(0, expected_return)` is computed
+    /// per token and only the top N are kept. Currently held tokens are
+    /// always included regardless of rank, so existing positions can still
+    /// be sold even if their score is low.
+    ///
+    /// The cap is intended to reduce the optimizer's search space in
+    /// all-token mode (~290 candidates) where noise from low-quality
+    /// predictions appears to dominate. It is gated as a feature flag
+    /// so its effect can be A/B compared via `simulate` before shipping
+    /// as a production default.
+    ///
+    /// Has no effect when `TRADE_ALL_PREDICTED_ENABLED` is `false`.
+    fn trade_top_n_after_prediction() -> u32 {
+        key: "TRADE_TOP_N_AFTER_PREDICTION",
+        default: 0
+    }
+
+    /// Enable the alpha gate filter that rejects tokens whose expected
+    /// return cannot recoup the round-trip AMM cost.
+    ///
+    /// When `true`, before the optimizer sees the candidate set the strategy
+    /// estimates the round-trip variable cost for a worst-case position
+    /// (`total_value × MAX_POSITION_SIZE`) and excludes tokens where
+    /// `hold_cycles × expected_return < multiplier × round_trip_cost`.
+    /// Held tokens always bypass the gate so existing positions can still
+    /// be liquidated. Default `false` (legacy: no gate, optimizer sees
+    /// every confidence-filtered token).
+    fn trade_alpha_gate_enabled() -> bool {
+        key: "TRADE_ALPHA_GATE_ENABLED",
+        default: false
+    }
+
+    /// Safety multiplier `k` applied to the round-trip cost in the alpha
+    /// gate comparison `H × ER > k × round_trip_cost`.
+    ///
+    /// `k = 2.0` (default) requires alpha at least 2× the estimated
+    /// round-trip cost before a token is allowed into the optimizer. This
+    /// is the "safety margin" axis; the holding-period axis lives in
+    /// [`ConfigAccess::trade_alpha_gate_hold_cycles`]. Has no effect when
+    /// `trade_alpha_gate_enabled` is `false`.
+    fn trade_alpha_gate_multiplier() -> f64 {
+        key: "TRADE_ALPHA_GATE_MULTIPLIER",
+        default: 2.0,
+        clamp: clamp_trade_alpha_gate_multiplier
+    }
+
+    /// Number of cycles the strategy expects to hold a position before
+    /// closing it, used in the alpha gate comparison
+    /// `H × ER > k × round_trip_cost`.
+    ///
+    /// `H = 1` (default) is the conservative single-cycle round trip
+    /// assumption — alpha must recoup the full cost on the *next* cycle.
+    /// Larger values amortize the cost across multiple cycles and lower
+    /// the effective gate threshold. The `(1..=100)` clamp range covers
+    /// daily-rebalance horizons from one day to ~3 months. Has no effect
+    /// when `trade_alpha_gate_enabled` is `false`.
+    fn trade_alpha_gate_hold_cycles() -> u32 {
+        key: "TRADE_ALPHA_GATE_HOLD_CYCLES",
+        default: 1
+    }
+
+    /// Minimum number of tokens that must reach the optimizer after the
+    /// alpha gate filter.
+    ///
+    /// When the gate rejects so many tokens that fewer than this many
+    /// remain, the strategy supplies missing slots from the rejected
+    /// tokens ranked by composite score (the same score used by
+    /// `TRADE_TOP_N_AFTER_PREDICTION`). This prevents the Markowitz
+    /// optimizer from collapsing to a single-token corner solution when
+    /// the gate is too strict. `0` disables the fallback (gate decisions
+    /// are final). Default `5`. Has no effect when
+    /// `trade_alpha_gate_enabled` is `false`.
+    fn trade_alpha_gate_min_pass_count() -> u32 {
+        key: "TRADE_ALPHA_GATE_MIN_PASS_COUNT",
+        default: 5
+    }
+
+    /// Soft-threshold shrinkage strength applied to per-token expected returns.
+    ///
+    /// The optimizer's `expected_return` for each token is adjusted to
+    /// `sign(μ) × max(0, |μ| - λ × √MSRE)` where `λ` is this value and
+    /// `MSRE = mean((mape/100)²)` is the per-token prediction error
+    /// (`calculate_per_token_pred_err_variance`). The form preserves the sign
+    /// of the original return, dampens magnitudes toward zero in proportion
+    /// to prediction uncertainty, and bounds `|μ_adj| ≤ |μ|`.
+    ///
+    /// Defaults to `0.0` (no shrinkage, identical to the legacy behavior).
+    /// Production-recommended range is roughly `[0.05, 0.3]`; the upper
+    /// clamp bound is `1.0` because beyond that point typical signals
+    /// (≈3 % return) are fully nulled by typical prediction error
+    /// (≈10 % MAPE → √MSRE ≈ 0.1).
+    ///
+    /// ## Interaction with `PORTFOLIO_PRED_ERR_DIAGONAL_ENABLED`
+    ///
+    /// Both flags address prediction uncertainty: this shrinks `μ` in the
+    /// optimizer numerator while `PORTFOLIO_PRED_ERR_DIAGONAL_*` inflates
+    /// `Σ` in the denominator. Enabling both simultaneously produces a
+    /// super-linear joint effect against high-MSRE tokens that may be too
+    /// aggressive. Treat them as alternatives in production until A/B
+    /// evidence justifies stacking.
+    fn trade_prediction_shrinkage_lambda() -> f64 {
+        key: "TRADE_PREDICTION_SHRINKAGE_LAMBDA",
+        default: 0.0,
+        clamp: clamp_trade_prediction_shrinkage_lambda
+    }
+
+    /// Maximum AMM price impact (depth slippage) tolerated for a single swap.
+    ///
+    /// Before executing a swap the strategy compares the route's effective
+    /// rate at the full trade size against its marginal rate at a tiny
+    /// reference size (`execution_guard::price_impact_ratio`). When the
+    /// resulting impact exceeds this threshold the swap is skipped instead of
+    /// executed, because such routes are dominated by a thin or stale pool
+    /// and would convert most of the input into slippage (real cycles up to
+    /// 97 % impact were observed against dead pools).
+    ///
+    /// This is independent of `SlippagePolicy` / `min_out`: `min_out` only
+    /// caps *additional* slippage beyond the (already bad) estimated output,
+    /// and is `0` for `Unprotected` liquidation swaps, so it does not block
+    /// entry into a thin-pool route. The guard applies to every swap
+    /// regardless of policy.
+    ///
+    /// Defaults to `0.5` (50 %). A backtest sweep (block 2026-06-04..06-15)
+    /// showed that `0.03` (3 %) blocks routine thin-pool meme swaps — normal
+    /// executed impact for these tokens runs 6–37 % — which only churns the
+    /// portfolio (6 → 17 swaps) and marginally worsens return (-6.29 % →
+    /// -6.54 %) without avoiding any catastrophe. At `0.5` the guard is
+    /// return-neutral versus disabled in normal windows while still blocking
+    /// the catastrophic dead-pool routes (observed up to 97 %) it exists for.
+    /// The `[0.005, 0.95]` clamp keeps the guard from degenerating into
+    /// permanent Hold (too low) or a no-op (too high).
+    fn trade_max_price_impact() -> f64 {
+        key: "TRADE_MAX_PRICE_IMPACT",
+        default: 0.5,
+        clamp: clamp_trade_max_price_impact
+    }
+
+    /// Enable the Tier-1 liquid-staking carry strategy.
+    ///
+    /// When `true`, the trade engine runs a dedicated low-turnover mode that
+    /// buys-and-holds an equal weight of the liquid-staking tokens (LiNEAR,
+    /// stNEAR) to capture their structural ~4 %/yr appreciation against NEAR,
+    /// bypassing the volatility-portfolio pipeline (prediction, CoV ranking,
+    /// alpha gate, Markowitz optimizer) entirely. The legacy/all-predicted
+    /// modes are untouched when this is `false` (the default), so the carry
+    /// mode can be A/B compared via `simulate` before shipping.
+    fn trade_lst_carry_enabled() -> bool {
+        key: "TRADE_LST_CARRY_ENABLED",
+        default: false
+    }
+
+    /// Minimum holding horizon (in days) for the liquid-staking carry mode.
+    ///
+    /// The carry backtest showed positive returns only for holds of at least
+    /// 30 days (shorter windows lose to rate noise), so this is both the
+    /// floor of the `[30, 90]` clamp and the default. The value is propagated
+    /// into the evaluation-period length so the period machinery does not
+    /// force-liquidate the position before the hold completes; it also bounds
+    /// the forced-liquidation fee drag at period boundaries
+    /// (`round_trip_cost × 365 / N`, which must stay small relative to the
+    /// carry). Has no effect when `trade_lst_carry_enabled` is `false`.
+    fn trade_lst_carry_min_hold_days() -> u32 {
+        key: "TRADE_LST_CARRY_MIN_HOLD_DAYS",
+        default: 30,
+        clamp: clamp_trade_lst_carry_min_hold_days
+    }
+
+    /// Maximum tolerated de-peg deviation for a liquid-staking token before
+    /// the carry mode refuses to buy it.
+    ///
+    /// Because the carry mode bypasses the optimizer and CoV ranking, it
+    /// loses their implicit protection against distorted exchange rates. This
+    /// guard re-introduces a sanity bound: when an LST's observed rate
+    /// deviates from its expected (slowly, monotonically drifting) value by
+    /// more than this fraction — the signature of a liquidity-crisis de-peg —
+    /// the token is held/skipped rather than bought into. Defaults to `0.05`
+    /// (5 %); the `[0.01, 0.5]` clamp keeps it from collapsing into permanent
+    /// Hold (too low) or letting a genuine de-peg through (too high). Has no
+    /// effect when `trade_lst_carry_enabled` is `false`.
+    fn trade_lst_carry_max_depeg() -> f64 {
+        key: "TRADE_LST_CARRY_MAX_DEPEG",
+        default: 0.05,
+        clamp: clamp_trade_lst_carry_max_depeg
     }
 
     // ── arbitrage ──

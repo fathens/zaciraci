@@ -1635,6 +1635,8 @@ fn pd_with_three_tokens() -> PortfolioData {
             mode: PredErrDiagonalMode::Additive,
         }),
         cost_deductions,
+        pred_uncertainty: None,
+        aggregate_cap_strategy: Default::default(),
     }
 }
 
@@ -1902,4 +1904,64 @@ fn pred_err_diagonal_mode_default_is_additive() {
         PredErrDiagonalMode::default(),
         PredErrDiagonalMode::Additive
     );
+}
+
+#[test]
+fn clamp_and_normalize_per_asset_uniform_uppers_matches_scalar_semantics() {
+    // 旧スカラー版の意味論を inline で再現し、per-asset 版が uniform 入力で
+    // 同等の結果を返すことを 1e-15 精度で確認する。
+    let cases: Vec<(Vec<f64>, f64)> = vec![
+        (vec![0.4, 0.3, 0.2, 0.1], 0.5),
+        (vec![-0.1, 0.6, 0.7, 0.3], 0.5),
+        (vec![0.25, 0.25, 0.25, 0.25], 0.5),
+        (vec![1.0, 0.0, 0.0, 0.0], 0.6),
+    ];
+    for (weights, max_position) in cases {
+        // 旧スカラー版相当の inline 実装
+        let mut expected: Vec<f64> = weights.iter().map(|w| w.clamp(0.0, max_position)).collect();
+        let sum: f64 = expected.iter().sum();
+        if sum > 0.0 {
+            for w in expected.iter_mut() {
+                *w /= sum;
+            }
+        }
+
+        let mut actual = weights.clone();
+        let uppers = vec![max_position; weights.len()];
+        clamp_and_normalize_per_asset(&mut actual, &uppers);
+
+        assert_eq!(expected.len(), actual.len());
+        for (e, a) in expected.iter().zip(actual.iter()) {
+            assert!(
+                (e - a).abs() < 1e-15,
+                "expected={e}, actual={a}, weights={weights:?}, max={max_position}"
+            );
+        }
+    }
+}
+
+#[test]
+fn clamp_and_normalize_per_asset_respects_per_asset_uppers() {
+    // Different upper per asset: asset 0 capped at 0.2, asset 1 at 0.5, asset 2 at 0.4.
+    let mut weights = vec![0.6, 0.2, 0.2];
+    let uppers = vec![0.2, 0.5, 0.4];
+    clamp_and_normalize_per_asset(&mut weights, &uppers);
+    // After clamp: [0.2, 0.2, 0.2], sum = 0.6 → normalize to [1/3, 1/3, 1/3].
+    let expected = 1.0 / 3.0;
+    for w in &weights {
+        assert!((w - expected).abs() < 1e-15);
+    }
+    let sum: f64 = weights.iter().sum();
+    assert!((sum - 1.0).abs() < 1e-15);
+}
+
+#[test]
+fn clamp_and_normalize_per_asset_clamps_negative_to_zero() {
+    let mut weights = vec![-0.1, 0.5, 0.6];
+    let uppers = vec![0.4, 0.5, 0.4];
+    clamp_and_normalize_per_asset(&mut weights, &uppers);
+    // After clamp: [0.0, 0.5, 0.4], sum = 0.9 → [0.0, 5/9, 4/9].
+    assert!(weights[0].abs() < 1e-15);
+    assert!((weights[1] - 0.5 / 0.9).abs() < 1e-15);
+    assert!((weights[2] - 0.4 / 0.9).abs() < 1e-15);
 }
