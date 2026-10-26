@@ -48,6 +48,31 @@ fn rejects_hop_array_length_mismatch() {
 }
 
 #[test]
+fn round_trip_keeps_hop_amounts() {
+    let trade = make_trade(1, 1, 0, chain_hops());
+    let row = to_new_db(&trade).unwrap();
+    assert_eq!(
+        row.hop_amounts_in,
+        vec![
+            Some(BigDecimal::from(1_000_000_000_000_000_000_006_458u128)),
+            Some(BigDecimal::from(1_000_000_000_000_000_000_005_516u128)),
+        ]
+    );
+    let back = from_db(as_db_row(&row)).unwrap();
+    assert_eq!(back.hops()[1].amount_out, units(2_005_516));
+
+    let mut row = to_new_db(&trade).unwrap();
+    tweak(&mut row).hop_amounts_out.pop();
+    expect_err(&row, "hop array lengths differ");
+    let mut row = to_new_db(&trade).unwrap();
+    tweak(&mut row).hop_amounts_in[0] = None;
+    expect_err(&row, "NULL element in hop_amounts_in");
+    let mut row = to_new_db(&trade).unwrap();
+    *tweak(&mut row).hop_amounts_in[0].as_mut().unwrap() = BigDecimal::from_str("0.5").unwrap();
+    expect_err(&row, "hop 0 amount");
+}
+
+#[test]
 fn rejects_null_elements() {
     let mut row = to_new_db(&make_trade(1, 1, 0, chain_hops())).unwrap();
     tweak(&mut row).pool_ids[1] = None;

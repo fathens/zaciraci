@@ -47,9 +47,10 @@ CREATE INDEX idx_ref_flow_txs_pending ON ref_flow_txs (block_time DESC)
     WHERE enriched_at IS NULL;
 
 -- 3. Executed trades, one per Ref receipt. Hops are stored as parallel
---    arrays (pool_ids / hop_tokens_in / hop_tokens_out / fee_bps) whose
---    lengths are forced equal; token_in / token_out are redundant copies
---    of the first / last hop kept for indexing and are pinned by CHECKs.
+--    arrays (pool_ids / hop_tokens_in / hop_tokens_out / hop_amounts_in /
+--    hop_amounts_out / fee_bps) whose lengths are forced equal; token_in /
+--    token_out are redundant copies of the first / last hop kept for
+--    indexing and are pinned by CHECKs.
 CREATE TABLE ref_flow_trades (
     receipt_id     VARCHAR   PRIMARY KEY,
     tx_hash        VARCHAR   NOT NULL REFERENCES ref_flow_txs (tx_hash) ON DELETE CASCADE,
@@ -61,9 +62,13 @@ CREATE TABLE ref_flow_trades (
     -- SYNC: allowed values must match TradeRoute::from_str in
     -- crates/dex/src/ref_trade.rs
     route          VARCHAR   NOT NULL CHECK (route IN ('swap', 'ft')),
-    pool_ids       INTEGER[] NOT NULL,
-    hop_tokens_in  TEXT[]    NOT NULL,
-    hop_tokens_out TEXT[]    NOT NULL,
+    pool_ids        INTEGER[] NOT NULL,
+    hop_tokens_in   TEXT[]    NOT NULL,
+    hop_tokens_out  TEXT[]    NOT NULL,
+    -- Executed amounts per hop (smallest units), from the contract's
+    -- `Swapped` log line of each action.
+    hop_amounts_in  NUMERIC(39, 0)[] NOT NULL,
+    hop_amounts_out NUMERIC(39, 0)[] NOT NULL,
     -- Pool fee per hop in units of 1/10000 (PoolInfo.total_fee), taken from
     -- the latest pool_info row at or before block_time. NULL as a whole when
     -- the fee of any hop is unknown; never partially filled.
@@ -78,11 +83,17 @@ CREATE TABLE ref_flow_trades (
         CHECK (amount_out >= 0
            AND amount_out <= 340282366920938463463374607431768211455),
     CHECK (cardinality(pool_ids) BETWEEN 1 AND 16
-       AND cardinality(hop_tokens_in)  = cardinality(pool_ids)
-       AND cardinality(hop_tokens_out) = cardinality(pool_ids)
+       AND cardinality(hop_tokens_in)   = cardinality(pool_ids)
+       AND cardinality(hop_tokens_out)  = cardinality(pool_ids)
+       AND cardinality(hop_amounts_in)  = cardinality(pool_ids)
+       AND cardinality(hop_amounts_out) = cardinality(pool_ids)
        AND array_position(pool_ids, NULL) IS NULL
        AND array_position(hop_tokens_in, NULL) IS NULL
-       AND array_position(hop_tokens_out, NULL) IS NULL),
+       AND array_position(hop_tokens_out, NULL) IS NULL
+       AND array_position(hop_amounts_in, NULL) IS NULL
+       AND array_position(hop_amounts_out, NULL) IS NULL
+       AND 0 <= ALL(hop_amounts_in)
+       AND 0 <= ALL(hop_amounts_out)),
     CHECK (token_in  = hop_tokens_in[1]),
     CHECK (token_out = hop_tokens_out[cardinality(hop_tokens_out)]),
     CHECK (fee_bps IS NULL

@@ -10,6 +10,8 @@ crate::batch::enforce_cols_matches_fields!(NewDbRefTrade {
     pool_ids,
     hop_tokens_in,
     hop_tokens_out,
+    hop_amounts_in,
+    hop_amounts_out,
     fee_bps,
     token_in,
     amount_in,

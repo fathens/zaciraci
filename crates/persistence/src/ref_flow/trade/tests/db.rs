@@ -59,6 +59,18 @@ async fn check_constraints_reject_invalid_rows() -> Result<()> {
     expect_insert_fails(row, "NULL pool_id element").await?;
 
     let mut row = valid.clone();
+    tweak(&mut row).hop_amounts_in.pop();
+    expect_insert_fails(row, "hop_amounts_in length mismatch").await?;
+
+    let mut row = valid.clone();
+    tweak(&mut row).hop_amounts_out[1] = None;
+    expect_insert_fails(row, "NULL hop_amounts_out element").await?;
+
+    let mut row = valid.clone();
+    tweak(&mut row).hop_amounts_out[1] = Some(BigDecimal::from(-1));
+    expect_insert_fails(row, "negative hop amount").await?;
+
+    let mut row = valid.clone();
     *tweak(&mut row).token_in = "other.near".to_owned();
     expect_insert_fails(row, "token_in != hop_tokens_in[1]").await?;
 

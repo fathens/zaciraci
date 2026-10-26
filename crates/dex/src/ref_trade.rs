@@ -11,9 +11,10 @@
 //! - amounts are non-negative integers that fit in `u128`, and the input
 //!   amount is strictly positive
 //!
-//! Hop amounts are intentionally not stored per hop: only the overall
-//! input and output of the receipt are known reliably for every route
-//! shape. See [`Trade::amount_in`] for the split-route convention.
+//! Every hop carries its own executed amounts (from the contract's
+//! `Swapped` log line), so per-pool volume and split routes are exact.
+//! The trade-level [`Trade::amount_in`] / [`Trade::amount_out`] summarise
+//! the receipt; see their docs for the split-route convention.
 
 use std::fmt;
 use std::str::FromStr;
@@ -31,12 +32,16 @@ use crate::token_pair::FEE_DIVISOR;
 /// BETWEEN 1 AND 16` CHECK on `ref_flow_trades`.
 pub const MAX_HOPS: usize = 16;
 
-/// One `swap` action inside a Ref receipt.
+/// One `swap` action inside a Ref receipt, with the amounts the contract
+/// reported for it (`Swapped {amount_in} {token_in} for {amount_out}
+/// {token_out}`). Amounts are validated by [`Trade::new`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hop {
     pub pool_id: u32,
     pub token_in: TokenInAccount,
     pub token_out: TokenOutAccount,
+    pub amount_in: TokenSmallestUnits,
+    pub amount_out: TokenSmallestUnits,
 }
 
 /// How the trade reached the Ref contract.
@@ -113,6 +118,11 @@ pub enum TradeError {
     InvalidAmountIn(TokenSmallestUnits),
     #[error("amount_out {0} is not a non-negative integer that fits in u128")]
     InvalidAmountOut(TokenSmallestUnits),
+    #[error("hop {index} amount {amount} is not a non-negative integer that fits in u128")]
+    InvalidHopAmount {
+        index: usize,
+        amount: TokenSmallestUnits,
+    },
 }
 
 /// One executed Ref receipt. Construct only through [`Trade::new`].
@@ -174,6 +184,16 @@ impl Trade {
             }
             if let Some(&bad) = fees.iter().find(|&&f| f >= FEE_DIVISOR) {
                 return Err(TradeError::FeeOutOfRange(bad));
+            }
+        }
+        for (index, hop) in hops.iter().enumerate() {
+            for amount in [&hop.amount_in, &hop.amount_out] {
+                if !is_u128_integer(amount) {
+                    return Err(TradeError::InvalidHopAmount {
+                        index,
+                        amount: amount.clone(),
+                    });
+                }
             }
         }
         if !is_u128_integer(&parts.amount_in) || parts.amount_in.is_zero() {
@@ -242,17 +262,19 @@ impl Trade {
 
     /// Total input amount in smallest units of [`Trade::token_in`].
     ///
-    /// For a [`RouteShape::Chain`] this is the amount fed into the first
-    /// hop. For a [`RouteShape::Split`] it is, by convention, the sum of
-    /// the explicit `amount_in` of every action whose input token equals
-    /// the first hop's input token; legs starting from other tokens are
-    /// not included.
+    /// For a [`RouteShape::Chain`] this is the first hop's input. For a
+    /// [`RouteShape::Split`] it is, by convention, the sum of the inputs of
+    /// every hop whose input token equals the first hop's input token;
+    /// legs starting from other tokens are not included.
     pub fn amount_in(&self) -> &TokenSmallestUnits {
         &self.amount_in
     }
 
-    /// Total output amount in smallest units of [`Trade::token_out`], as
-    /// reported by the last `Swapped` log of the receipt.
+    /// Total output amount in smallest units of [`Trade::token_out`].
+    ///
+    /// For a [`RouteShape::Chain`] this is the last hop's output. For a
+    /// [`RouteShape::Split`] it is the sum of the outputs of every hop
+    /// whose output token equals the last hop's output token.
     pub fn amount_out(&self) -> &TokenSmallestUnits {
         &self.amount_out
     }

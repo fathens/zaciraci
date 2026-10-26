@@ -141,6 +141,8 @@ diesel::table! {
         pool_ids -> Array<Nullable<Int4>>,
         hop_tokens_in -> Array<Nullable<Text>>,
         hop_tokens_out -> Array<Nullable<Text>>,
+        hop_amounts_in -> Array<Nullable<Numeric>>,
+        hop_amounts_out -> Array<Nullable<Numeric>>,
         fee_bps -> Nullable<Array<Nullable<Int4>>>,
         token_in -> Varchar,
         amount_in -> Numeric,

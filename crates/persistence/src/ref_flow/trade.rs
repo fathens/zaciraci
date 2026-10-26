@@ -32,6 +32,8 @@ struct DbRefTrade {
     pool_ids: Vec<Option<i32>>,
     hop_tokens_in: Vec<Option<String>>,
     hop_tokens_out: Vec<Option<String>>,
+    hop_amounts_in: Vec<Option<BigDecimal>>,
+    hop_amounts_out: Vec<Option<BigDecimal>>,
     fee_bps: Option<Vec<Option<i32>>>,
     token_in: String,
     amount_in: BigDecimal,
@@ -51,6 +53,8 @@ pub(crate) struct NewDbRefTrade {
     pool_ids: Vec<Option<i32>>,
     hop_tokens_in: Vec<Option<String>>,
     hop_tokens_out: Vec<Option<String>>,
+    hop_amounts_in: Vec<Option<BigDecimal>>,
+    hop_amounts_out: Vec<Option<BigDecimal>>,
     fee_bps: Option<Vec<Option<i32>>>,
     token_in: String,
     amount_in: BigDecimal,
@@ -60,7 +64,7 @@ pub(crate) struct NewDbRefTrade {
 
 impl NewDbRefTrade {
     /// Bind parameters per row; see `crate::batch`.
-    pub(crate) const COLS: NonZeroUsize = NonZeroUsize::new(14).expect("COLS must be non-zero");
+    pub(crate) const COLS: NonZeroUsize = NonZeroUsize::new(16).expect("COLS must be non-zero");
     pub(crate) const CHUNK_ROWS: NonZeroUsize = batch::chunk_rows(Self::COLS);
 }
 
@@ -94,6 +98,16 @@ pub(crate) fn to_new_db(trade: &Trade) -> Result<NewDbRefTrade> {
             .hops()
             .iter()
             .map(|h| Some(h.token_out.to_string()))
+            .collect(),
+        hop_amounts_in: trade
+            .hops()
+            .iter()
+            .map(|h| Some(h.amount_in.as_bigdecimal().clone()))
+            .collect(),
+        hop_amounts_out: trade
+            .hops()
+            .iter()
+            .map(|h| Some(h.amount_out.as_bigdecimal().clone()))
             .collect(),
         fee_bps: trade
             .fees()
@@ -129,26 +143,45 @@ fn from_db(row: DbRefTrade) -> Result<Trade> {
         let pool_ids = non_null(row.pool_ids, "pool_ids")?;
         let tokens_in = non_null(row.hop_tokens_in, "hop_tokens_in")?;
         let tokens_out = non_null(row.hop_tokens_out, "hop_tokens_out")?;
-        if tokens_in.len() != pool_ids.len() || tokens_out.len() != pool_ids.len() {
+        let amounts_in = non_null(row.hop_amounts_in, "hop_amounts_in")?;
+        let amounts_out = non_null(row.hop_amounts_out, "hop_amounts_out")?;
+        let n = pool_ids.len();
+        if [
+            tokens_in.len(),
+            tokens_out.len(),
+            amounts_in.len(),
+            amounts_out.len(),
+        ]
+        .iter()
+        .any(|&len| len != n)
+        {
             return Err(anyhow!(
-                "hop array lengths differ: pool_ids={} hop_tokens_in={} hop_tokens_out={}",
-                pool_ids.len(),
+                "hop array lengths differ: pool_ids={n} hop_tokens_in={} hop_tokens_out={} \
+                 hop_amounts_in={} hop_amounts_out={}",
                 tokens_in.len(),
-                tokens_out.len()
+                tokens_out.len(),
+                amounts_in.len(),
+                amounts_out.len()
             ));
         }
         let hops = pool_ids
             .into_iter()
             .zip(tokens_in)
             .zip(tokens_out)
-            .map(|((pool_id, token_in), token_out)| {
-                Ok(Hop {
-                    pool_id: u32::try_from(pool_id)
-                        .with_context(|| format!("negative pool_id {pool_id}"))?,
-                    token_in: TokenAccount::from_str(&token_in)?.to_in(),
-                    token_out: TokenAccount::from_str(&token_out)?.to_out(),
-                })
-            })
+            .zip(amounts_in)
+            .zip(amounts_out)
+            .map(
+                |((((pool_id, token_in), token_out), amount_in), amount_out)| {
+                    Ok(Hop {
+                        pool_id: u32::try_from(pool_id)
+                            .with_context(|| format!("negative pool_id {pool_id}"))?,
+                        token_in: TokenAccount::from_str(&token_in)?.to_in(),
+                        token_out: TokenAccount::from_str(&token_out)?.to_out(),
+                        amount_in: TokenSmallestUnits::from_bigdecimal(amount_in),
+                        amount_out: TokenSmallestUnits::from_bigdecimal(amount_out),
+                    })
+                },
+            )
             .collect::<Result<Vec<Hop>>>()?;
         let fees = row
             .fee_bps

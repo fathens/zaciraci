@@ -10,6 +10,8 @@ pub fn hop(pool_id: u32, token_in: &str, token_out: &str) -> Hop {
         pool_id,
         token_in: tok(token_in).to_in(),
         token_out: tok(token_out).to_out(),
+        amount_in: units(1_000_000_000_000_000_000_000_000 + u128::from(pool_id)),
+        amount_out: units(2_000_000 + u128::from(pool_id)),
     }
 }
 
@@ -91,6 +93,8 @@ pub(super) fn as_db_row(row: &NewDbRefTrade) -> DbRefTrade {
         pool_ids: row.pool_ids.clone(),
         hop_tokens_in: row.hop_tokens_in.clone(),
         hop_tokens_out: row.hop_tokens_out.clone(),
+        hop_amounts_in: row.hop_amounts_in.clone(),
+        hop_amounts_out: row.hop_amounts_out.clone(),
         fee_bps: row.fee_bps.clone(),
         token_in: row.token_in.clone(),
         amount_in: row.amount_in.clone(),
@@ -105,6 +109,8 @@ pub(super) fn tweak(row: &mut NewDbRefTrade) -> RowFields<'_> {
         pool_ids: &mut row.pool_ids,
         hop_tokens_in: &mut row.hop_tokens_in,
         hop_tokens_out: &mut row.hop_tokens_out,
+        hop_amounts_in: &mut row.hop_amounts_in,
+        hop_amounts_out: &mut row.hop_amounts_out,
         fee_bps: &mut row.fee_bps,
         token_in: &mut row.token_in,
         token_out: &mut row.token_out,
@@ -119,6 +125,8 @@ pub(super) struct RowFields<'a> {
     pub pool_ids: &'a mut Vec<Option<i32>>,
     pub hop_tokens_in: &'a mut Vec<Option<String>>,
     pub hop_tokens_out: &'a mut Vec<Option<String>>,
+    pub hop_amounts_in: &'a mut Vec<Option<BigDecimal>>,
+    pub hop_amounts_out: &'a mut Vec<Option<BigDecimal>>,
     pub fee_bps: &'a mut Option<Vec<Option<i32>>>,
     pub token_in: &'a mut String,
     pub token_out: &'a mut String,

@@ -14,6 +14,8 @@ fn hop(pool_id: u32, token_in: &str, token_out: &str) -> Hop {
         pool_id,
         token_in: tok(token_in).to_in(),
         token_out: tok(token_out).to_out(),
+        amount_in: units(1_000),
+        amount_out: units(999),
     }
 }
 
@@ -235,4 +237,22 @@ fn with_fees_attaches_validated_fees() {
     );
     let with = trade.with_fees(vec![30, 5]).unwrap();
     assert_eq!(with.fees(), Some(&[30, 5][..]));
+}
+
+#[test]
+fn hop_amounts_must_be_integers_within_u128() {
+    let mut hops = chain_hops();
+    hops[1].amount_out = TokenSmallestUnits::from_bigdecimal(BigDecimal::from_str("0.5").unwrap());
+    let err = Trade::new(parts(hops)).unwrap_err();
+    assert!(
+        matches!(err, TradeError::InvalidHopAmount { index: 1, .. }),
+        "{err}"
+    );
+
+    let mut hops = chain_hops();
+    hops[0].amount_in = units(0);
+    assert!(
+        Trade::new(parts(hops)).is_ok(),
+        "zero hop amounts are allowed"
+    );
 }
