@@ -7,6 +7,7 @@ edition = "2024"
 common = { path = "../common" }
 dex = { path = "../dex" }
 persistence = { path = "../persistence" }
+reqwest = { workspace = true }
 logging = { path = "../logging" }
 anyhow = { workspace = true }
 base64 = { workspace = true }
@@ -19,5 +20,6 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 
 [dev-dependencies]
+mockito = "1.7"
 serial_test = "3.2"
-tokio = { workspace = true, features = ["full"] }
+tokio = { workspace = true, features = ["full", "test-util"] }

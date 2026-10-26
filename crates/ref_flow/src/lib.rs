@@ -9,4 +9,7 @@
 //! rate limiting, response parsing and the cycle orchestration.
 
 pub mod budget;
+pub mod client;
+pub mod credit;
 pub mod parse;
+pub mod rate_limit;
