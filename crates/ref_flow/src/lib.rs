@@ -11,6 +11,7 @@
 pub mod accounting;
 pub mod budget;
 pub mod client;
+pub mod collector;
 pub mod credit;
 pub mod parse;
 pub mod rate_limit;

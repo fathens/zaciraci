@@ -75,6 +75,21 @@ impl Block {
 
 // ---------------------------------------------------------------- list
 
+/// Block timestamp (ns) of a list item, from `block.block_timestamp` or
+/// the flat `included_in_block_timestamp`. Used for cursor bookkeeping
+/// before the item is fully parsed.
+pub fn list_item_timestamp_ns(value: &Value) -> Option<u64> {
+    let raw = value
+        .get("block")
+        .and_then(|b| b.get("block_timestamp"))
+        .or_else(|| value.get("included_in_block_timestamp"))?;
+    match raw {
+        Value::String(s) => s.parse().ok(),
+        Value::Number(n) => n.as_u64(),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct ListItem {
     receipt_id: String,

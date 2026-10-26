@@ -21,6 +21,8 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 
 [dev-dependencies]
+bs58 = { workspace = true }
 mockito = "1.7"
+persistence = { path = "../persistence", features = ["test-helpers"] }
 serial_test = "3.2"
 tokio = { workspace = true, features = ["full", "test-util"] }

@@ -106,8 +106,11 @@ async fn cleanup_before(cutoff: NaiveDateTime, batch_rows: i64) -> Result<Cleanu
     Ok(stats)
 }
 
+#[cfg(any(test, feature = "test-helpers"))]
+pub mod test_support;
+
 #[cfg(test)]
-pub(crate) mod test_support;
+pub(crate) mod test_ids;
 
 #[cfg(test)]
 mod tests;

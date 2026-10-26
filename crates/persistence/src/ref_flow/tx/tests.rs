@@ -1,5 +1,6 @@
 use super::*;
 use crate::ref_flow::receipt::{RefReceipt, RefReceiptParts, ingest_receipts};
+use crate::ref_flow::test_ids::*;
 use crate::ref_flow::test_support::*;
 use crate::ref_flow::trade::tests::{chain_hops, hop, make_trade};
 use serial_test::serial;
