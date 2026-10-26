@@ -3145,6 +3145,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "ref_flow"
+version = "1.4.2"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "common 1.4.2",
+ "dex",
+ "logging",
+ "persistence",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "slog",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "regex"
 version = "1.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

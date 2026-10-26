@@ -9,6 +9,7 @@ members = [
     "crates/grpc_auth",
     "crates/logging",
     "crates/persistence",
+    "crates/ref_flow",
     "crates/simulate",
     "crates/trade",
     "crates/web",

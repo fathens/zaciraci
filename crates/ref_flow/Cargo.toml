@@ -1,0 +1,21 @@
+[package]
+name = "ref_flow"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+common = { path = "../common" }
+dex = { path = "../dex" }
+persistence = { path = "../persistence" }
+logging = { path = "../logging" }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+slog = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+serial_test = "3.2"
+tokio = { workspace = true, features = ["full"] }
