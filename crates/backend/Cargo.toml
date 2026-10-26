@@ -10,6 +10,7 @@ blockchain = { path = "../blockchain" }
 persistence = { path = "../persistence" }
 trade = { path = "../trade" }
 arbitrage = { path = "../arbitrage" }
+ref_flow = { path = "../ref_flow" }
 web = { path = "../web" }
 tokio = { workspace = true }
 slog = { workspace = true }

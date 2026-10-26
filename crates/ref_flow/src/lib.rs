@@ -15,4 +15,7 @@ pub mod collector;
 pub mod credit;
 pub mod parse;
 pub mod rate_limit;
+pub mod runner;
 pub mod state;
+
+pub use runner::run;

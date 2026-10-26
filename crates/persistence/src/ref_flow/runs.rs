@@ -206,6 +206,14 @@ pub struct DailyCredits {
 }
 
 impl DailyCredits {
+    pub fn new(day: NaiveDate, stream: RunStream, credits: i64) -> Self {
+        Self {
+            day,
+            stream: stream.as_str().to_owned(),
+            credits,
+        }
+    }
+
     pub fn stream(&self) -> Result<RunStream> {
         Ok(RunStream::from_str(&self.stream)?)
     }

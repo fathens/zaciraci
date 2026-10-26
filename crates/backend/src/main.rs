@@ -34,6 +34,9 @@ async fn main() {
     tokio::spawn(trade::run(cfg));
     tokio::spawn(arbitrage::run(cfg));
     tokio::spawn(persistence::maintenance::run(cfg));
+    // NearBlocks Ref flow collector: idle until REF_FLOW_ENABLED is set and
+    // NEARBLOCKS_API_KEY is present; never touches the wallet.
+    tokio::spawn(ref_flow::run(cfg));
     {
         let log = log.clone();
         tokio::spawn(async move {
