@@ -8,6 +8,8 @@
 //! - `ref_flow_trades` — executed trades, one per Ref receipt
 
 pub mod receipt;
+pub mod trade;
+pub mod tx;
 
 #[cfg(test)]
 pub(crate) mod test_support;
