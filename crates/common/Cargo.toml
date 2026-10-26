@@ -22,4 +22,5 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 proptest = "1.6"
+tokio = { workspace = true, features = ["full"] }
 serial_test = "3.1"
