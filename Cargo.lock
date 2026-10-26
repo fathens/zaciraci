@@ -975,6 +975,7 @@ dependencies = [
  "common 1.4.2",
  "near-sdk",
  "num-bigint 0.4.6",
+ "num-traits",
  "serde",
  "serde_json",
  "thiserror",
