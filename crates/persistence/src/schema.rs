@@ -84,6 +84,47 @@ diesel::table! {
 }
 
 diesel::table! {
+    ref_flow_receipts (receipt_id) {
+        receipt_id -> Varchar,
+        tx_hash -> Varchar,
+        block_height -> Int8,
+        block_time -> Timestamp,
+        predecessor -> Varchar,
+        methods -> Array<Nullable<Text>>,
+        ok -> Bool,
+    }
+}
+
+diesel::table! {
+    ref_flow_trades (receipt_id) {
+        receipt_id -> Varchar,
+        tx_hash -> Varchar,
+        block_height -> Int8,
+        block_time -> Timestamp,
+        sender -> Varchar,
+        route -> Varchar,
+        pool_ids -> Array<Nullable<Int4>>,
+        hop_tokens_in -> Array<Nullable<Text>>,
+        hop_tokens_out -> Array<Nullable<Text>>,
+        fee_bps -> Nullable<Array<Nullable<Int4>>>,
+        token_in -> Varchar,
+        amount_in -> Numeric,
+        token_out -> Varchar,
+        amount_out -> Numeric,
+    }
+}
+
+diesel::table! {
+    ref_flow_txs (tx_hash) {
+        tx_hash -> Varchar,
+        block_time -> Timestamp,
+        enriched_at -> Nullable<Timestamp>,
+        attempts -> Int2,
+        trade_count -> Nullable<Int2>,
+    }
+}
+
+diesel::table! {
     token_rates (id) {
         id -> Int4,
         base_token -> Varchar,
@@ -110,6 +151,8 @@ diesel::table! {
     }
 }
 
+diesel::joinable!(ref_flow_trades -> ref_flow_txs (tx_hash));
+
 diesel::allow_tables_to_appear_in_same_query!(
     authorized_users,
     config_store,
@@ -118,6 +161,9 @@ diesel::allow_tables_to_appear_in_same_query!(
     pool_info,
     portfolio_holdings,
     prediction_records,
+    ref_flow_receipts,
+    ref_flow_trades,
+    ref_flow_txs,
     token_rates,
     trade_transactions,
 );
