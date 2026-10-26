@@ -13,6 +13,8 @@ pub mod budget;
 pub mod client;
 pub mod collector;
 pub mod credit;
+#[cfg(feature = "importer")]
+pub mod import;
 pub mod parse;
 pub mod rate_limit;
 pub mod runner;

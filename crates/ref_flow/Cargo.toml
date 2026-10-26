@@ -20,6 +20,17 @@ serde_json = { workspace = true }
 slog = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+clap = { version = "4", features = ["derive"], optional = true }
+flate2 = { version = "1", optional = true }
+
+[features]
+# One-off migration tool (crates/ref_flow/src/bin/ref_flow_import.rs). Kept
+# behind a feature so the backend image never links its dependencies.
+importer = ["dep:clap", "dep:flate2"]
+
+[[bin]]
+name = "ref_flow_import"
+required-features = ["importer"]
 
 [dev-dependencies]
 bs58 = { workspace = true }
