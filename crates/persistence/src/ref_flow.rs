@@ -6,8 +6,14 @@
 //! - `ref_flow_txs` — one row per successful transaction; the enrichment
 //!   marker and the coverage denominator
 //! - `ref_flow_trades` — executed trades, one per Ref receipt
+//! - `ref_flow_collector_state`, `ref_flow_ledger`, `ref_flow_runs` — the
+//!   collector's cursor state (compare-and-swap), daily request ledger and
+//!   per-pass run log
 
+pub mod ledger;
 pub mod receipt;
+pub mod runs;
+pub mod state;
 pub mod trade;
 pub mod tx;
 

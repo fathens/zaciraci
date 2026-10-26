@@ -84,6 +84,23 @@ diesel::table! {
 }
 
 diesel::table! {
+    ref_flow_collector_state (id) {
+        id -> Int2,
+        version -> Int8,
+        writer_id -> Varchar,
+        state -> Jsonb,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    ref_flow_ledger (day) {
+        day -> Date,
+        requests -> Int8,
+    }
+}
+
+diesel::table! {
     ref_flow_receipts (receipt_id) {
         receipt_id -> Varchar,
         tx_hash -> Varchar,
@@ -92,6 +109,24 @@ diesel::table! {
         predecessor -> Varchar,
         methods -> Array<Nullable<Text>>,
         ok -> Bool,
+    }
+}
+
+diesel::table! {
+    ref_flow_runs (id) {
+        id -> Int8,
+        run_at -> Timestamp,
+        stream -> Varchar,
+        pages -> Int4,
+        receipts -> Int4,
+        trades -> Int4,
+        from_time -> Nullable<Timestamp>,
+        to_time -> Nullable<Timestamp>,
+        credits -> Int4,
+        http429 -> Int4,
+        failures -> Int4,
+        note -> Varchar,
+        parse_stats -> Nullable<Jsonb>,
     }
 }
 
@@ -161,7 +196,10 @@ diesel::allow_tables_to_appear_in_same_query!(
     pool_info,
     portfolio_holdings,
     prediction_records,
+    ref_flow_collector_state,
+    ref_flow_ledger,
     ref_flow_receipts,
+    ref_flow_runs,
     ref_flow_trades,
     ref_flow_txs,
     token_rates,

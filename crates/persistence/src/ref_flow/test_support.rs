@@ -4,19 +4,25 @@
 
 use crate::Result;
 use crate::connection_pool;
-use crate::schema::{ref_flow_receipts, ref_flow_trades, ref_flow_txs};
+use crate::schema::{
+    ref_flow_collector_state, ref_flow_ledger, ref_flow_receipts, ref_flow_runs, ref_flow_trades,
+    ref_flow_txs,
+};
 use anyhow::anyhow;
 use chrono::NaiveDateTime;
 use common::types::{ReceiptId, TxHash};
 use diesel::prelude::*;
 
-/// Remove every row from the three `ref_flow_*` tables.
+/// Remove every row from all `ref_flow_*` tables.
 pub async fn clean_tables() -> Result<()> {
     let conn = connection_pool::get_test_only().await?;
     conn.interact(|conn| -> QueryResult<()> {
         diesel::delete(ref_flow_trades::table).execute(conn)?;
         diesel::delete(ref_flow_txs::table).execute(conn)?;
         diesel::delete(ref_flow_receipts::table).execute(conn)?;
+        diesel::delete(ref_flow_collector_state::table).execute(conn)?;
+        diesel::delete(ref_flow_ledger::table).execute(conn)?;
+        diesel::delete(ref_flow_runs::table).execute(conn)?;
         Ok(())
     })
     .await
