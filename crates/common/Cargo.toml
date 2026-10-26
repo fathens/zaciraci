@@ -16,6 +16,7 @@ nalgebra = { workspace = true }
 ndarray = { version = "0.15", features = ["serde"] }
 num-traits = { workspace = true }
 near-account-id = { workspace = true }
+bs58 = { workspace = true }
 predictor = { workspace = true }
 thiserror = { workspace = true }
 

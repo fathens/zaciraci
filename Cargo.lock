@@ -646,6 +646,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bigdecimal",
+ "bs58 0.5.1",
  "chrono",
  "humantime",
  "nalgebra",
