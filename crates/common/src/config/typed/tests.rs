@@ -258,6 +258,41 @@ fn test_cron_max_sleep_seconds_default() {
 
 #[test]
 #[serial]
+fn test_ref_flow_enabled_default_false() {
+    let _env = EnvGuard::remove("REF_FLOW_ENABLED");
+    crate::config::store::remove("REF_FLOW_ENABLED");
+    assert!(!typed().ref_flow_enabled());
+}
+
+#[test]
+#[serial]
+fn test_ref_flow_cron_schedule_default_is_every_30_minutes() {
+    let _env = EnvGuard::remove("REF_FLOW_CRON_SCHEDULE");
+    crate::config::store::remove("REF_FLOW_CRON_SCHEDULE");
+    let schedule = typed().ref_flow_cron_schedule();
+    assert_eq!(schedule, "0 0,30 * * * *");
+    let parsed: std::result::Result<cron::Schedule, _> = schedule.parse();
+    assert!(parsed.is_ok(), "default must be a valid cron expression");
+}
+
+#[test]
+#[serial]
+fn test_ref_flow_retention_days_default() {
+    let _env = EnvGuard::remove("REF_FLOW_RETENTION_DAYS");
+    crate::config::store::remove("REF_FLOW_RETENTION_DAYS");
+    assert_eq!(typed().ref_flow_retention_days(), 90);
+}
+
+#[test]
+#[serial]
+fn test_ref_flow_day_allow_cap_default() {
+    let _env = EnvGuard::remove("REF_FLOW_DAY_ALLOW_CAP");
+    crate::config::store::remove("REF_FLOW_DAY_ALLOW_CAP");
+    assert_eq!(typed().ref_flow_day_allow_cap(), 113_000);
+}
+
+#[test]
+#[serial]
 fn test_cron_log_threshold_seconds_default() {
     let _env = EnvGuard::remove("CRON_LOG_THRESHOLD_SECONDS");
     crate::config::store::remove("CRON_LOG_THRESHOLD_SECONDS");
