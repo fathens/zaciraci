@@ -3153,6 +3153,7 @@ dependencies = [
  "chrono",
  "common 1.4.2",
  "dex",
+ "futures",
  "logging",
  "mockito",
  "num-traits",
