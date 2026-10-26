@@ -49,32 +49,58 @@ fn rejects_overlong_lines() {
 }
 
 #[test]
-fn strips_any_number_of_backslashes_before_quotes() {
-    assert_eq!(strip_escaped_quotes(r#"{\"a\":1}"#), r#"{"a":1}"#);
-    assert_eq!(
-        strip_escaped_quotes(r#"{\\\"a\\\":\\\"x\\\"}"#),
-        r#"{"a":"x"}"#
-    );
-    // Backslashes not followed by a quote are preserved.
-    assert_eq!(strip_escaped_quotes(r#"a\\b"#), r#"a\\b"#);
-    assert_eq!(strip_escaped_quotes(r#"tail\"#), r#"tail\"#);
+fn unescape_level_peels_exactly_one_level() {
+    assert_eq!(unescape_level(r#"{\"a\":1}"#).unwrap(), r#"{"a":1}"#);
+    assert_eq!(unescape_level(r#"{\\\"a\\\":1}"#).unwrap(), r#"{\"a\":1}"#);
+    assert_eq!(unescape_level("plain").unwrap(), "plain");
+    assert!(unescape_level("\"unbalanced").is_none());
+}
+
+#[test]
+fn ft_msg_keeps_nested_json_strings_intact() {
+    // Real shape: msg escaped three levels deep with a client_echo field
+    // that itself holds a JSON string (one level deeper).
+    let msg = r#"{\\\"force\\\":0,\\\"actions\\\":[{\\\"pool_id\\\":5391,\\\"token_in\\\":\\\"kat.token0.near\\\",\\\"token_out\\\":\\\"wrap.near\\\",\\\"amount_in\\\":\\\"4526\\\",\\\"min_amount_out\\\":\\\"229075\\\"}],\\\"client_echo\\\":\\\"{\\\\\\\"receiver_id\\\\\\\":\\\\\\\"solver-ref.near\\\\\\\"}\\\"}"#;
+    let actions = parse_ft_msg(msg).unwrap().unwrap();
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].pool_id, 5391);
+    assert_eq!(actions[0].token_in, "kat.token0.near");
+}
+
+#[test]
+fn empty_ft_msg_is_a_deposit_not_an_error() {
+    assert!(parse_ft_msg("").unwrap().is_none());
+    assert!(parse_ft_msg("   ").unwrap().is_none());
+}
+
+#[test]
+fn swap_by_output_logs_share_the_swapped_shape() {
+    let log = parse_swapped_log(
+        "Swap_by_output 6017424610129316358802151 wrap.near for 55000 usdt.tether-token.near",
+    )
+    .unwrap();
+    assert_eq!(log.amount_in, 6_017_424_610_129_316_358_802_151);
+    assert_eq!(log.amount_out, 55_000);
 }
 
 #[test]
 fn ft_msg_accepts_plain_escaped_and_string_wrapped_json() {
     let plain = r#"{"force":0,"actions":[{"pool_id":1,"token_in":"a.near","token_out":"b.near","amount_in":"5"}]}"#;
-    assert_eq!(parse_ft_msg(plain).unwrap().len(), 1);
+    assert_eq!(parse_ft_msg(plain).unwrap().unwrap().len(), 1);
     let escaped = r#"{\\\"force\\\":0,\\\"actions\\\":[{\\\"pool_id\\\":1,\\\"token_in\\\":\\\"a.near\\\",\\\"token_out\\\":\\\"b.near\\\"}]}"#;
-    assert_eq!(parse_ft_msg(escaped).unwrap()[0].pool_id, 1);
+    assert_eq!(parse_ft_msg(escaped).unwrap().unwrap()[0].pool_id, 1);
     // JSON string whose content is the JSON object (double encoded).
     let wrapped = serde_json::to_string(plain).unwrap();
-    assert_eq!(parse_ft_msg(&wrapped).unwrap().len(), 1);
+    assert_eq!(parse_ft_msg(&wrapped).unwrap().unwrap().len(), 1);
     let double_wrapped = serde_json::to_string(&wrapped).unwrap();
-    assert_eq!(parse_ft_msg(&double_wrapped).unwrap().len(), 1);
-    // Three levels is one too many.
-    let triple = serde_json::to_string(&double_wrapped).unwrap();
+    assert_eq!(parse_ft_msg(&double_wrapped).unwrap().unwrap().len(), 1);
+    // More levels than MAX_MSG_ESCAPE_LEVELS is one too many.
+    let mut text = plain.to_owned();
+    for _ in 0..=MAX_MSG_ESCAPE_LEVELS {
+        text = serde_json::to_string(&text).unwrap();
+    }
     assert_eq!(
-        parse_ft_msg(&triple).unwrap_err(),
+        parse_ft_msg(&text).unwrap_err(),
         TradeRejectReason::MalformedMsg
     );
 }
@@ -83,6 +109,7 @@ fn ft_msg_accepts_plain_escaped_and_string_wrapped_json() {
 fn ft_msg_without_actions_is_an_empty_list_and_garbage_is_malformed() {
     assert!(
         parse_ft_msg(r#"{"Swap":{"pool_ids":["x"]}}"#)
+            .unwrap()
             .unwrap()
             .is_empty()
     );

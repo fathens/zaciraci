@@ -145,12 +145,18 @@ fn failed_ref_receipts_are_skipped_but_the_successful_one_is_kept() {
 }
 
 #[test]
-fn truncated_msg_is_rejected_not_guessed() {
-    let parsed = parse_fixture("ft_unparseable_msg");
-    assert!(parsed.trades.is_empty());
-    assert_eq!(parsed.rejects.len(), 1);
-    assert_eq!(parsed.rejects[0].reason, TradeRejectReason::MalformedMsg);
-    assert_eq!(parsed.stats.rejects.get("malformed_msg"), Some(&1));
+fn msg_with_nested_client_echo_string_parses() {
+    // The msg embeds a JSON string field escaped one level deeper than
+    // the message itself; global backslash stripping (the Python
+    // collector) broke it, level-wise unescaping keeps it intact.
+    let parsed = parse_fixture("ft_nested_client_echo");
+    assert_eq!(parsed.rejects, vec![]);
+    assert_eq!(parsed.trades.len(), 1);
+    let t = &parsed.trades[0];
+    assert_eq!(t.route, TradeRoute::Ft);
+    assert_eq!(t.hops()[0].pool_id, 6065);
+    assert_eq!(t.token_in().0, tok("zec.omft.near"));
+    assert_eq!(parsed.stats.accepted, 1);
 }
 
 #[test]
@@ -166,7 +172,7 @@ fn duplicate_roots_count_as_duplicates_not_trades() {
 #[test]
 fn stats_merge_and_serialise() {
     let mut a = parse_fixture("failed").stats;
-    let b = parse_fixture("ft_unparseable_msg").stats;
+    let b = parse_fixture("ft_nested_client_echo").stats;
     a.merge(&b);
     assert_eq!(
         a.ref_receipts, 5,
@@ -174,9 +180,10 @@ fn stats_merge_and_serialise() {
     );
     assert_eq!(a.other_receipts, 2);
     assert_eq!(a.failed_receipts, 1);
-    assert_eq!(a.accepted, 1);
-    assert_eq!(a.rejects.get("malformed_msg"), Some(&1));
+    assert_eq!(a.accepted, 2);
+    assert!(a.rejects.is_empty());
     let json = a.to_json();
-    assert_eq!(json["accepted"], 1);
-    assert_eq!(json["rejects"]["malformed_msg"], 1);
+    assert_eq!(json["accepted"], 2);
+    assert_eq!(json["deposits"], 0);
+    assert_eq!(json["rejects"], serde_json::json!({}));
 }

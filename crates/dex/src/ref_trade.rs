@@ -29,8 +29,9 @@ use thiserror::Error;
 use crate::token_pair::FEE_DIVISOR;
 
 /// Upper bound on hops per receipt. Mirrors the `cardinality(pool_ids)
-/// BETWEEN 1 AND 16` CHECK on `ref_flow_trades`.
-pub const MAX_HOPS: usize = 16;
+/// BETWEEN 1 AND 32` CHECK on `ref_flow_trades`. Bot batches of 17-20
+/// actions exist on mainnet; 32 leaves headroom.
+pub const MAX_HOPS: usize = 32;
 
 /// One `swap` action inside a Ref receipt, with the amounts the contract
 /// reported for it (`Swapped {amount_in} {token_in} for {amount_out}

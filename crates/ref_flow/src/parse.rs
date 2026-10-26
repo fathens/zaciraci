@@ -42,6 +42,8 @@ pub const MAX_RECEIPTS_PER_TX: usize = 10_000;
 pub const MAX_LOG_LINES: usize = 1_000;
 pub const MAX_LOG_LINE_LEN: usize = 1_024;
 pub const MAX_MSG_LEN: usize = 65_536;
+/// Escape levels peeled from an `ft_on_transfer` msg before giving up.
+pub const MAX_MSG_ESCAPE_LEVELS: usize = 4;
 const MAX_AMOUNT_DIGITS: usize = 39;
 
 fn u64_from_str_or_num<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
@@ -300,6 +302,8 @@ pub struct ParseStats {
     /// Ref receipts with no swap / ft_on_transfer action (liquidity,
     /// callbacks).
     pub other_receipts: u32,
+    /// `ft_on_transfer` receipts with an empty msg (plain deposits).
+    pub deposits: u32,
     pub accepted: u32,
     /// Ref receipt ids seen more than once in the tree.
     pub duplicate_receipts: u32,
@@ -311,6 +315,7 @@ impl ParseStats {
         self.ref_receipts += other.ref_receipts;
         self.failed_receipts += other.failed_receipts;
         self.other_receipts += other.other_receipts;
+        self.deposits += other.deposits;
         self.accepted += other.accepted;
         self.duplicate_receipts += other.duplicate_receipts;
         for (k, v) in &other.rejects {
@@ -323,6 +328,7 @@ impl ParseStats {
             "ref_receipts": self.ref_receipts,
             "failed_receipts": self.failed_receipts,
             "other_receipts": self.other_receipts,
+            "deposits": self.deposits,
             "accepted": self.accepted,
             "duplicate_receipts": self.duplicate_receipts,
             "rejects": self.rejects,
@@ -380,6 +386,7 @@ pub fn parse_tx_receipts(tx_hash: &TxHash, roots: &[Value]) -> Result<ParsedTx, 
                 }
                 Ok(RefReceiptOutcome::Failed) => parsed.stats.failed_receipts += 1,
                 Ok(RefReceiptOutcome::NotASwap) => parsed.stats.other_receipts += 1,
+                Ok(RefReceiptOutcome::Deposit) => parsed.stats.deposits += 1,
                 Err(reason) => {
                     *parsed.stats.rejects.entry(reason.kind()).or_insert(0) += 1;
                     parsed.rejects.push(Reject {
@@ -401,6 +408,8 @@ enum RefReceiptOutcome {
     Trade(Box<Trade>),
     Failed,
     NotASwap,
+    /// `ft_on_transfer` with an empty msg: a deposit, nothing swapped.
+    Deposit,
 }
 
 struct SwappedLog {
@@ -421,12 +430,16 @@ fn parse_amount(text: &str) -> Option<u128> {
 }
 
 /// `Swapped {in} {token_in} for {out} {token_out}[, total fee N, admin fee N]`
+/// (`Swap_by_output` lines share the shape).
 fn parse_swapped_log(line: &str) -> Result<SwappedLog, TradeRejectReason> {
     let malformed = || TradeRejectReason::MalformedLog(line.chars().take(120).collect());
     if line.len() > MAX_LOG_LINE_LEN {
         return Err(malformed());
     }
-    let body = line.strip_prefix("Swapped ").ok_or_else(malformed)?;
+    let body = line
+        .strip_prefix("Swapped ")
+        .or_else(|| line.strip_prefix("Swap_by_output "))
+        .ok_or_else(malformed)?;
     let body = body.split(',').next().unwrap_or("");
     let parts: Vec<&str> = body.split_whitespace().collect();
     let [amount_in, token_in, kw, amount_out, token_out] = parts.as_slice() else {
@@ -445,60 +458,51 @@ fn parse_swapped_log(line: &str) -> Result<SwappedLog, TradeRejectReason> {
     })
 }
 
-/// NearBlocks returns the `msg` of `ft_on_transfer` over-escaped
-/// (`{\"force\":0,...}` or worse). Try as-is, then with the backslashes
-/// before quotes removed; unwrap up to two levels of string-encoded JSON.
-fn parse_ft_msg(msg: &str) -> Result<Vec<SwapAction>, TradeRejectReason> {
+/// NearBlocks returns the `msg` of `ft_on_transfer` with its JSON string
+/// escaping still applied, sometimes several levels deep, and the message
+/// itself may embed further JSON strings (`client_echo`). Peeling one
+/// escape level at a time (decode the text as a JSON string literal) is
+/// the only transformation that keeps nested strings intact; stripping
+/// backslashes globally corrupts them. Up to [`MAX_MSG_ESCAPE_LEVELS`]
+/// levels are removed.
+///
+/// `Ok(None)` for an empty message: a plain deposit, not a swap.
+fn parse_ft_msg(msg: &str) -> Result<Option<Vec<SwapAction>>, TradeRejectReason> {
     if msg.len() > MAX_MSG_LEN {
         return Err(TradeRejectReason::MsgTooLong(msg.len()));
+    }
+    if msg.trim().is_empty() {
+        return Ok(None);
     }
     #[derive(Deserialize)]
     struct FtMsg {
         #[serde(default)]
         actions: Vec<SwapAction>,
     }
-    let stripped = strip_escaped_quotes(msg);
-    for candidate in [msg, stripped.as_str()] {
-        let Ok(mut value) = serde_json::from_str::<Value>(candidate) else {
-            continue;
-        };
-        for _ in 0..2 {
-            if let Value::String(inner) = &value {
-                match serde_json::from_str::<Value>(inner) {
-                    Ok(v) => value = v,
-                    Err(_) => break,
-                }
+    let mut text = msg.to_owned();
+    for _ in 0..=MAX_MSG_ESCAPE_LEVELS {
+        match serde_json::from_str::<Value>(&text) {
+            Ok(Value::Object(_)) => {
+                let parsed: FtMsg =
+                    serde_json::from_str(&text).map_err(|_| TradeRejectReason::MalformedMsg)?;
+                return Ok(Some(parsed.actions));
             }
-        }
-        if value.is_object() {
-            let parsed: FtMsg =
-                serde_json::from_value(value).map_err(|_| TradeRejectReason::MalformedMsg)?;
-            return Ok(parsed.actions);
+            Ok(Value::String(inner)) => text = inner,
+            Ok(_) => return Err(TradeRejectReason::MalformedMsg),
+            Err(_) => match unescape_level(&text) {
+                Some(inner) => text = inner,
+                None => return Err(TradeRejectReason::MalformedMsg),
+            },
         }
     }
     Err(TradeRejectReason::MalformedMsg)
 }
 
-/// Replace every run of backslashes followed by a quote with a bare quote.
-fn strip_escaped_quotes(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut pending_backslashes = 0usize;
-    for c in s.chars() {
-        match c {
-            '\\' => pending_backslashes += 1,
-            '"' => {
-                pending_backslashes = 0;
-                out.push('"');
-            }
-            other => {
-                out.extend(std::iter::repeat_n('\\', pending_backslashes));
-                pending_backslashes = 0;
-                out.push(other);
-            }
-        }
-    }
-    out.extend(std::iter::repeat_n('\\', pending_backslashes));
-    out
+/// Remove one level of JSON string escaping from `text` by decoding it as
+/// the content of a JSON string literal.
+fn unescape_level(text: &str) -> Option<String> {
+    let quoted = format!("\"{text}\"");
+    serde_json::from_str::<String>(&quoted).ok()
 }
 
 /// Decode `outcome.result` (base64 of a JSON value) as an integer, which
@@ -546,7 +550,11 @@ fn parse_ref_receipt(
                 if refund != 0 {
                     return Err(TradeRejectReason::FtRefund(refund.to_string()));
                 }
-                actions.extend(parse_ft_msg(&parsed.msg)?);
+                let Some(msg_actions) = parse_ft_msg(&parsed.msg)? else {
+                    // Empty msg: a token deposit into the exchange, no swap.
+                    return Ok(RefReceiptOutcome::Deposit);
+                };
+                actions.extend(msg_actions);
                 route.get_or_insert(TradeRoute::Ft);
                 sender.get_or_insert(parsed.sender_id);
             }
@@ -569,7 +577,7 @@ fn parse_ref_receipt(
         .outcome
         .logs
         .iter()
-        .filter(|l| l.starts_with("Swapped "))
+        .filter(|l| l.starts_with("Swapped ") || l.starts_with("Swap_by_output "))
         .map(|l| parse_swapped_log(l))
         .collect::<Result<Vec<SwappedLog>, _>>()?;
     if logs.len() != actions.len() {

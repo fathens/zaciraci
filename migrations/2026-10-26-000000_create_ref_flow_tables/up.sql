@@ -82,7 +82,7 @@ CREATE TABLE ref_flow_trades (
     amount_out     NUMERIC(39, 0) NOT NULL
         CHECK (amount_out >= 0
            AND amount_out <= 340282366920938463463374607431768211455),
-    CHECK (cardinality(pool_ids) BETWEEN 1 AND 16
+    CHECK (cardinality(pool_ids) BETWEEN 1 AND 32
        AND cardinality(hop_tokens_in)   = cardinality(pool_ids)
        AND cardinality(hop_tokens_out)  = cardinality(pool_ids)
        AND cardinality(hop_amounts_in)  = cardinality(pool_ids)

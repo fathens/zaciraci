@@ -24,7 +24,7 @@ pub fn enrich_fixture(name: &str) -> (TxHash, Vec<Value>) {
         "ft_near_withdraw" => fixture!("ft_near_withdraw"),
         "ft_split" => fixture!("ft_split"),
         "failed" => fixture!("failed"),
-        "ft_unparseable_msg" => fixture!("ft_unparseable_msg"),
+        "ft_nested_client_echo" => fixture!("ft_nested_client_echo"),
         other => panic!("unknown fixture {other}"),
     };
     let value: Value = serde_json::from_str(text).unwrap();

@@ -128,7 +128,7 @@ fn groups_enrich_lines_by_tx_and_parses_trades() {
     let lines = vec![
         fixture("swap_single"),
         fixture("ft_basic"),
-        fixture("ft_unparseable_msg"),
+        fixture("ft_nested_client_echo"),
         untagged,
     ];
     let path = write_gz(&dir, "x_enrich.jsonl.gz", &lines, false);
@@ -139,9 +139,9 @@ fn groups_enrich_lines_by_tx_and_parses_trades() {
 
     let parsed = parse_enriched(&txs, WIDE, &mut summary);
     assert_eq!(parsed.len(), 3);
-    assert_eq!(summary.trades, 2);
-    assert_eq!(summary.rejects, 1, "the truncated msg");
-    assert_eq!(summary.stats.accepted, 2);
+    assert_eq!(summary.trades, 3);
+    assert_eq!(summary.rejects, 0);
+    assert_eq!(summary.stats.accepted, 3);
     std::fs::remove_dir_all(dir).unwrap();
 }
 
