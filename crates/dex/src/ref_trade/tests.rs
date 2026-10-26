@@ -221,3 +221,18 @@ fn trade_route_all_is_exhaustive() {
     }
     assert_eq!(TradeRoute::ALL.len(), 2);
 }
+
+#[test]
+fn with_fees_attaches_validated_fees() {
+    let trade = Trade::new(parts(chain_hops())).unwrap();
+    assert_eq!(
+        trade.clone().with_fees(vec![30]).unwrap_err(),
+        TradeError::FeeCountMismatch { hops: 2, fees: 1 }
+    );
+    assert_eq!(
+        trade.clone().with_fees(vec![30, FEE_DIVISOR]).unwrap_err(),
+        TradeError::FeeOutOfRange(FEE_DIVISOR)
+    );
+    let with = trade.with_fees(vec![30, 5]).unwrap();
+    assert_eq!(with.fees(), Some(&[30, 5][..]));
+}

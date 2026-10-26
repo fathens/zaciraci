@@ -206,6 +206,22 @@ impl Trade {
         self.fees.as_deref()
     }
 
+    /// Attach the pool fee of every hop (hop order, units of
+    /// `1/FEE_DIVISOR`), re-validating the fee invariants.
+    pub fn with_fees(mut self, fees: Vec<u32>) -> Result<Self, TradeError> {
+        if fees.len() != self.hops.len() {
+            return Err(TradeError::FeeCountMismatch {
+                hops: self.hops.len(),
+                fees: fees.len(),
+            });
+        }
+        if let Some(&bad) = fees.iter().find(|&&f| f >= FEE_DIVISOR) {
+            return Err(TradeError::FeeOutOfRange(bad));
+        }
+        self.fees = Some(fees);
+        Ok(self)
+    }
+
     /// Hops zipped with their fee (`None` when fees are unknown).
     pub fn hops_with_fee(&self) -> impl Iterator<Item = (&Hop, Option<u32>)> + '_ {
         self.hops
