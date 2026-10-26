@@ -39,7 +39,7 @@ async fn snapshot(pool_id: u32, fee: u32, at: NaiveDateTime) -> Result<()> {
 }
 
 #[tokio::test]
-#[serial(ref_flow_db)]
+#[serial(ref_flow_db, pool_info)]
 async fn picks_latest_snapshot_at_or_before_block_time() -> Result<()> {
     clear_fee_pools().await?;
     // Timestamps relative to now so the pool_info retention cleanup never
@@ -61,7 +61,7 @@ async fn picks_latest_snapshot_at_or_before_block_time() -> Result<()> {
 }
 
 #[tokio::test]
-#[serial(ref_flow_db)]
+#[serial(ref_flow_db, pool_info)]
 async fn missing_pool_makes_the_whole_fee_list_unknown() -> Result<()> {
     clear_fee_pools().await?;
     let now = chrono::Utc::now().naive_utc();
