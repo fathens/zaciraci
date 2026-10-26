@@ -3149,10 +3149,12 @@ name = "ref_flow"
 version = "1.4.2"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "chrono",
  "common 1.4.2",
  "dex",
  "logging",
+ "num-traits",
  "persistence",
  "serde",
  "serde_json",
