@@ -7,6 +7,9 @@
 //! `persistence::ref_flow`. This crate owns the policy that was spread over
 //! the Python collector's `budget.py` / `collect.py`: request budgeting,
 //! rate limiting, response parsing and the cycle orchestration.
+//!
+//! Operations (configuration, budget, cutover, monitoring) are documented
+//! on the wiki: <https://github.com/fathens/zaciraci/wiki/NearBlock-同期>.
 
 pub mod accounting;
 pub mod budget;
