@@ -9,6 +9,14 @@ fn no_save() -> impl FnMut(&CollectorState) -> futures::future::BoxFuture<'stati
     |_| Box::pin(async { Ok(()) })
 }
 
+/// Forward cursor one hour in the past. The cycle classifies gaps by
+/// their distance from the wall clock (recent = newer than 72 h) and the
+/// cleanup pass deletes rows older than the retention, so a fixed epoch
+/// would make these tests flip as the calendar moves on.
+fn recent_since() -> i64 {
+    Utc::now().timestamp() - 3600
+}
+
 /// Two forward pages: the newest page has receipts above `since`, the
 /// second page reaches a receipt at `since` (complete).
 fn two_pages(since_secs: i64) -> Vec<ListPage> {
@@ -36,7 +44,7 @@ fn two_pages(since_secs: i64) -> Vec<ListPage> {
 #[serial(ref_flow_db)]
 async fn fresh_cycle_lists_ingests_and_enriches() -> Result<()> {
     clean_tables().await?;
-    let since = 1_792_800_000;
+    let since = recent_since();
     let api = Arc::new(FakeApi::with_pages(two_pages(since)));
     // Enrich answers for the successful txs 1, 2, 4 (5 and 6 are at/below
     // since and never listed).
@@ -130,7 +138,7 @@ async fn fresh_cycle_lists_ingests_and_enriches() -> Result<()> {
 #[serial(ref_flow_db)]
 async fn page_cap_registers_a_gap_that_the_next_cycle_closes() -> Result<()> {
     clean_tables().await?;
-    let since = 1_792_800_000;
+    let since = recent_since();
     let api = Arc::new(FakeApi::with_pages(two_pages(since)));
     let mut cfg = config();
     cfg.fwd_max_pages = 1;
@@ -178,7 +186,7 @@ async fn page_cap_registers_a_gap_that_the_next_cycle_closes() -> Result<()> {
 #[serial(ref_flow_db)]
 async fn unusable_answers_count_attempts_and_isolate_poison_transactions() -> Result<()> {
     clean_tables().await?;
-    let since = 1_792_800_000;
+    let since = recent_since();
     let api = Arc::new(FakeApi::with_pages(vec![ListPage {
         items: vec![
             list_item(1, 1, ns(since + 60), true),
@@ -229,7 +237,7 @@ async fn unusable_answers_count_attempts_and_isolate_poison_transactions() -> Re
 #[serial(ref_flow_db)]
 async fn rate_limit_aborts_and_sets_cooldown() -> Result<()> {
     clean_tables().await?;
-    let since = 1_792_800_000;
+    let since = recent_since();
     let api = Arc::new(FakeApi::with_pages(vec![ListPage {
         items: vec![list_item(1, 1, ns(since + 60), true)],
         next_cursor: None,
@@ -255,7 +263,7 @@ async fn rate_limit_aborts_and_sets_cooldown() -> Result<()> {
 #[serial(ref_flow_db)]
 async fn exhausted_budget_stops_before_any_request() -> Result<()> {
     clean_tables().await?;
-    let since = 1_792_800_000;
+    let since = recent_since();
     let api = Arc::new(FakeApi::with_pages(two_pages(since)));
     let mut state = CollectorState::new(ns(since));
     // Operator cap 0: nothing may be spent.
@@ -276,7 +284,7 @@ async fn exhausted_budget_stops_before_any_request() -> Result<()> {
 #[serial(ref_flow_db)]
 async fn network_failures_leave_transactions_pending() -> Result<()> {
     clean_tables().await?;
-    let since = 1_792_800_000;
+    let since = recent_since();
     let items: Vec<_> = (1..=4)
         .map(|n| list_item(n, n, ns(since + i64::from(n)), true))
         .collect();
