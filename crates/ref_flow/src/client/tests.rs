@@ -268,6 +268,27 @@ async fn oversized_body_and_invalid_json_are_errors() {
 }
 
 #[tokio::test]
+async fn missing_or_null_data_is_a_shape_error_not_an_empty_answer() {
+    let mut server = Server::new_async().await;
+    let path = format!("/v3/txns/{TX}/receipts");
+    let c = client(&server);
+    for body in [r#"{"message":"not found"}"#, r#"{"data":null}"#] {
+        let m = server
+            .mock("GET", path.as_str())
+            .with_body(body)
+            .expect(1)
+            .create_async()
+            .await;
+        let err = c
+            .txn_receipts(&TxHash::new(TX).unwrap(), &credits(1))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, FetchError::Shape(_)), "{body}: {err}");
+        m.assert_async().await;
+    }
+}
+
+#[tokio::test]
 async fn network_errors_retry_up_to_max_attempts_charging_each() {
     // Nothing listens on this port.
     let c = NearBlocksClient::new(

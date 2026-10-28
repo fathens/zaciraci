@@ -243,11 +243,15 @@ async fn read_body_with_cap(mut response: reqwest::Response, cap: u64) -> Result
     Ok(buf)
 }
 
+/// The `data` payload of a 2xx answer. A missing or null `data` is not
+/// an empty result: NearBlocks answers that way for things it has not
+/// indexed yet, and treating it as empty would mark a transaction
+/// enriched with no trades (or close a gap) on the strength of nothing.
 fn data_array(mut value: Value) -> Result<Vec<Value>, FetchError> {
     match value.get_mut("data").map(Value::take) {
         Some(Value::Array(items)) => Ok(items),
-        Some(Value::Null) | None => Ok(Vec::new()),
         Some(single @ Value::Object(_)) => Ok(vec![single]),
+        Some(Value::Null) | None => Err(FetchError::Shape("answer has no data")),
         Some(_) => Err(FetchError::Shape("data is neither an array nor an object")),
     }
 }
