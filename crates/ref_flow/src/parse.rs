@@ -155,7 +155,7 @@ fn invalid(field: &'static str, e: impl Into<anyhow::Error>) -> ListParseError {
 /// ft_on_transfer calls on the Ref contract (callbacks, transfers, other
 /// receivers): these are listed by the API but never stored.
 pub fn parse_list_item(value: &Value) -> Result<Option<RefReceipt>, ListParseError> {
-    let item: ListItem = serde_json::from_value(value.clone())?;
+    let item = ListItem::deserialize(value)?;
     if item.receiver_account_id != REF_CONTRACT {
         return Ok(None);
     }
@@ -373,7 +373,8 @@ pub fn parse_tx_receipts(tx_hash: &TxHash, roots: &[Value]) -> Result<ParsedTx, 
     let mut seen: HashSet<String> = HashSet::new();
     let mut visited = 0usize;
     for root in roots {
-        let root: EnrichReceipt = serde_json::from_value(root.clone())?;
+        // `&Value` is a Deserializer: no copy of a tree that may be MiBs.
+        let root = EnrichReceipt::deserialize(root)?;
         // Iterative walk: the tree depth is bounded by serde_json's
         // recursion limit, the node count by MAX_RECEIPTS_PER_TX.
         let mut stack: Vec<&EnrichReceipt> = vec![&root];
