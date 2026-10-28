@@ -321,8 +321,10 @@ impl<A: NearBlocksApi + 'static, L: LedgerStore> Cycle<A, L> {
             )
             .await?;
         if let Some(newest) = walk.newest_ns {
+            // The cursor moves to the newest receipt seen, so whatever the
+            // walk did not reach (page cap, budget, or a failure after the
+            // first page) must be registered as a gap or it is lost.
             if !walk.complete
-                && !walk.failed
                 && let Err(e) = state.push_gap(Gap {
                     cursor: walk.cursor.clone(),
                     until_ns: since_ns,

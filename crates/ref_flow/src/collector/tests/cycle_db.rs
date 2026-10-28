@@ -184,6 +184,55 @@ async fn page_cap_registers_a_gap_that_the_next_cycle_closes() -> Result<()> {
 
 #[tokio::test]
 #[serial(ref_flow_db)]
+async fn forward_failure_after_the_first_page_registers_a_gap() -> Result<()> {
+    clean_tables().await?;
+    let since = recent_since();
+    let api = Arc::new(FakeApi::with_pages(two_pages(since)));
+    api.fail_cursor("p2", TxAnswer::Network);
+    let mut state = CollectorState::new(ns(since));
+    let mut cycle = Cycle::new(
+        Arc::clone(&api),
+        tracker(MemLedger::default(), None),
+        config(),
+    );
+    let report = cycle.run(&mut state, &mut no_save()).await?;
+    assert_eq!(report.forward.pages, 1);
+    assert!(report.forward.failed);
+    assert_eq!(report.forward.stop, Some(Stop::NetworkDown));
+    // The cursor still moved past page 1 ...
+    assert_eq!(state.since_ns, ns(since + 1800));
+    // ... so the unlisted rest must be waiting as a gap, untouched in this
+    // cycle because the network is flagged down.
+    assert_eq!(state.gaps.len(), 1);
+    assert_eq!(state.gaps[0].cursor.as_deref(), Some("p2"));
+    assert_eq!(state.gaps[0].until_ns, ns(since));
+    assert_eq!(state.gaps[0].oldest_ns, Some(ns(since + 600)));
+    assert_eq!(report.recent_gaps, 0);
+
+    // Next cycle: the cursor answers again and the gap closes.
+    let api2 = Arc::new(FakeApi::with_pages(vec![ListPage {
+        items: vec![],
+        next_cursor: None,
+    }]));
+    api2.by_cursor
+        .lock()
+        .unwrap()
+        .insert("p2".to_owned(), two_pages(since).remove(1));
+    let mut cycle = Cycle::new(api2, tracker(MemLedger::default(), None), config());
+    let report = cycle.run(&mut state, &mut no_save()).await?;
+    assert_eq!(report.recent_gaps, 1);
+    assert!(state.gaps.is_empty());
+    assert!(
+        tx_store::get(&TxHash::new(&hash(4)).unwrap())
+            .await?
+            .is_some(),
+        "receipt from the gap page was ingested"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[serial(ref_flow_db)]
 async fn unusable_answers_count_attempts_and_isolate_poison_transactions() -> Result<()> {
     clean_tables().await?;
     let since = recent_since();

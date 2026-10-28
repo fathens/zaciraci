@@ -24,6 +24,8 @@ pub struct FakeApi {
     pub by_cursor: Mutex<HashMap<String, ListPage>>,
     pub by_before_ns: Mutex<HashMap<u64, ListPage>>,
     pub txns: Mutex<HashMap<String, TxAnswer>>,
+    /// Errors served for a cursor instead of a page (`Receipts` is ignored).
+    pub list_errors: Mutex<HashMap<String, TxAnswer>>,
     pub list_calls: Mutex<Vec<ListFrom>>,
     pub txn_calls: Mutex<Vec<String>>,
 }
@@ -38,6 +40,24 @@ impl FakeApi {
 
     pub fn answer(&self, tx: &str, answer: TxAnswer) {
         self.txns.lock().unwrap().insert(tx.to_owned(), answer);
+    }
+
+    pub fn fail_cursor(&self, cursor: &str, answer: TxAnswer) {
+        self.list_errors
+            .lock()
+            .unwrap()
+            .insert(cursor.to_owned(), answer);
+    }
+}
+
+fn answer_error(answer: &TxAnswer) -> Option<FetchError> {
+    match answer {
+        TxAnswer::Receipts(_) => None,
+        TxAnswer::Status(code) => Some(FetchError::Http(
+            reqwest::StatusCode::from_u16(*code).unwrap(),
+        )),
+        TxAnswer::RateLimited => Some(FetchError::RateLimited),
+        TxAnswer::Network => Some(FetchError::Network("connection refused".to_owned())),
     }
 }
 
@@ -56,6 +76,16 @@ impl NearBlocksApi for FakeApi {
     ) -> Result<ListPage, FetchError> {
         take_credit(credits)?;
         self.list_calls.lock().unwrap().push(from.clone());
+        if let ListFrom::Cursor(c) = from
+            && let Some(err) = self
+                .list_errors
+                .lock()
+                .unwrap()
+                .get(c)
+                .and_then(answer_error)
+        {
+            return Err(err);
+        }
         let page = match from {
             ListFrom::Newest => self.pages.lock().unwrap().pop_front(),
             ListFrom::Cursor(c) => self
@@ -85,11 +115,7 @@ impl NearBlocksApi for FakeApi {
             .push(tx_hash.as_str().to_owned());
         match self.txns.lock().unwrap().get(tx_hash.as_str()) {
             Some(TxAnswer::Receipts(v)) => Ok(v.clone()),
-            Some(TxAnswer::Status(code)) => Err(FetchError::Http(
-                reqwest::StatusCode::from_u16(*code).unwrap(),
-            )),
-            Some(TxAnswer::RateLimited) => Err(FetchError::RateLimited),
-            Some(TxAnswer::Network) => Err(FetchError::Network("connection refused".to_owned())),
+            Some(other) => Err(answer_error(other).expect("non-receipt answer is an error")),
             None => Ok(vec![]),
         }
     }
