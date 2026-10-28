@@ -179,6 +179,16 @@ async fn page_cap_registers_a_gap_that_the_next_cycle_closes() -> Result<()> {
             .await?
             .is_some()
     );
+    // Run rows carry each pass's own charge: forward pre-charged one block
+    // and the gap page fitted in what was left of it.
+    let fwd = persistence::ref_flow::runs::latest(Some(RunStream::Fwd))
+        .await?
+        .unwrap();
+    assert_eq!(fwd.credits, crate::accounting::RESERVE_BLOCK);
+    let gap = persistence::ref_flow::runs::latest(Some(RunStream::Gap))
+        .await?
+        .unwrap();
+    assert_eq!(gap.credits, 0, "not the cumulative cycle total");
     Ok(())
 }
 
