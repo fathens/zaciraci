@@ -183,7 +183,10 @@ impl NearBlocksClient {
             match self.send_once(credit, url.clone()).await {
                 Ok(value) => return Ok(value),
                 Err(Attempt::Status(StatusCode::TOO_MANY_REQUESTS)) => {
-                    if got_429 {
+                    // The single 429 retry counts against MAX_ATTEMPTS too:
+                    // one call never takes more than MAX_ATTEMPTS credits,
+                    // which is what the collector reserves per request.
+                    if got_429 || attempts >= MAX_ATTEMPTS {
                         return Err(FetchError::RateLimited);
                     }
                     got_429 = true;
