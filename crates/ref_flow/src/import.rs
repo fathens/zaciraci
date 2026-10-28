@@ -17,7 +17,7 @@
 use crate::parse::{self, ParsedTx};
 use anyhow::{Context, Result};
 use chrono::{NaiveDate, NaiveDateTime};
-use common::types::TxHash;
+use common::types::{ReceiptId, TxHash};
 use dex::Trade;
 use flate2::read::MultiGzDecoder;
 use persistence::ref_flow::receipt::{RefReceipt, ingest_receipts};
@@ -117,7 +117,7 @@ pub fn load_receipts(
     range: DateRange,
 ) -> Result<(Vec<RefReceipt>, ListSummary)> {
     let mut summary = ListSummary::default();
-    let mut by_id: HashMap<String, RefReceipt> = HashMap::new();
+    let mut by_id: HashMap<ReceiptId, RefReceipt> = HashMap::new();
     for path in files {
         summary.files += 1;
         let (lines, truncated) = read_lines(path)?;
@@ -130,7 +130,7 @@ pub fn load_receipts(
                         summary.out_of_range += 1;
                         continue;
                     }
-                    by_id.entry(r.receipt_id.as_str().to_owned()).or_insert(r);
+                    by_id.entry(r.receipt_id.clone()).or_insert(r);
                 }
                 Ok(None) => summary.skipped_other += 1,
                 Err(_) => summary.parse_errors += 1,
@@ -170,30 +170,27 @@ pub struct EnrichedTx {
 /// (pre-2026-09-03 archive) are counted and skipped.
 pub fn load_enriched(files: &[PathBuf]) -> Result<(Vec<EnrichedTx>, EnrichSummary)> {
     let mut summary = EnrichSummary::default();
-    let mut by_tx: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    let mut by_tx: BTreeMap<TxHash, Vec<Value>> = BTreeMap::new();
     for path in files {
         summary.files += 1;
         let (lines, truncated) = read_lines(path)?;
         summary.truncated_files += usize::from(truncated);
         for line in lines {
             summary.lines += 1;
-            let Some(tx) = line.get("_tx_hash").and_then(Value::as_str) else {
+            let Some(tx_hash) = line
+                .get("_tx_hash")
+                .and_then(Value::as_str)
+                .and_then(|tx| TxHash::new(tx).ok())
+            else {
                 summary.lines_without_tx += 1;
                 continue;
             };
-            if TxHash::new(tx).is_err() {
-                summary.lines_without_tx += 1;
-                continue;
-            }
-            by_tx.entry(tx.to_owned()).or_default().push(line);
+            by_tx.entry(tx_hash).or_default().push(line);
         }
     }
     let txs = by_tx
         .into_iter()
-        .map(|(tx, roots)| EnrichedTx {
-            tx_hash: TxHash::new(&tx).expect("validated above"),
-            roots,
-        })
+        .map(|(tx_hash, roots)| EnrichedTx { tx_hash, roots })
         .collect::<Vec<_>>();
     summary.txs = txs.len();
     Ok((txs, summary))
