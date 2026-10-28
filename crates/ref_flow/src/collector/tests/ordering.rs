@@ -57,3 +57,20 @@ fn nanoseconds_convert_to_naive_time() {
     assert_eq!(t.and_utc().timestamp(), 1_792_843_194);
     assert_eq!(t.and_utc().timestamp_subsec_nanos(), 365_844_150);
 }
+
+#[test]
+fn effective_retention_never_drops_below_the_persistence_minimum() {
+    let mut cfg = config();
+    cfg.retention_days = 0;
+    assert_eq!(
+        cfg.effective_retention_days(),
+        persistence::ref_flow::MIN_RETENTION_DAYS
+    );
+    cfg.retention_days = 10;
+    assert_eq!(
+        cfg.effective_retention_days(),
+        persistence::ref_flow::MIN_RETENTION_DAYS
+    );
+    cfg.retention_days = 90;
+    assert_eq!(cfg.effective_retention_days(), 90);
+}

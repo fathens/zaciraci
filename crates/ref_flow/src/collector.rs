@@ -63,6 +63,16 @@ pub struct CycleConfig {
     pub max_enrich_attempts: u16,
 }
 
+impl CycleConfig {
+    /// Retention the persistence layer actually applies: it never deletes
+    /// rows younger than [`rf::MIN_RETENTION_DAYS`], and the enrich window
+    /// must agree with it or a small setting would silently stop
+    /// enrichment of rows that are still kept.
+    pub fn effective_retention_days(&self) -> u32 {
+        self.retention_days.max(rf::MIN_RETENTION_DAYS)
+    }
+}
+
 impl Default for CycleConfig {
     fn default() -> Self {
         Self {
@@ -453,8 +463,8 @@ impl<A: NearBlocksApi + 'static, L: LedgerStore> Cycle<A, L> {
     async fn enrich_pass(&mut self) -> Result<EnrichSummary> {
         let mut summary = EnrichSummary::default();
         let now = Self::now();
-        let not_before =
-            now - TimeDelta::days(i64::from(self.config.retention_days)) + PENDING_MARGIN;
+        let not_before = now - TimeDelta::days(i64::from(self.config.effective_retention_days()))
+            + PENDING_MARGIN;
         let candidates =
             tx_store::pending_candidates(not_before, self.config.enrich_window).await?;
         summary.candidates = candidates.len();
@@ -631,8 +641,8 @@ impl<A: NearBlocksApi + 'static, L: LedgerStore> Cycle<A, L> {
             }
             Err(e) => error!(self.log, "retention cleanup failed"; "error" => %e),
         }
-        let effective = self.config.retention_days.max(rf::MIN_RETENTION_DAYS);
-        let cutoff = Self::now() - TimeDelta::days(i64::from(effective));
+        let cutoff =
+            Self::now() - TimeDelta::days(i64::from(self.config.effective_retention_days()));
         if let Err(e) = persistence::ref_flow::runs::delete_before(cutoff).await {
             error!(self.log, "run log cleanup failed"; "error" => %e);
         }
