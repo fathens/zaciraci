@@ -50,6 +50,16 @@ impl Reservation {
     /// Take one credit if the reservation belongs to `today` and is not
     /// exhausted. A reservation from another day yields nothing, so its
     /// leftover is simply forfeited (already charged, never sent).
+    /// Add `requests` to the block if it belongs to `today`; a block from
+    /// another day is forfeited and replaced by a fresh one.
+    pub fn add(&mut self, today: NaiveDate, requests: u32) -> u32 {
+        if self.day != today {
+            *self = Self::new(today, 0);
+        }
+        self.remaining = self.remaining.saturating_add(requests);
+        self.remaining
+    }
+
     pub fn take(&mut self, today: NaiveDate) -> Option<Credit> {
         if self.day != today || self.remaining == 0 {
             return None;

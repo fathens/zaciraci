@@ -19,6 +19,32 @@ impl LedgerStore for MemLedger {
     }
 }
 
+/// Ledger whose charge call draws `draws` credits from the tracker's own
+/// reservation while the charge is in flight, like concurrent enrich
+/// workers do.
+#[derive(Debug, Default, Clone)]
+struct DrawingLedger {
+    inner: MemLedger,
+    reservation: Arc<Mutex<Option<Arc<Mutex<Reservation>>>>>,
+    draws: u32,
+}
+
+impl LedgerStore for DrawingLedger {
+    async fn add_requests(&self, day: NaiveDate, requests: u32) -> Result<u64> {
+        if let Some(r) = self.reservation.lock().unwrap().as_ref() {
+            let source: &dyn CreditSource = &**r;
+            for _ in 0..self.draws {
+                drop(
+                    source
+                        .take(day)
+                        .expect("credit available during the charge"),
+                );
+            }
+        }
+        self.inner.add_requests(day, requests).await
+    }
+}
+
 fn at(h: u32, m: u32) -> NaiveDateTime {
     NaiveDate::from_ymd_opt(2026, 10, 26)
         .unwrap()
@@ -161,4 +187,55 @@ async fn minimum_larger_than_a_block_is_honoured() {
         .await
         .unwrap();
     assert_eq!(got, RESERVE_BLOCK * 3);
+}
+
+#[tokio::test]
+async fn credits_drawn_during_the_charge_are_not_handed_out_again() {
+    let store = DrawingLedger {
+        draws: 3,
+        ..Default::default()
+    };
+    let now = at(12, 0);
+    let mut t = BudgetTracker::new(
+        store.clone(),
+        &STANDARD,
+        Ledger::new(),
+        StreamStats {
+            fwd_7d_mean: 1_000,
+            fwd_last_day: 900,
+            enrich_used_today: 0,
+        },
+        None,
+        now.date(),
+    );
+    // First block: nothing to draw from yet.
+    *store.reservation.lock().unwrap() = None;
+    assert_eq!(
+        t.ensure_credits(Stream::Enrich, 1, now).await.unwrap(),
+        RESERVE_BLOCK
+    );
+    // Spend down to 5, then ask for 16: the block is topped up to
+    // RESERVE_BLOCK (a charge of 15) while 3 more are drawn in flight.
+    let credits = t.credits();
+    let source: &dyn CreditSource = &*credits;
+    for _ in 0..(RESERVE_BLOCK - 5) {
+        drop(source.take(now.date()).unwrap());
+    }
+    *store.reservation.lock().unwrap() = Some(Arc::clone(&credits));
+    let got = t.ensure_credits(Stream::Enrich, 16, now).await.unwrap();
+    assert_eq!(got, 5 - 3 + 15, "5 left, 3 drawn meanwhile, 15 added");
+    assert_eq!(t.reserved(now.date()), got);
+    let charged: u64 = store
+        .inner
+        .charges
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, n)| u64::from(*n))
+        .sum();
+    assert_eq!(
+        charged,
+        u64::from(RESERVE_BLOCK + 15),
+        "every credit handed out was charged exactly once"
+    );
 }

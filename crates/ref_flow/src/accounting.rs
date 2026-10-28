@@ -171,9 +171,11 @@ impl<L: LedgerStore> BudgetTracker<L> {
         if stream == Stream::Enrich {
             self.enrich_used_today += u64::from(allowed);
         }
+        // Workers may have drawn from the block during the await above:
+        // add to what is left rather than restoring the snapshot, or those
+        // draws would be handed out a second time without being charged.
         let mut r = self.reservation.lock().unwrap_or_else(|p| p.into_inner());
-        *r = Reservation::new(today, have + allowed);
-        Ok(have + allowed)
+        Ok(r.add(today, allowed))
     }
 
     /// Snapshot for the cycle log.
