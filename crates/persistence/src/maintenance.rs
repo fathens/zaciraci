@@ -52,20 +52,9 @@ pub async fn run(cfg: impl ConfigAccess + 'static) {
             "wait_seconds" => wait.as_secs()
         );
 
-        // 1分間隔でスリープ（長時間 sleep を避ける）
-        loop {
-            let now = chrono::Utc::now();
-            if now >= next {
-                break;
-            }
-            let remaining = match (next - now).to_std() {
-                Ok(d) => d,
-                Err(_) => break,
-            };
-            let max_sleep = cfg.cron_max_sleep_seconds();
-            let sleep_duration = remaining.min(std::time::Duration::from_secs(max_sleep));
-            tokio::time::sleep(sleep_duration).await;
-        }
+        // 最大 sleep 秒数ごとに時刻を確認しながら待つ（長時間 sleep を避ける）
+        let max_sleep = std::time::Duration::from_secs(cfg.cron_max_sleep_seconds());
+        common::cron::sleep_until(&next, max_sleep, |_| {}).await;
 
         // 実行前に DB 設定をリロード
         let instance_id = &common::config::startup::get().instance_id;

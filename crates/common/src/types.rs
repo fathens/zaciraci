@@ -1,3 +1,4 @@
+pub mod crypto_hash;
 pub mod email;
 pub mod near_units;
 pub mod role;
@@ -6,6 +7,7 @@ pub mod token_account;
 pub mod token_smallest_units;
 pub mod token_types;
 
+pub use self::crypto_hash::{ParseHashError, ReceiptId, TxHash};
 pub use self::email::{Email, ParseEmailError};
 pub use self::near_units::{NearAmount, NearValue, TokenPrice, YoctoAmount, YoctoValue};
 pub use self::role::{ParseRoleError, Role};

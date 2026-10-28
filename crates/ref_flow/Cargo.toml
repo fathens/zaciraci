@@ -1,0 +1,40 @@
+[package]
+name = "ref_flow"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+common = { path = "../common" }
+dex = { path = "../dex" }
+persistence = { path = "../persistence" }
+reqwest = { workspace = true }
+logging = { path = "../logging" }
+anyhow = { workspace = true }
+base64 = { workspace = true }
+chrono = { workspace = true }
+cron = "0.15"
+futures = { workspace = true }
+num-traits = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+slog = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+clap = { version = "4", features = ["derive"], optional = true }
+flate2 = { version = "1", optional = true }
+
+[features]
+# One-off migration tool (crates/ref_flow/src/bin/ref_flow_import.rs). Kept
+# behind a feature so the backend image never links its dependencies.
+importer = ["dep:clap", "dep:flate2"]
+
+[[bin]]
+name = "ref_flow_import"
+required-features = ["importer"]
+
+[dev-dependencies]
+bs58 = { workspace = true }
+mockito = "1.7"
+persistence = { path = "../persistence", features = ["test-helpers"] }
+serial_test = "3.2"
+tokio = { workspace = true, features = ["full", "test-util"] }
