@@ -358,10 +358,13 @@ impl<A: NearBlocksApi + 'static, L: LedgerStore> Cycle<A, L> {
         Ok(walk)
     }
 
-    /// Catch up gaps. `recent == true` handles gaps whose newest edge is at
-    /// or after `recent_cut` (forward continuations), bounded by
-    /// `gap_time`; `recent == false` handles the older ones until the run
-    /// deadline. Returns the number of gaps closed.
+    /// Catch up gaps. `recent == true` handles gaps whose covered edge
+    /// (`until_ns`, the forward cursor they continue from) is at or after
+    /// `recent_cut`: continuations of a recent forward pass, bounded by
+    /// `gap_time` so they never starve enrichment. `recent == false`
+    /// handles the older ones (including continuations after an outage
+    /// longer than the cut) with whatever is left before the run deadline,
+    /// mirroring the Python collector. Returns the number of gaps closed.
     async fn gaps_pass(
         &mut self,
         state: &mut CollectorState,
