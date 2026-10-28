@@ -371,8 +371,7 @@ impl<A: NearBlocksApi + 'static, L: LedgerStore> Cycle<A, L> {
         recent_cut: NaiveDateTime,
         recent: bool,
     ) -> Result<u32> {
-        let recent_cut_ns =
-            u64::try_from(recent_cut.and_utc().timestamp_nanos_opt().unwrap_or(0)).unwrap_or(0);
+        let recent_cut_ns = parse::time_to_ns(recent_cut);
         let limit = if recent {
             self.started + self.config.gap_time
         } else {
@@ -448,8 +447,8 @@ impl<A: NearBlocksApi + 'static, L: LedgerStore> Cycle<A, L> {
             pages: walk.pages,
             receipts: walk.kept,
             trades: 0,
-            from_time: walk.oldest_ns.and_then(ns_to_time),
-            to_time: walk.newest_ns.and_then(ns_to_time),
+            from_time: walk.oldest_ns.and_then(parse::ns_to_time),
+            to_time: walk.newest_ns.and_then(parse::ns_to_time),
             credits: u32::try_from(credits).unwrap_or(u32::MAX),
             http429: 0,
             failures: u32::from(walk.failed) + walk.parse_errors,
@@ -654,12 +653,6 @@ impl<A: NearBlocksApi + 'static, L: LedgerStore> Cycle<A, L> {
 
 /// A spawned enrich fetch: the candidate and the provider's answer.
 type FetchTask = tokio::task::JoinHandle<(PendingTx, Result<Vec<serde_json::Value>, FetchError>)>;
-
-fn ns_to_time(ns: u64) -> Option<NaiveDateTime> {
-    let secs = i64::try_from(ns / 1_000_000_000).ok()?;
-    let nanos = u32::try_from(ns % 1_000_000_000).ok()?;
-    chrono::DateTime::from_timestamp(secs, nanos).map(|t| t.naive_utc())
-}
 
 /// Order candidates so that every 30-minute bucket progresses evenly:
 /// buckets newest first, one transaction from each bucket per round,

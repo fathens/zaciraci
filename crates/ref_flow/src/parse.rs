@@ -69,10 +69,22 @@ struct Block {
 
 impl Block {
     fn time(&self) -> Option<NaiveDateTime> {
-        let secs = i64::try_from(self.block_timestamp / 1_000_000_000).ok()?;
-        let nanos = u32::try_from(self.block_timestamp % 1_000_000_000).ok()?;
-        DateTime::from_timestamp(secs, nanos).map(|t| t.naive_utc())
+        ns_to_time(self.block_timestamp)
     }
+}
+
+/// Nanoseconds since the epoch (NearBlocks block timestamps, the
+/// collector's cursors) to a naive UTC time; `None` outside chrono's range.
+pub fn ns_to_time(ns: u64) -> Option<NaiveDateTime> {
+    let secs = i64::try_from(ns / 1_000_000_000).ok()?;
+    let nanos = u32::try_from(ns % 1_000_000_000).ok()?;
+    DateTime::from_timestamp(secs, nanos).map(|t| t.naive_utc())
+}
+
+/// Inverse of [`ns_to_time`]. Times before the epoch or beyond the i64
+/// nanosecond range map to `0`, the oldest possible cursor.
+pub fn time_to_ns(time: NaiveDateTime) -> u64 {
+    u64::try_from(time.and_utc().timestamp_nanos_opt().unwrap_or(0)).unwrap_or(0)
 }
 
 // ---------------------------------------------------------------- list

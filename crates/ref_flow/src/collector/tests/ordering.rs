@@ -52,13 +52,6 @@ fn round_robin_is_deterministic_within_a_bucket() {
 }
 
 #[test]
-fn nanoseconds_convert_to_naive_time() {
-    let t = ns_to_time(1_792_843_194_365_844_150).unwrap();
-    assert_eq!(t.and_utc().timestamp(), 1_792_843_194);
-    assert_eq!(t.and_utc().timestamp_subsec_nanos(), 365_844_150);
-}
-
-#[test]
 fn effective_retention_never_drops_below_the_persistence_minimum() {
     let mut cfg = config();
     cfg.retention_days = 0;

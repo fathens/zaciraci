@@ -153,3 +153,12 @@ fn block_timestamp_converts_nanoseconds() {
     .unwrap();
     assert_eq!(numeric.time().unwrap().and_utc().timestamp(), 1);
 }
+
+#[test]
+fn nanosecond_conversions_round_trip_and_clamp() {
+    let ns = 1_792_843_194_365_844_150u64;
+    let t = ns_to_time(ns).unwrap();
+    assert_eq!(time_to_ns(t), ns);
+    assert_eq!(ns_to_time(0).unwrap().and_utc().timestamp(), 0);
+    assert_eq!(time_to_ns(NaiveDateTime::MIN), 0, "before the epoch clamps");
+}

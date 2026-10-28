@@ -126,7 +126,7 @@ async fn load_or_init_state(
         v.state.validate()?;
         return Ok(v);
     }
-    let since_ns = u64::try_from(now.and_utc().timestamp_nanos_opt().unwrap_or(0)).unwrap_or(0);
+    let since_ns = crate::parse::time_to_ns(now);
     match state_store::initialize(writer_id, &CollectorState::new(since_ns), now).await? {
         InitOutcome::Created | InitOutcome::AlreadyInitialized => {}
     }
