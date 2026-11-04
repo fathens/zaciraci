@@ -1,18 +1,24 @@
 #![deny(warnings)]
 
+pub(crate) mod alpha_gate;
+pub(crate) mod candidate_telemetry;
 pub(crate) mod cost;
 pub mod execution;
+pub(crate) mod execution_guard;
 pub mod harvest;
+pub(crate) mod lst_carry;
 pub mod market_data;
 pub(crate) mod portfolio_cost;
 pub mod predict;
 pub mod prediction_accuracy;
 pub mod recorder;
+pub(crate) mod regime;
 pub mod slippage;
 pub mod snapshot;
 pub mod strategy;
 pub mod swap;
 pub mod token_cache;
+pub(crate) mod top_n_pruner;
 pub mod valuation;
 
 type Result<T> = anyhow::Result<T>;
@@ -245,33 +251,20 @@ where
                     "next_time" => %next
                 );
 
-                // 長時間sleepを避けるため、1分間隔でチェック
-                loop {
-                    let now = TZ::now();
-                    if now >= next {
-                        break;
-                    }
-
-                    let remaining = match (next - now).to_std() {
-                        Ok(d) => d,
-                        Err(_) => break, // 時刻が過去になった場合は即座に実行
-                    };
-
-                    // 最大sleep秒数（設定可能、デフォルト60秒）
-                    let max_sleep = cfg.cron_max_sleep_seconds();
-                    let sleep_duration = remaining.min(std::time::Duration::from_secs(max_sleep));
-
+                // 長時間sleepを避けるため、最大sleep秒数（設定可能、デフォルト60秒）
+                // ごとに時刻を確認しながら待つ
+                let max_sleep = std::time::Duration::from_secs(cfg.cron_max_sleep_seconds());
+                let log_threshold = cfg.cron_log_threshold_seconds();
+                common::cron::sleep_until(&next, max_sleep, |remaining| {
                     // 長時間待機の場合は定期的にログを出力
-                    let log_threshold = cfg.cron_log_threshold_seconds();
                     if remaining.as_secs() > log_threshold {
                         debug!(log, "still waiting for next execution";
                             "remaining_seconds" => remaining.as_secs(),
                             "next_time" => %next
                         );
                     }
-
-                    tokio::time::sleep(sleep_duration).await;
-                }
+                })
+                .await;
 
                 // タスク実行前に DB から設定をリロード
                 let instance_id = &common::config::startup::get().instance_id;

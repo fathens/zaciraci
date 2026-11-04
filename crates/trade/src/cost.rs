@@ -276,6 +276,100 @@ pub(crate) fn estimate_trade_cost(
     })
 }
 
+/// Markowitz に渡せる「正常値」を保証する往復コスト比率（return スケール）
+///
+/// 入力 `trade_size` に対する `(variable × trade + fixed) / trade_size` を
+/// `[0.0, COST_DEDUCTION_SANE_MAX]` の正常範囲で保持する。alpha gate で
+/// `H × ER > k × round_trip_cost` 比較に使う。
+///
+/// `CostDeduction` (= cost / held_size) と異なり basis が `trade_size` 自身で
+/// あること、および NaN/Infinity 排除の不変条件が型として明示されることが
+/// 価値。alpha gate ヘルパは `Result<RoundTripCostRatio>` で失敗を上位に
+/// 透過させ、`f64::INFINITY` を Markowitz 周辺に流入させない。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct RoundTripCostRatio(f64);
+
+impl RoundTripCostRatio {
+    /// `is_finite() && 0.0 <= value <= COST_DEDUCTION_SANE_MAX` を満たす場合のみ
+    /// `Some` を返す。`CostDeduction::new` と同じ不変条件で、alpha gate と
+    /// cost-aware deduction の return スケール基準を統一する。
+    pub(crate) fn new(value: f64) -> Option<Self> {
+        if value.is_finite() && (0.0..=COST_DEDUCTION_SANE_MAX).contains(&value) {
+            Some(Self(value))
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn as_f64(self) -> f64 {
+        self.0
+    }
+}
+
+impl From<RoundTripCostRatio> for f64 {
+    fn from(c: RoundTripCostRatio) -> Self {
+        c.0
+    }
+}
+
+/// フルポジション size を 1 度買って 1 度売る往復コスト比率を見積もる
+///
+/// alpha gate (`trade::alpha_gate`) からの呼び出し専用。Markowitz の
+/// per-period `expected_return` (= ratio) と単位整合する `RoundTripCostRatio`
+/// を返す。
+///
+/// 計算式:
+///
+/// ```text
+///   breakdown = estimate_trade_cost(buy_path, sell_path, position_size, ...)
+///   ratio     = breakdown.variable_ratio + breakdown.fixed_cost_near / position_size_near
+/// ```
+///
+/// `position_size = 0` は割り算が定義されないため `CostError::ZeroPosition`
+/// と同等の `Err` で fail-soft する（呼び出し側は当該 token を除外する想定）。
+pub(crate) fn estimate_full_position_round_trip_ratio(
+    buy_path: &TokenPath,
+    sell_path: &TokenPath,
+    position_size: &YoctoValue,
+    spot_rate: &ExchangeRate,
+    gas_price: GasPrice,
+    storage_min_per_token: &YoctoValue,
+    new_token_count: usize,
+) -> Result<RoundTripCostRatio> {
+    if position_size.as_bigdecimal().is_zero() {
+        anyhow::bail!("round-trip cost is undefined when position_size is 0");
+    }
+    let breakdown = estimate_trade_cost(
+        buy_path,
+        sell_path,
+        position_size,
+        spot_rate,
+        gas_price,
+        storage_min_per_token,
+        new_token_count,
+    )?;
+    if !breakdown.variable_ratio.is_finite() {
+        anyhow::bail!(
+            "variable_ratio is non-finite: {:?}",
+            breakdown.variable_ratio
+        );
+    }
+    let position_near = position_size.to_near();
+    let fixed_near = breakdown.fixed_cost.to_near();
+    let fixed_per_trade = fixed_near.as_bigdecimal() / position_near.as_bigdecimal();
+    let fixed_f64 = fixed_per_trade.to_f64().ok_or_else(|| {
+        anyhow::anyhow!("fixed_cost / position_size does not fit in f64 (non-finite ratio)")
+    })?;
+    let ratio = breakdown.variable_ratio + fixed_f64;
+    RoundTripCostRatio::new(ratio).ok_or_else(|| {
+        anyhow::anyhow!(
+            "round-trip ratio {} outside sane range [0, {}]",
+            ratio,
+            COST_DEDUCTION_SANE_MAX
+        )
+    })
+}
+
 /// `storage_min_per_token` を `STORAGE_MIN_SANE_CAP` で min クランプして u128 化する。
 ///
 /// RPC 由来の値が `u128` に収まらない or 上限を超える場合は `STORAGE_MIN_SANE_CAP`

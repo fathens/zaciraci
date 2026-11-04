@@ -93,6 +93,112 @@ pub struct RunArgs {
     /// Maximum iterations for cost-aware optimization (default 3)
     #[arg(long, default_value = "3")]
     pub cost_iterations_max: u32,
+
+    /// Use all-predicted-token + held-tokens union as the candidate set on
+    /// every cycle instead of locking in the top-N volatility tokens at
+    /// period start. Defaults to false (legacy fixed-set behavior); pass
+    /// `--all-predicted true` to compare against the legacy baseline.
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = false)]
+    pub all_predicted: bool,
+
+    /// Cap on the candidate count fed to the portfolio optimizer in
+    /// all-token mode. `0` disables Top-N pruning (every candidate that
+    /// survives confidence + liquidity filters reaches the optimizer);
+    /// `> 0` keeps the top N by composite score plus all held tokens.
+    /// Has no effect when `--all-predicted false`.
+    #[arg(long, default_value = "0")]
+    pub top_n_after_prediction: u32,
+
+    /// Soft-threshold shrinkage strength applied to expected returns:
+    /// `μ_adj = sign(μ) × max(0, |μ| - λ × √MSRE)`. `0.0` disables
+    /// shrinkage (identical to the legacy behavior); typical production
+    /// range is `[0.05, 0.3]`. Clamped to `[0.0, 1.0]` at the typed-config
+    /// layer.
+    #[arg(long, default_value = "0.0")]
+    pub shrinkage_lambda: f64,
+
+    /// PR-A Phase 1: enable volatility targeting (Moreira & Muir 2017).
+    /// Adds a `Volatility(cap)` signal where `cap = σ_target / σ_portfolio`.
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = false)]
+    pub vol_target: bool,
+
+    /// PR-A Phase 2: enable market-breadth regime detection.
+    /// Adds a `Breadth(cap)` signal based on the fraction of tokens above
+    /// their own SMA(20).
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = false)]
+    pub regime_breadth: bool,
+
+    /// PR-A Phase 3a: enable per-asset half-Kelly upper bound.
+    /// Tightens BoxBounds via `apply_half_kelly` using the typed-config
+    /// fraction (default Quarter Kelly, 0.25).
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = false)]
+    pub half_kelly: bool,
+
+    /// PR-A Phase 3b: enable per-token stop-loss override.
+    /// Zeroes out the optimizer weight for any held token whose realised
+    /// drawdown exceeds the typed-config threshold (default 10%).
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = false)]
+    pub stop_loss: bool,
+
+    /// PR-B: enable period-mid drawdown circuit breaker.
+    /// Triggers a force-liquidate when current portfolio value falls more
+    /// than `--dd-threshold` below the period's initial value.
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = false)]
+    pub dd_circuit_breaker: bool,
+
+    /// Enable the alpha gate filter (see crates/simulate/docs/plan_alpha_gate.md).
+    /// Rejects tokens where `hold_cycles × expected_return < multiplier × round_trip_cost`.
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = false)]
+    pub alpha_gate: bool,
+
+    /// Safety multiplier `k` applied to round-trip cost in the gate
+    /// comparison `H × ER > k × cost`. Clamped to `[0.1, 10.0]` at the
+    /// typed-config layer. Has no effect when `--alpha-gate=false`.
+    #[arg(long, default_value = "2.0")]
+    pub alpha_gate_multiplier: f64,
+
+    /// Holding period `H` (cycles) in the gate comparison
+    /// `H × ER > k × cost`. Default `1` is the conservative single-cycle
+    /// assumption. Has no effect when `--alpha-gate=false`.
+    #[arg(long, default_value_t = 1)]
+    pub alpha_gate_hold_cycles: u32,
+
+    /// Minimum tokens that must reach the optimizer after the gate. When
+    /// fewer pass, the highest-ER rejected tokens are reinstated. `0`
+    /// disables the fallback. Has no effect when `--alpha-gate=false`.
+    #[arg(long, default_value_t = 5)]
+    pub alpha_gate_min_pass_count: u32,
+
+    /// Minimum wnear-side pool TVL (in NEAR) for a token to enter the
+    /// strategy's candidate set. Default `100` matches production.
+    ///
+    /// The predict_sweep analysis shows direction accuracy at TVL
+    /// buckets: 100-500 NEAR -> 27%, 500-1000 -> 39%, 1000-5000 -> 59%,
+    /// 5000-50000 -> 67% (sweet spot). Raising the threshold tightens
+    /// the trading universe to the predictable subset (~32 tokens at
+    /// 5000 vs ~281 at 100).
+    #[arg(long, default_value_t = 100)]
+    pub min_pool_liquidity: u32,
+
+    /// Enable the Tier-1 liquid-staking carry mode (LiNEAR/stNEAR
+    /// equal-weight buy-and-hold). Bypasses prediction/optimizer entirely.
+    /// Defaults to `false`; pass `--lst-carry true` for A/B comparison.
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = false)]
+    pub lst_carry: bool,
+
+    /// Minimum hold horizon (days) for the carry mode. Also drives the
+    /// evaluation-period length so the period boundary does not liquidate
+    /// before the hold completes. Clamped to `[30, 90]` at the config layer.
+    /// Has no effect when `--lst-carry=false`.
+    #[arg(long, default_value_t = 30)]
+    pub lst_carry_min_hold_days: u32,
+
+    /// De-peg tolerance for the carry mode: an LST whose rate deviates from
+    /// its prior-period baseline by more than this fraction is skipped.
+    /// Clamped to `[0.01, 0.5]` at the config layer. Has no effect when
+    /// `--lst-carry=false`.
+    #[arg(long, default_value_t = 0.05)]
+    pub lst_carry_max_depeg: f64,
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -163,6 +269,22 @@ mod tests {
             pred_err_diagonal_mode: PredErrDiagonalMode::Max,
             cost_aware_return: true,
             cost_iterations_max: 3,
+            all_predicted: false,
+            top_n_after_prediction: 0,
+            shrinkage_lambda: 0.0,
+            vol_target: false,
+            regime_breadth: false,
+            half_kelly: false,
+            stop_loss: false,
+            dd_circuit_breaker: false,
+            alpha_gate: false,
+            alpha_gate_multiplier: 2.0,
+            alpha_gate_hold_cycles: 1,
+            alpha_gate_min_pass_count: 5,
+            min_pool_liquidity: 100,
+            lst_carry: false,
+            lst_carry_min_hold_days: 30,
+            lst_carry_max_depeg: 0.05,
         }
     }
 

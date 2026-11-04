@@ -275,6 +275,7 @@ async fn test_convert_prediction_result() {
         .collect(),
         lower_bound: None,
         upper_bound: None,
+        predicted_std: None,
         model_name: "chronos-t5-large".to_string(),
         strategy_name: "ensemble".to_string(),
         processing_time_secs: 1.5,
@@ -311,8 +312,10 @@ async fn test_convert_prediction_result_15min_interval_has_24h_point() {
     let now = Utc::now();
     let last_data_timestamp = now;
 
-    // 15分間隔で96ポイント（24時間分）の予測データを生成
-    let forecast: std::collections::BTreeMap<_, _> = (1..=96)
+    // 15分間隔で PREDICTION_HORIZON_HOURS をカバーする予測データを生成
+    // (168h → 672 ポイント)。horizon 先のポイントが存在する状態を作る。
+    let points = (PREDICTION_HORIZON_HOURS as i64) * 4 + 4; // 4 points/hour + margin
+    let forecast: std::collections::BTreeMap<_, _> = (1..=points)
         .map(|i| {
             let ts = now + TimeDelta::minutes(15 * i);
             let price_val: BigDecimal = BigDecimal::from_str(&format!("1.{i:03}")).unwrap();
@@ -324,6 +327,7 @@ async fn test_convert_prediction_result_15min_interval_has_24h_point() {
         forecast,
         lower_bound: None,
         upper_bound: None,
+        predicted_std: None,
         model_name: "chronos-t5-large".to_string(),
         strategy_name: "ensemble".to_string(),
         processing_time_secs: 2.0,

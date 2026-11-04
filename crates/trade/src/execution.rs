@@ -9,10 +9,10 @@ use crate::Result;
 use crate::slippage::{ExpectedReturn, SlippagePolicy};
 use crate::swap::SwapParams;
 use crate::{recorder::TradeRecorder, swap};
-use bigdecimal::{BigDecimal, ToPrimitive, Zero};
+use bigdecimal::{BigDecimal, FromPrimitive, ToPrimitive, Zero};
 use blockchain::jsonrpc::{AccountInfo, GasInfo, SendTx, SentTx, ViewContract};
 use blockchain::wallet::Wallet;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use common::algorithm::types::TradingAction;
 use common::config::ConfigAccess;
 use common::types::*;
@@ -907,6 +907,396 @@ fn spawn_cleanup_old_evaluation_periods(retention_days: u32) {
     });
 }
 
+/// Evaluation-period management decision.
+///
+/// `Continue` / `EndAndStartNew` / `Bootstrap` are determined purely from time
+/// vs. period duration. `ForceLiquidate` is produced by an additional async
+/// drawdown check that runs only when the period would otherwise continue and
+/// the circuit-breaker flag is enabled.
+#[derive(Debug)]
+pub(crate) enum PeriodAction {
+    /// Period is still active and trading should continue with existing positions.
+    Continue {
+        period_id: String,
+        period_selected_tokens: Option<Vec<Option<String>>>,
+        period_initial_value: YoctoAmount,
+        days_elapsed: i64,
+    },
+    /// Scheduled end-of-period: liquidate, harvest, then start a new period.
+    EndAndStartNew {
+        period_id: String,
+        period_initial_value: YoctoAmount,
+        days_elapsed: i64,
+    },
+    /// Drawdown circuit breaker fired: same liquidation flow as
+    /// `EndAndStartNew` but triggered by intra-period loss instead of by
+    /// elapsed time.
+    ForceLiquidate {
+        period_id: String,
+        period_initial_value: YoctoAmount,
+        days_elapsed: i64,
+        current_value: NearValue,
+        threshold: f64,
+    },
+    /// No prior period exists; create the first one.
+    Bootstrap,
+}
+
+/// Pure decision: does the current portfolio value cross the drawdown threshold?
+///
+/// The trigger condition is `current < initial × (1 - threshold)`, evaluated in
+/// `BigDecimal` to avoid `f64` precision loss on yocto-NEAR magnitudes.
+///
+/// Defensive returns of `false`:
+/// - `initial.is_zero()` → unable to compute a meaningful drawdown ratio.
+/// - `threshold` is non-finite, ≤ 0, or ≥ 1 → operator misconfigured the flag;
+///   typed-config clamping should already prevent this, but we re-check rather
+///   than let an injected NaN silently disable comparisons.
+pub(crate) fn drawdown_triggers_breaker(
+    initial: &NearValue,
+    current: &NearValue,
+    threshold: f64,
+) -> bool {
+    if initial.is_zero() {
+        return false;
+    }
+    if !threshold.is_finite() || threshold <= 0.0 || threshold >= 1.0 {
+        return false;
+    }
+    let one_minus_threshold = match BigDecimal::from_f64(1.0 - threshold) {
+        Some(v) => v,
+        None => return false,
+    };
+    let dd_limit = initial.as_bigdecimal() * &one_minus_threshold;
+    current.as_bigdecimal() < &dd_limit
+}
+
+/// Convert a yocto-denominated period initial value into the NearValue domain
+/// type used by `swap::calculate_total_portfolio_value`. The conversion goes
+/// through `NearAmount` so the rounding follows the same `YOCTO_PER_NEAR`
+/// division as everywhere else in the codebase.
+fn yocto_amount_to_near_value(y: &YoctoAmount) -> NearValue {
+    NearValue::from_near(y.to_near().as_bigdecimal().clone())
+}
+
+/// Fetch the current portfolio value for the active period and return
+/// `Some(current_value)` iff the drawdown crosses `threshold`. Holdings are
+/// preferred from the DB snapshot (the same source `fetch_held_tokens` uses);
+/// when the snapshot is missing we fall back to RPC against the period's
+/// `selected_tokens` set, which mirrors the existing fallback policy. If
+/// neither path yields a balance map (for example on the very first cycle of a
+/// brand-new period) the function returns `Ok(None)` rather than failing the
+/// whole `manage_evaluation_period` cycle.
+async fn evaluate_dd_breaker<C, W>(
+    client: &C,
+    wallet: &W,
+    period_id: &str,
+    period_initial_value: &YoctoAmount,
+    period_selected_tokens: &Option<Vec<Option<String>>>,
+    threshold: f64,
+    log: &slog::Logger,
+) -> Result<Option<NearValue>>
+where
+    C: AccountInfo + SendTx + ViewContract + GasInfo,
+    <C as SendTx>::Output: Display + SentTx,
+    W: Wallet,
+{
+    let balances = match crate::snapshot::get_holdings_from_db(period_id).await? {
+        Some(b) => b,
+        None => {
+            let token_accounts: Vec<TokenAccount> = period_selected_tokens
+                .as_ref()
+                .map(|tokens| {
+                    tokens
+                        .iter()
+                        .filter_map(|s| s.as_ref())
+                        .filter_map(|s| s.parse::<TokenAccount>().ok())
+                        .collect()
+                })
+                .unwrap_or_default();
+            if token_accounts.is_empty() {
+                debug!(log, "DD breaker eval skipped: no snapshot and no selected tokens";
+                    "period_id" => period_id);
+                return Ok(None);
+            }
+            match swap::get_current_portfolio_balances(client, wallet, &token_accounts).await {
+                Ok(b) => b,
+                Err(e) => {
+                    warn!(log, "DD breaker eval skipped: RPC fallback failed";
+                        "error" => ?e, "period_id" => period_id);
+                    return Ok(None);
+                }
+            }
+        }
+    };
+
+    let current_value = swap::calculate_total_portfolio_value(&balances).await?;
+    let initial_near = yocto_amount_to_near_value(period_initial_value);
+
+    if drawdown_triggers_breaker(&initial_near, &current_value, threshold) {
+        Ok(Some(current_value))
+    } else {
+        debug!(log, "DD breaker not triggered";
+            "period_id" => period_id,
+            "initial_value_near" => %initial_near,
+            "current_value_near" => %current_value,
+            "threshold" => threshold);
+        Ok(None)
+    }
+}
+
+/// Effective evaluation-period length, in days.
+///
+/// The liquid-staking carry mode requires a long hold (≥30 days) to be
+/// reliably positive, and the period boundary force-liquidates all positions
+/// (`handle_end_and_start_new`), so the period length is the de-facto hold.
+/// When carry is enabled the period length is therefore driven by
+/// `trade_lst_carry_min_hold_days` rather than the standard
+/// `trade_evaluation_days`; otherwise the standard window applies. Keeping this
+/// pure makes the mode selection unit-testable.
+pub(crate) fn effective_evaluation_period_days(cfg: &impl ConfigAccess) -> i64 {
+    if cfg.trade_lst_carry_enabled() {
+        i64::from(cfg.trade_lst_carry_min_hold_days())
+    } else {
+        i64::from(cfg.trade_evaluation_days())
+    }
+}
+
+pub(crate) fn determine_period_action(
+    latest_period: Option<EvaluationPeriod>,
+    current_time_naive: NaiveDateTime,
+    evaluation_period_days: i64,
+) -> PeriodAction {
+    match latest_period {
+        None => PeriodAction::Bootstrap,
+        Some(period) => {
+            let period_duration = current_time_naive.signed_duration_since(period.start_time);
+            let days_elapsed = period_duration.num_days();
+            if days_elapsed >= evaluation_period_days {
+                PeriodAction::EndAndStartNew {
+                    period_id: period.period_id,
+                    period_initial_value: period.initial_value,
+                    days_elapsed,
+                }
+            } else {
+                PeriodAction::Continue {
+                    period_id: period.period_id,
+                    period_selected_tokens: period.selected_tokens,
+                    period_initial_value: period.initial_value,
+                    days_elapsed,
+                }
+            }
+        }
+    }
+}
+
+async fn handle_continue(
+    period_id: String,
+    period_selected_tokens: Option<Vec<Option<String>>>,
+    evaluation_period_days: i64,
+    days_elapsed: i64,
+    log: &slog::Logger,
+) -> Result<EvaluationPeriodResult> {
+    debug!(log, "checking evaluation period status";
+        "period_id" => %period_id,
+        "days_remaining" => evaluation_period_days - days_elapsed
+    );
+
+    // トランザクション記録をチェック
+    use persistence::trade_transaction::TradeTransaction;
+    let transaction_count =
+        TradeTransaction::count_by_evaluation_period_async(period_id.clone()).await?;
+
+    debug!(log, "transaction count for period";
+        "count" => transaction_count,
+        "period_id" => %period_id
+    );
+
+    let selected_tokens: Vec<TokenAccount> = period_selected_tokens
+        .unwrap_or_default()
+        .into_iter()
+        .flatten()
+        .filter_map(|s| s.parse::<TokenAccount>().ok())
+        .collect();
+
+    // selected_tokens が空かつトランザクションがゼロなら新規期間として扱う
+    // selected_tokens.is_empty() だけだとパース全失敗（データ破損）時に誤判定するため、
+    // transaction_count == 0 も併用して安全性を確保
+    let is_new_period = selected_tokens.is_empty() && transaction_count == 0;
+
+    if selected_tokens.is_empty() && transaction_count > 0 {
+        error!(log, "selected_tokens empty but transactions exist, possible data corruption";
+            "transaction_count" => transaction_count);
+    }
+
+    if is_new_period {
+        debug!(
+            log,
+            "no transactions found in period, treating as new period"
+        );
+    } else {
+        debug!(log, "continuing evaluation period with existing positions";
+            "transaction_count" => transaction_count
+        );
+    }
+
+    Ok(EvaluationPeriodResult {
+        period_id,
+        is_new_period,
+        existing_tokens: selected_tokens,
+        liquidated_balance: None,
+        failed_liquidations: vec![],
+    })
+}
+
+async fn handle_end_and_start_new<C, W>(
+    client: &C,
+    wallet: &W,
+    period_id: String,
+    period_initial_value: YoctoAmount,
+    days_elapsed: i64,
+    cfg: &impl ConfigAccess,
+    log: &slog::Logger,
+) -> Result<EvaluationPeriodResult>
+where
+    C: AccountInfo + SendTx + ViewContract + GasInfo,
+    <C as SendTx>::Output: Display + SentTx,
+    W: Wallet,
+{
+    info!(log, "ending evaluation period, starting new period";
+        "previous_period_id" => %period_id,
+        "days_elapsed" => days_elapsed
+    );
+
+    // 全トークンをwrap.nearに売却
+    let liquidation = liquidate_all_positions(client, wallet, cfg).await?;
+    let final_balance = liquidation.wrap_near_balance;
+    let failed_liquidations = liquidation.failed_tokens;
+    info!(log, "liquidated all positions";
+        "final_balance" => %final_balance,
+        "failed_count" => failed_liquidations.len()
+    );
+
+    // 評価期間のパフォーマンスを計算してログ出力
+    let initial_value = period_initial_value.to_value();
+    let final_value = final_balance.to_value();
+
+    // 参照同士の演算（clone 不要）
+    let change_amount = &final_value - &initial_value;
+    let change_percentage = if !initial_value.is_zero() {
+        (&final_value / &initial_value - BigDecimal::from(1)) * BigDecimal::from(100)
+    } else {
+        BigDecimal::from(0)
+    };
+
+    info!(log, "evaluation period performance";
+        "period_id" => %period_id,
+        "initial_value" => %initial_value,
+        "final_value" => %final_value,
+        "change_amount" => %change_amount,
+        "change_percentage" => %format!("{:.2}%", change_percentage)
+    );
+
+    // ハーベスト判定: 旧 period の initial_value と清算後の final_value で比較
+    // 新 period 作成前に実行することで、正しい initial_value で判定できる
+    let harvested_amount =
+        crate::harvest::check_and_execute_harvest(&initial_value, &final_value, &period_id, cfg)
+            .await
+            .unwrap_or_else(|e| {
+                error!(log, "harvest failed, continuing with new period"; "error" => %e);
+                YoctoAmount::zero()
+            });
+
+    // ハーベスト後の残高を取得（ハーベスト実行時は REF Finance 残高が変動）
+    // ハーベスト未実行の場合（閾値未達・時間条件・最低額条件等）は清算時の残高をそのまま使用
+    let post_harvest_balance = if !harvested_amount.is_zero() {
+        info!(log, "harvest completed, refreshing balance"; "harvested" => %harvested_amount);
+        let account = wallet.account_id();
+        let wrap_near = &blockchain::ref_finance::token_account::WNEAR_TOKEN;
+        let deposits = blockchain::ref_finance::deposit::get_deposits(client, account).await?;
+        let balance = deposits.get(wrap_near).map(|u| u.0).unwrap_or_default();
+        YoctoAmount::from_u128(balance)
+    } else {
+        final_balance
+    };
+    let post_harvest_value = post_harvest_balance.to_value();
+
+    // TRADE_ENABLED をチェック
+    let trade_enabled = cfg.trade_enabled();
+
+    if !trade_enabled {
+        info!(log, "trade disabled, not starting new period";
+            "final_balance" => %post_harvest_balance
+        );
+
+        // TRADE_UNWRAP_ON_STOP が有効な場合、wrap.near を NEAR に戻して送金
+        let unwrap_on_stop = cfg.trade_unwrap_on_stop();
+
+        if unwrap_on_stop {
+            info!(log, "unwrap_on_stop enabled, executing unwrap and transfer");
+            if let Err(e) = unwrap_and_transfer_wnear(log, cfg).await {
+                error!(log, "failed to unwrap and transfer"; "error" => %e);
+            }
+        }
+
+        // 空の period_id を返して停止を通知
+        return Ok(EvaluationPeriodResult {
+            period_id: String::new(),
+            is_new_period: false,
+            existing_tokens: vec![],
+            liquidated_balance: Some(post_harvest_balance),
+            failed_liquidations: failed_liquidations.clone(),
+        });
+    }
+
+    // 新規評価期間を作成（ハーベスト後の残高を initial_value とする）
+    let new_period = NewEvaluationPeriod::new(post_harvest_value.to_amount(), vec![]);
+    let created_period = new_period.insert_async().await?;
+
+    info!(log, "created new evaluation period";
+        "period_id" => %created_period.period_id,
+        "initial_value" => %created_period.initial_value
+    );
+
+    // 古い評価期間をクリーンアップ（CASCADE で子テーブルも削除）
+    spawn_cleanup_old_evaluation_periods(cfg.evaluation_periods_retention_days());
+
+    Ok(EvaluationPeriodResult {
+        period_id: created_period.period_id,
+        is_new_period: true,
+        existing_tokens: vec![],
+        liquidated_balance: Some(post_harvest_balance),
+        failed_liquidations,
+    })
+}
+
+async fn handle_bootstrap(
+    available_funds: YoctoAmount,
+    retention_days: u32,
+    log: &slog::Logger,
+) -> Result<EvaluationPeriodResult> {
+    info!(log, "no evaluation period found, creating first period");
+
+    let new_period = NewEvaluationPeriod::new(available_funds, vec![]);
+    let created_period = new_period.insert_async().await?;
+
+    info!(log, "created first evaluation period";
+        "period_id" => %created_period.period_id,
+        "initial_value" => %created_period.initial_value
+    );
+
+    // 古い評価期間をクリーンアップ（CASCADE で子テーブルも削除）
+    spawn_cleanup_old_evaluation_periods(retention_days);
+
+    Ok(EvaluationPeriodResult {
+        period_id: created_period.period_id,
+        is_new_period: true,
+        existing_tokens: vec![],
+        liquidated_balance: None,
+        failed_liquidations: vec![],
+    })
+}
+
 pub(crate) async fn manage_evaluation_period<C, W>(
     client: &C,
     wallet: &W,
@@ -921,211 +1311,122 @@ where
 {
     let log = DEFAULT.new(o!("function" => "manage_evaluation_period"));
 
-    // 設定ファイルから評価期間を読み込む（デフォルト: 10日）
-    let evaluation_period_days = i64::from(cfg.trade_evaluation_days());
+    // 評価期間長を決定する。carry モード有効時は最低保有日数を期間長にして、
+    // 期間境界の強制清算が carry の保有を途中で打ち切らないようにする。
+    let evaluation_period_days = effective_evaluation_period_days(cfg);
 
-    info!(log, "evaluation period configuration"; "days" => evaluation_period_days);
+    info!(log, "evaluation period configuration";
+        "days" => evaluation_period_days,
+        "lst_carry" => cfg.trade_lst_carry_enabled());
 
-    // 最新の評価期間を取得
+    // 最新の評価期間を取得して、時間に基づいて action を決定
     let latest_period = EvaluationPeriod::get_latest_async().await?;
+    let mut action = determine_period_action(
+        latest_period,
+        current_time.naive_utc(),
+        evaluation_period_days,
+    );
 
-    match latest_period {
-        Some(period) => {
-            let now = current_time.naive_utc();
-            let period_duration = now.signed_duration_since(period.start_time);
-            // period のフィールドを事前に取り出す（clone 不要で move）
-            let period_id = period.period_id;
-            let period_initial_value = period.initial_value;
-            let period_selected_tokens = period.selected_tokens;
-
-            if period_duration.num_days() >= evaluation_period_days {
-                // 評価期間終了: 全トークンを売却して新規期間を開始
-                info!(log, "evaluation period ended, starting new period";
-                    "previous_period_id" => %period_id,
-                    "days_elapsed" => period_duration.num_days()
-                );
-
-                // 全トークンをwrap.nearに売却
-                let liquidation = liquidate_all_positions(client, wallet, cfg).await?;
-                let final_balance = liquidation.wrap_near_balance;
-                let failed_liquidations = liquidation.failed_tokens;
-                info!(log, "liquidated all positions";
-                    "final_balance" => %final_balance,
-                    "failed_count" => failed_liquidations.len()
-                );
-
-                // 評価期間のパフォーマンスを計算してログ出力
-                let initial_value = period_initial_value.to_value();
-                let final_value = final_balance.to_value();
-
-                // 参照同士の演算（clone 不要）
-                let change_amount = &final_value - &initial_value;
-                let change_percentage = if !initial_value.is_zero() {
-                    (&final_value / &initial_value - BigDecimal::from(1)) * BigDecimal::from(100)
-                } else {
-                    BigDecimal::from(0)
-                };
-
-                info!(log, "evaluation period performance";
-                    "period_id" => %period_id,
-                    "initial_value" => %initial_value,
-                    "final_value" => %final_value,
-                    "change_amount" => %change_amount,
-                    "change_percentage" => %format!("{:.2}%", change_percentage)
-                );
-
-                // ハーベスト判定: 旧 period の initial_value と清算後の final_value で比較
-                // 新 period 作成前に実行することで、正しい initial_value で判定できる
-                let harvested_amount = crate::harvest::check_and_execute_harvest(
-                    &initial_value,
-                    &final_value,
-                    &period_id,
-                    cfg,
-                )
-                .await
-                .unwrap_or_else(|e| {
-                    error!(log, "harvest failed, continuing with new period"; "error" => %e);
-                    YoctoAmount::zero()
-                });
-
-                // ハーベスト後の残高を取得（ハーベスト実行時は REF Finance 残高が変動）
-                // ハーベスト未実行の場合（閾値未達・時間条件・最低額条件等）は清算時の残高をそのまま使用
-                let post_harvest_balance = if !harvested_amount.is_zero() {
-                    info!(log, "harvest completed, refreshing balance"; "harvested" => %harvested_amount);
-                    let account = wallet.account_id();
-                    let wrap_near = &blockchain::ref_finance::token_account::WNEAR_TOKEN;
-                    let deposits =
-                        blockchain::ref_finance::deposit::get_deposits(client, account).await?;
-                    let balance = deposits.get(wrap_near).map(|u| u.0).unwrap_or_default();
-                    YoctoAmount::from_u128(balance)
-                } else {
-                    final_balance
-                };
-                let post_harvest_value = post_harvest_balance.to_value();
-
-                // TRADE_ENABLED をチェック
-                let trade_enabled = cfg.trade_enabled();
-
-                if !trade_enabled {
-                    info!(log, "trade disabled, not starting new period";
-                        "final_balance" => %post_harvest_balance
-                    );
-
-                    // TRADE_UNWRAP_ON_STOP が有効な場合、wrap.near を NEAR に戻して送金
-                    let unwrap_on_stop = cfg.trade_unwrap_on_stop();
-
-                    if unwrap_on_stop {
-                        info!(log, "unwrap_on_stop enabled, executing unwrap and transfer");
-                        if let Err(e) = unwrap_and_transfer_wnear(&log, cfg).await {
-                            error!(log, "failed to unwrap and transfer"; "error" => %e);
-                        }
-                    }
-
-                    // 空の period_id を返して停止を通知
-                    return Ok(EvaluationPeriodResult {
-                        period_id: String::new(),
-                        is_new_period: false,
-                        existing_tokens: vec![],
-                        liquidated_balance: Some(post_harvest_balance),
-                        failed_liquidations: failed_liquidations.clone(),
-                    });
-                }
-
-                // 新規評価期間を作成（ハーベスト後の残高を initial_value とする）
-                let new_period = NewEvaluationPeriod::new(post_harvest_value.to_amount(), vec![]);
-                let created_period = new_period.insert_async().await?;
-
-                info!(log, "created new evaluation period";
-                    "period_id" => %created_period.period_id,
-                    "initial_value" => %created_period.initial_value
-                );
-
-                // 古い評価期間をクリーンアップ（CASCADE で子テーブルも削除）
-                spawn_cleanup_old_evaluation_periods(cfg.evaluation_periods_retention_days());
-
-                Ok(EvaluationPeriodResult {
-                    period_id: created_period.period_id,
-                    is_new_period: true,
-                    existing_tokens: vec![],
-                    liquidated_balance: Some(post_harvest_balance),
-                    failed_liquidations,
-                })
-            } else {
-                // 評価期間中: トランザクション記録で判定
-                debug!(log, "checking evaluation period status";
-                    "period_id" => %period_id,
-                    "days_remaining" => evaluation_period_days - period_duration.num_days()
-                );
-
-                // トランザクション記録をチェック
-                use persistence::trade_transaction::TradeTransaction;
-                let transaction_count =
-                    TradeTransaction::count_by_evaluation_period_async(period_id.clone()).await?;
-
-                debug!(log, "transaction count for period";
-                    "count" => transaction_count,
-                    "period_id" => %period_id
-                );
-
-                let selected_tokens: Vec<TokenAccount> = period_selected_tokens
-                    .unwrap_or_default()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|s| s.parse::<TokenAccount>().ok())
-                    .collect();
-
-                // selected_tokens が空かつトランザクションがゼロなら新規期間として扱う
-                // selected_tokens.is_empty() だけだとパース全失敗（データ破損）時に誤判定するため、
-                // transaction_count == 0 も併用して安全性を確保
-                let is_new_period = selected_tokens.is_empty() && transaction_count == 0;
-
-                if selected_tokens.is_empty() && transaction_count > 0 {
-                    error!(log, "selected_tokens empty but transactions exist, possible data corruption";
-                        "transaction_count" => transaction_count);
-                }
-
-                if is_new_period {
-                    debug!(
-                        log,
-                        "no transactions found in period, treating as new period"
-                    );
-                } else {
-                    debug!(log, "continuing evaluation period with existing positions";
-                        "transaction_count" => transaction_count
-                    );
-                }
-
-                Ok(EvaluationPeriodResult {
-                    period_id,
-                    is_new_period,
-                    existing_tokens: selected_tokens,
-                    liquidated_balance: None,
-                    failed_liquidations: vec![],
-                })
-            }
+    // Continue 判定なら DD circuit breaker を評価し、トリガーされれば
+    // ForceLiquidate に置き換える。フラグ無効・評価不能 (snapshot 未生成 +
+    // RPC fallback 失敗) のときは元の Continue を維持する fail-safe 動作。
+    if cfg.trade_dd_circuit_breaker_enabled()
+        && let PeriodAction::Continue {
+            period_id,
+            period_selected_tokens,
+            period_initial_value,
+            days_elapsed,
+        } = &action
+    {
+        let threshold = cfg.trade_dd_threshold();
+        let dd_eval = evaluate_dd_breaker(
+            client,
+            wallet,
+            period_id,
+            period_initial_value,
+            period_selected_tokens,
+            threshold,
+            &log,
+        )
+        .await?;
+        if let Some(current_value) = dd_eval {
+            warn!(log, "DD circuit breaker triggered, switching to force-liquidate";
+                "period_id" => %period_id,
+                "current_value_near" => %current_value,
+                "threshold" => threshold,
+                "days_elapsed" => days_elapsed);
+            action = PeriodAction::ForceLiquidate {
+                period_id: period_id.clone(),
+                period_initial_value: period_initial_value.clone(),
+                days_elapsed: *days_elapsed,
+                current_value,
+                threshold,
+            };
         }
-        None => {
-            // 初回起動: 新規評価期間を作成
-            info!(log, "no evaluation period found, creating first period");
+    }
 
-            let new_period = NewEvaluationPeriod::new(available_funds.clone(), vec![]);
-            let created_period = new_period.insert_async().await?;
-
-            info!(log, "created first evaluation period";
-                "period_id" => %created_period.period_id,
-                "initial_value" => %created_period.initial_value
-            );
-
-            // 古い評価期間をクリーンアップ（CASCADE で子テーブルも削除）
-            spawn_cleanup_old_evaluation_periods(cfg.evaluation_periods_retention_days());
-
-            Ok(EvaluationPeriodResult {
-                period_id: created_period.period_id,
-                is_new_period: true,
-                existing_tokens: vec![],
-                liquidated_balance: None,
-                failed_liquidations: vec![],
-            })
+    match action {
+        PeriodAction::Continue {
+            period_id,
+            period_selected_tokens,
+            period_initial_value: _,
+            days_elapsed,
+        } => {
+            handle_continue(
+                period_id,
+                period_selected_tokens,
+                evaluation_period_days,
+                days_elapsed,
+                &log,
+            )
+            .await
+        }
+        PeriodAction::EndAndStartNew {
+            period_id,
+            period_initial_value,
+            days_elapsed,
+        } => {
+            handle_end_and_start_new(
+                client,
+                wallet,
+                period_id,
+                period_initial_value,
+                days_elapsed,
+                cfg,
+                &log,
+            )
+            .await
+        }
+        PeriodAction::ForceLiquidate {
+            period_id,
+            period_initial_value,
+            days_elapsed,
+            current_value,
+            threshold,
+        } => {
+            warn!(log, "force-liquidating due to drawdown circuit breaker";
+                "previous_period_id" => %period_id,
+                "days_elapsed" => days_elapsed,
+                "current_value_near" => %current_value,
+                "threshold" => threshold);
+            handle_end_and_start_new(
+                client,
+                wallet,
+                period_id,
+                period_initial_value,
+                days_elapsed,
+                cfg,
+                &log,
+            )
+            .await
+        }
+        PeriodAction::Bootstrap => {
+            handle_bootstrap(
+                available_funds,
+                cfg.evaluation_periods_retention_days(),
+                &log,
+            )
+            .await
         }
     }
 }

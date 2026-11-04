@@ -95,6 +95,11 @@ pub async fn run_simulation(cli: &RunArgs) -> Result<SimulationResult> {
 
         let sim_day = match earliest {
             Some(t) => Utc.from_utc_datetime(&t),
+            // The LST carry mode does not consume predictions, so it must not
+            // gate on their availability — advance on the calendar using
+            // midnight as the cycle clock. (Predictive modes still wait for a
+            // fresh prediction, matching production's runtime behavior.)
+            None if cli.lst_carry => Utc.from_utc_datetime(&day_start),
             None => {
                 info!(log, "skipping day: no fresh predictions available";
                     "date" => %current_date, "day" => day_count);
@@ -228,6 +233,58 @@ pub(crate) fn apply_config(cli: &RunArgs) {
         "PORTFOLIO_COST_ITERATIONS_MAX",
         &cli.cost_iterations_max.to_string(),
     );
+    common::config::store::set(
+        "TRADE_ALL_PREDICTED_ENABLED",
+        &cli.all_predicted.to_string(),
+    );
+    common::config::store::set(
+        "TRADE_TOP_N_AFTER_PREDICTION",
+        &cli.top_n_after_prediction.to_string(),
+    );
+    common::config::store::set(
+        "TRADE_PREDICTION_SHRINKAGE_LAMBDA",
+        &cli.shrinkage_lambda.to_string(),
+    );
+    common::config::store::set(
+        "PORTFOLIO_VOLATILITY_TARGET_ENABLED",
+        &cli.vol_target.to_string(),
+    );
+    common::config::store::set(
+        "PORTFOLIO_REGIME_BREADTH_ENABLED",
+        &cli.regime_breadth.to_string(),
+    );
+    common::config::store::set("PORTFOLIO_HALF_KELLY_ENABLED", &cli.half_kelly.to_string());
+    common::config::store::set("PORTFOLIO_STOP_LOSS_ENABLED", &cli.stop_loss.to_string());
+    common::config::store::set(
+        "TRADE_DD_CIRCUIT_BREAKER_ENABLED",
+        &cli.dd_circuit_breaker.to_string(),
+    );
+    common::config::store::set("TRADE_ALPHA_GATE_ENABLED", &cli.alpha_gate.to_string());
+    common::config::store::set(
+        "TRADE_ALPHA_GATE_MULTIPLIER",
+        &cli.alpha_gate_multiplier.to_string(),
+    );
+    common::config::store::set(
+        "TRADE_ALPHA_GATE_HOLD_CYCLES",
+        &cli.alpha_gate_hold_cycles.to_string(),
+    );
+    common::config::store::set(
+        "TRADE_ALPHA_GATE_MIN_PASS_COUNT",
+        &cli.alpha_gate_min_pass_count.to_string(),
+    );
+    common::config::store::set(
+        "TRADE_MIN_POOL_LIQUIDITY",
+        &cli.min_pool_liquidity.to_string(),
+    );
+    common::config::store::set("TRADE_LST_CARRY_ENABLED", &cli.lst_carry.to_string());
+    common::config::store::set(
+        "TRADE_LST_CARRY_MIN_HOLD_DAYS",
+        &cli.lst_carry_min_hold_days.to_string(),
+    );
+    common::config::store::set(
+        "TRADE_LST_CARRY_MAX_DEPEG",
+        &cli.lst_carry_max_depeg.to_string(),
+    );
 }
 
 #[cfg(test)]
@@ -254,6 +311,22 @@ mod tests {
             pred_err_diagonal_mode: PredErrDiagonalMode::Max,
             cost_aware_return: true,
             cost_iterations_max: 3,
+            all_predicted: false,
+            top_n_after_prediction: 0,
+            shrinkage_lambda: 0.0,
+            vol_target: false,
+            regime_breadth: false,
+            half_kelly: false,
+            stop_loss: false,
+            dd_circuit_breaker: false,
+            alpha_gate: false,
+            alpha_gate_multiplier: 2.0,
+            alpha_gate_hold_cycles: 1,
+            alpha_gate_min_pass_count: 5,
+            min_pool_liquidity: 100,
+            lst_carry: false,
+            lst_carry_min_hold_days: 30,
+            lst_carry_max_depeg: 0.05,
         }
     }
 
@@ -287,6 +360,22 @@ mod tests {
             pred_err_diagonal_mode: PredErrDiagonalMode::Max,
             cost_aware_return: true,
             cost_iterations_max: 5,
+            all_predicted: true,
+            top_n_after_prediction: 30,
+            shrinkage_lambda: 0.1,
+            vol_target: true,
+            regime_breadth: true,
+            half_kelly: true,
+            stop_loss: true,
+            dd_circuit_breaker: true,
+            alpha_gate: true,
+            alpha_gate_multiplier: 3.0,
+            alpha_gate_hold_cycles: 4,
+            alpha_gate_min_pass_count: 6,
+            min_pool_liquidity: 5000,
+            lst_carry: true,
+            lst_carry_min_hold_days: 45,
+            lst_carry_max_depeg: 0.08,
         };
 
         apply_config(&cli);
@@ -331,6 +420,70 @@ mod tests {
         assert_eq!(
             common::config::store::get("PORTFOLIO_COST_ITERATIONS_MAX").unwrap(),
             "5"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_ALL_PREDICTED_ENABLED").unwrap(),
+            "true"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_TOP_N_AFTER_PREDICTION").unwrap(),
+            "30"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_PREDICTION_SHRINKAGE_LAMBDA").unwrap(),
+            "0.1"
+        );
+        assert_eq!(
+            common::config::store::get("PORTFOLIO_VOLATILITY_TARGET_ENABLED").unwrap(),
+            "true"
+        );
+        assert_eq!(
+            common::config::store::get("PORTFOLIO_REGIME_BREADTH_ENABLED").unwrap(),
+            "true"
+        );
+        assert_eq!(
+            common::config::store::get("PORTFOLIO_HALF_KELLY_ENABLED").unwrap(),
+            "true"
+        );
+        assert_eq!(
+            common::config::store::get("PORTFOLIO_STOP_LOSS_ENABLED").unwrap(),
+            "true"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_DD_CIRCUIT_BREAKER_ENABLED").unwrap(),
+            "true"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_ALPHA_GATE_ENABLED").unwrap(),
+            "true"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_ALPHA_GATE_MULTIPLIER").unwrap(),
+            "3"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_ALPHA_GATE_HOLD_CYCLES").unwrap(),
+            "4"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_ALPHA_GATE_MIN_PASS_COUNT").unwrap(),
+            "6"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_MIN_POOL_LIQUIDITY").unwrap(),
+            "5000"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_LST_CARRY_ENABLED").unwrap(),
+            "true"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_LST_CARRY_MIN_HOLD_DAYS").unwrap(),
+            "45"
+        );
+        assert_eq!(
+            common::config::store::get("TRADE_LST_CARRY_MAX_DEPEG").unwrap(),
+            "0.08"
         );
     }
 }

@@ -13,6 +13,12 @@ pub struct ChronosPredictionResponse {
     pub lower_bound: Option<BTreeMap<DateTime<Utc>, BigDecimal>>,
     /// 上限信頼区間（90パーセンタイル）
     pub upper_bound: Option<BTreeMap<DateTime<Utc>, BigDecimal>>,
+    /// 各ステップの予測標準偏差（output スケール）。
+    /// chronos-rs が 10/90 quantile band から `(upper - lower) / (2 × Z₈₀)`
+    /// で導出する。両 quantile が揃わない場合は `None`。Markowitz の
+    /// per-token variance に注入する用途で使う（flat 予測 = std 大 → 重み減）。
+    #[serde(default)]
+    pub predicted_std: Option<BTreeMap<DateTime<Utc>, BigDecimal>>,
     /// 使用されたモデル名
     pub model_name: String,
     /// 選択された予測戦略名

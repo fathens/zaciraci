@@ -91,10 +91,17 @@ impl ChronosPredictor {
                 .collect()
         });
 
+        let predicted_std = result.predicted_std.map(|std| {
+            std.into_iter()
+                .map(|(ts, val)| (DateTime::from_naive_utc_and_offset(ts, Utc), val))
+                .collect()
+        });
+
         Ok(ChronosPredictionResponse {
             forecast,
             lower_bound,
             upper_bound,
+            predicted_std,
             model_name: result.model_name,
             strategy_name: result.strategy_name,
             processing_time_secs: result.processing_time_secs,

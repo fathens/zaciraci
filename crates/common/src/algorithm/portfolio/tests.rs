@@ -5,7 +5,7 @@ pub use crate::types::{
 };
 pub use bigdecimal::{BigDecimal, FromPrimitive};
 pub use chrono::TimeDelta;
-pub use ndarray::array;
+pub use ndarray::{Array2, array};
 pub use num_traits::ToPrimitive;
 pub use std::collections::BTreeMap;
 pub use std::str::FromStr;

@@ -84,6 +84,84 @@ diesel::table! {
 }
 
 diesel::table! {
+    ref_flow_collector_state (id) {
+        id -> Int2,
+        version -> Int8,
+        writer_id -> Varchar,
+        state -> Jsonb,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    ref_flow_ledger (day) {
+        day -> Date,
+        requests -> Int8,
+    }
+}
+
+diesel::table! {
+    ref_flow_receipts (receipt_id) {
+        receipt_id -> Varchar,
+        tx_hash -> Varchar,
+        block_height -> Int8,
+        block_time -> Timestamp,
+        predecessor -> Varchar,
+        methods -> Array<Nullable<Text>>,
+        ok -> Bool,
+    }
+}
+
+diesel::table! {
+    ref_flow_runs (id) {
+        id -> Int8,
+        run_at -> Timestamp,
+        stream -> Varchar,
+        pages -> Int4,
+        receipts -> Int4,
+        trades -> Int4,
+        from_time -> Nullable<Timestamp>,
+        to_time -> Nullable<Timestamp>,
+        credits -> Int4,
+        http429 -> Int4,
+        failures -> Int4,
+        note -> Varchar,
+        parse_stats -> Nullable<Jsonb>,
+    }
+}
+
+diesel::table! {
+    ref_flow_trades (receipt_id) {
+        receipt_id -> Varchar,
+        tx_hash -> Varchar,
+        block_height -> Int8,
+        block_time -> Timestamp,
+        sender -> Varchar,
+        route -> Varchar,
+        pool_ids -> Array<Nullable<Int4>>,
+        hop_tokens_in -> Array<Nullable<Text>>,
+        hop_tokens_out -> Array<Nullable<Text>>,
+        hop_amounts_in -> Array<Nullable<Numeric>>,
+        hop_amounts_out -> Array<Nullable<Numeric>>,
+        fee_bps -> Nullable<Array<Nullable<Int4>>>,
+        token_in -> Varchar,
+        amount_in -> Numeric,
+        token_out -> Varchar,
+        amount_out -> Numeric,
+    }
+}
+
+diesel::table! {
+    ref_flow_txs (tx_hash) {
+        tx_hash -> Varchar,
+        block_time -> Timestamp,
+        enriched_at -> Nullable<Timestamp>,
+        attempts -> Int2,
+        trade_count -> Nullable<Int2>,
+    }
+}
+
+diesel::table! {
     token_rates (id) {
         id -> Int4,
         base_token -> Varchar,
@@ -110,6 +188,8 @@ diesel::table! {
     }
 }
 
+diesel::joinable!(ref_flow_trades -> ref_flow_txs (tx_hash));
+
 diesel::allow_tables_to_appear_in_same_query!(
     authorized_users,
     config_store,
@@ -118,6 +198,12 @@ diesel::allow_tables_to_appear_in_same_query!(
     pool_info,
     portfolio_holdings,
     prediction_records,
+    ref_flow_collector_state,
+    ref_flow_ledger,
+    ref_flow_receipts,
+    ref_flow_runs,
+    ref_flow_trades,
+    ref_flow_txs,
     token_rates,
     trade_transactions,
 );

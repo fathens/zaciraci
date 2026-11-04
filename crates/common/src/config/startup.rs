@@ -1,3 +1,4 @@
+use super::secret::SecretString;
 use serde::de::DeserializeOwned;
 use std::fmt;
 use std::str::FromStr;
@@ -46,6 +47,10 @@ pub struct StartupConfig {
     /// ID tokens. Empty when authentication is not configured; in that
     /// case authenticated endpoints reject every request.
     pub google_client_id: String,
+    /// NearBlocks API key (`Authorization: Bearer`) for the ref_flow
+    /// collector. Empty when the collector is not configured; the
+    /// collector refuses to start without it.
+    pub nearblocks_api_key: SecretString,
 }
 
 impl fmt::Debug for StartupConfig {
@@ -72,6 +77,7 @@ impl fmt::Debug for StartupConfig {
             .field("root_hdpath", &self.root_hdpath)
             .field("instance_id", &self.instance_id)
             .field("google_client_id", &presence(&self.google_client_id))
+            .field("nearblocks_api_key", &self.nearblocks_api_key)
             .finish()
     }
 }
@@ -91,6 +97,9 @@ impl StartupConfig {
             root_hdpath: env_string("ROOT_HDPATH").unwrap_or_else(|| "m/44'/397'/0'".to_string()),
             instance_id: env_string("INSTANCE_ID").unwrap_or_else(|| "*".to_string()),
             google_client_id: env_string("GOOGLE_CLIENT_ID").unwrap_or_default(),
+            nearblocks_api_key: SecretString::new(
+                env_string("NEARBLOCKS_API_KEY").unwrap_or_default(),
+            ),
         }
     }
 }
@@ -163,11 +172,13 @@ mod tests {
             root_hdpath: "m/44'/397'/0'".to_string(),
             instance_id: "primary".to_string(),
             google_client_id: "123-abc.apps.googleusercontent.com".to_string(),
+            nearblocks_api_key: SecretString::new("nb-key-0123456789abcdef".to_string()),
         };
         let formatted = format!("{config:?}");
         assert!(!formatted.contains("supersecret"));
         assert!(!formatted.contains("word1 word2 word3"));
         assert!(!formatted.contains("123-abc.apps.googleusercontent.com"));
+        assert!(!formatted.contains("nb-key-0123456789abcdef"));
         assert!(formatted.contains("[redacted]"));
         // Non-secret fields remain readable.
         assert!(formatted.contains("alice.near"));
@@ -188,6 +199,7 @@ mod tests {
             root_hdpath: String::new(),
             instance_id: "*".to_string(),
             google_client_id: String::new(),
+            nearblocks_api_key: SecretString::new(String::new()),
         };
         let formatted = format!("{config:?}");
         assert!(formatted.contains("[unset]"));

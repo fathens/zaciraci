@@ -13,6 +13,29 @@ fn default_sim_day() -> Arc<Mutex<DateTime<Utc>>> {
     ))
 }
 
+#[test]
+fn carry_swap_fee_deducts_one_pool_fee() {
+    // 5 bps on 1_000_000 → 999_500 (exact: 1_000_000 × 9995 / 10000).
+    assert_eq!(apply_carry_swap_fee(1_000_000), 999_500);
+}
+
+#[test]
+fn carry_swap_fee_round_trip_is_two_pool_fees() {
+    // A buy then sell applies the fee twice → ~10 bps round-trip cost. The
+    // carry economics depend on this cost being charged (not zero, as the
+    // DB-rate fallback would leave it).
+    let gross = 1_000_000_000u128;
+    let round_trip = apply_carry_swap_fee(apply_carry_swap_fee(gross));
+    // (9995/10000)^2 = 0.99900025 → 999_000_250.
+    assert_eq!(round_trip, 999_000_250);
+    assert!(round_trip < gross, "round trip must cost something");
+}
+
+#[test]
+fn carry_swap_fee_zero_is_zero() {
+    assert_eq!(apply_carry_swap_fee(0), 0);
+}
+
 async fn make_client_with_holdings(
     cash: u128,
     holdings: Vec<(&str, u128, u8)>,

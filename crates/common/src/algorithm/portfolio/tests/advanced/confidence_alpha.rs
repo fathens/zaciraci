@@ -301,11 +301,11 @@ fn test_unified_optimize_heterogeneous_alphas() {
 
     // 均一 alpha
     let weights_uniform =
-        unified_optimize(&expected_returns, &cov, &liquidity, 0.5, 5, 0.05, &[0.8; 5]);
+        unified_optimize_uniform(&expected_returns, &cov, &liquidity, 0.5, 5, 0.05, &[0.8; 5]);
 
     // 不均一 alpha: token0 は Sharpe 寄り、token2 は RP 寄り
     let alphas_varied = vec![0.9, 0.5, 0.5, 0.9, 0.7];
-    let weights_varied = unified_optimize(
+    let weights_varied = unified_optimize_uniform(
         &expected_returns,
         &cov,
         &liquidity,
@@ -342,7 +342,7 @@ fn test_cold_start_alpha_uses_floor() {
     let liquidity = vec![0.8, 0.9, 0.7];
 
     // confidence データなし（空の BTreeMap）→ FLOOR alpha
-    let weights_cold = unified_optimize(
+    let weights_cold = unified_optimize_uniform(
         &expected_returns,
         &cov,
         &liquidity,
@@ -358,7 +358,7 @@ fn test_cold_start_alpha_uses_floor() {
 
     // FLOOR alpha（0.5）と高 alpha（0.9）で異なるウエイト
     let weights_high =
-        unified_optimize(&expected_returns, &cov, &liquidity, 0.5, 3, 0.05, &[0.9; 3]);
+        unified_optimize_uniform(&expected_returns, &cov, &liquidity, 0.5, 3, 0.05, &[0.9; 3]);
 
     let diff: f64 = weights_cold
         .iter()

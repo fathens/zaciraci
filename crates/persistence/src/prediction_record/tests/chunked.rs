@@ -35,7 +35,7 @@ fn base_time() -> NaiveDateTime {
 /// mismatched assertion. The prior canary used `BigDecimal::from(int)`
 /// which always produced `scale=0`, missing that class of bug.
 #[tokio::test]
-#[serial(persistence_chunked)]
+#[serial(prediction_record, persistence_chunked)]
 async fn test_insert_chunked_with_multi_chunk_happy_path() -> Result<()> {
     clean_table().await?;
 
@@ -178,7 +178,7 @@ async fn test_insert_chunked_with_multi_chunk_happy_path() -> Result<()> {
 /// (PK collision); reproducing it here exercises the prediction_records
 /// table's Layer 3 CHECK as the error trigger.
 #[tokio::test]
-#[serial(persistence_chunked)]
+#[serial(prediction_record, persistence_chunked)]
 async fn test_insert_chunked_with_rolls_back_chunk1_on_chunk2_check_violation() -> Result<()> {
     clean_table().await?;
 

@@ -1,5 +1,28 @@
 use super::*;
 
+/// テスト用ヘルパー: scalar `max_position` から `BoxBounds::uniform` を構築して
+/// `unified_optimize` を呼ぶ。
+pub fn unified_optimize_uniform(
+    expected_returns: &[f64],
+    covariance_matrix: &Array2<f64>,
+    liquidity_scores: &[f64],
+    max_position: f64,
+    max_holdings: usize,
+    min_position_size: f64,
+    alphas: &[f64],
+) -> Vec<f64> {
+    let bounds = BoxBounds::uniform(expected_returns.len(), max_position);
+    unified_optimize(
+        expected_returns,
+        covariance_matrix,
+        liquidity_scores,
+        &bounds,
+        max_holdings,
+        min_position_size,
+        alphas,
+    )
+}
+
 pub fn token_out(s: &str) -> TokenOutAccount {
     s.parse().unwrap()
 }

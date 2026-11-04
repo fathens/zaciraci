@@ -7,3 +7,8 @@
 target/
 cobertura.xml
 config/config.local.toml
+
+# agent scratch memory (kept on disk, not tracked)
+.claude/agent-memory/
+# simulate output artifacts
+simulation_*.json

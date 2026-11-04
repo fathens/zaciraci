@@ -461,6 +461,130 @@ fn test_estimate_trade_cost_one_hop_round_trip_includes_amm_loss() {
 }
 
 #[test]
+fn test_round_trip_cost_ratio_smart_constructor_rejects_non_finite_and_excessive() {
+    // Newtype の不変条件: is_finite() && 0.0 <= value <= COST_DEDUCTION_SANE_MAX (= 10.0)
+    assert!(RoundTripCostRatio::new(f64::NAN).is_none());
+    assert!(RoundTripCostRatio::new(f64::INFINITY).is_none());
+    assert!(RoundTripCostRatio::new(f64::NEG_INFINITY).is_none());
+    assert!(RoundTripCostRatio::new(-0.001).is_none());
+    assert!(RoundTripCostRatio::new(COST_DEDUCTION_SANE_MAX + 0.001).is_none());
+
+    // 境界値（0.0、上限）は受け入れる
+    assert_eq!(RoundTripCostRatio::new(0.0).map(|r| r.as_f64()), Some(0.0));
+    assert_eq!(
+        RoundTripCostRatio::new(COST_DEDUCTION_SANE_MAX).map(|r| r.as_f64()),
+        Some(COST_DEDUCTION_SANE_MAX)
+    );
+    assert_eq!(RoundTripCostRatio::new(0.5).map(|r| r.as_f64()), Some(0.5));
+}
+
+#[test]
+fn test_estimate_full_position_round_trip_ratio_zero_position_bails() {
+    use blockchain::types::gas_price::GasPrice;
+    use dex::TokenPath;
+    use near_sdk::NearToken;
+
+    let buy_path = TokenPath(vec![]);
+    let sell_path = TokenPath(vec![]);
+    let zero = YoctoValue::zero();
+    let spot_rate = ExchangeRate::wnear();
+    let gas_price = GasPrice::from_balance(NearToken::from_yoctonear(100_000_000));
+    let storage_min = YoctoValue::from_yocto_u128(100_000_000_000_000_000_000_000);
+
+    let err = estimate_full_position_round_trip_ratio(
+        &buy_path,
+        &sell_path,
+        &zero,
+        &spot_rate,
+        gas_price,
+        &storage_min,
+        0,
+    )
+    .expect_err("position_size = 0 must bail");
+    assert!(format!("{err}").contains("position_size"));
+}
+
+#[test]
+fn test_estimate_full_position_round_trip_ratio_one_hop_matches_breakdown() {
+    // estimate_trade_cost と一致した上で、fixed_cost / position_size を加えた
+    // ratio を返すこと。1 NEAR / 100_000 NEAR プール、両 24 decimals。
+    use bigdecimal::BigDecimal;
+    use blockchain::types::gas_price::GasPrice;
+    use chrono::Utc;
+    use dex::{PoolInfo, PoolInfoBared, TokenIn, TokenOut, TokenPath};
+    use near_sdk::NearToken;
+    use near_sdk::json_types::U128;
+    use std::sync::Arc;
+
+    let pool = Arc::new(PoolInfo::new(
+        0,
+        PoolInfoBared {
+            pool_kind: "SIMPLE_POOL".to_string(),
+            token_account_ids: vec![
+                "wrap.near".parse().unwrap(),
+                "token_x.near".parse().unwrap(),
+            ],
+            amounts: vec![U128(100_000 * ONE_NEAR_YOCTO), U128(1_000 * ONE_NEAR_YOCTO)],
+            total_fee: 30,
+            shares_total_supply: U128(0),
+            amp: 0,
+        },
+        Utc::now().naive_utc(),
+    ));
+    let buy_pair = pool
+        .get_pair(TokenIn::from(0), TokenOut::from(1))
+        .expect("valid buy pair");
+    let sell_pair = pool
+        .get_pair(TokenIn::from(1), TokenOut::from(0))
+        .expect("valid sell pair");
+    let buy_path = TokenPath(vec![buy_pair]);
+    let sell_path = TokenPath(vec![sell_pair]);
+
+    let position_size = YoctoValue::from_yocto_u128(ONE_NEAR_YOCTO);
+    let spot_rate = ExchangeRate::from_raw_rate(BigDecimal::from(ONE_NEAR_YOCTO / 100), 24);
+    let gas_price = GasPrice::from_balance(NearToken::from_yoctonear(100_000_000));
+    let storage_min = YoctoValue::from_yocto_u128(100_000_000_000_000_000_000_000);
+
+    let breakdown = estimate_trade_cost(
+        &buy_path,
+        &sell_path,
+        &position_size,
+        &spot_rate,
+        gas_price,
+        &storage_min,
+        1,
+    )
+    .expect("breakdown reference");
+    let expected_ratio = breakdown.variable_ratio
+        + breakdown
+            .fixed_cost
+            .to_near()
+            .as_bigdecimal()
+            .to_f64()
+            .unwrap()
+            / position_size.to_near().as_bigdecimal().to_f64().unwrap();
+
+    let ratio = estimate_full_position_round_trip_ratio(
+        &buy_path,
+        &sell_path,
+        &position_size,
+        &spot_rate,
+        gas_price,
+        &storage_min,
+        1,
+    )
+    .expect("end-to-end ratio must succeed");
+    assert!(
+        (ratio.as_f64() - expected_ratio).abs() < 1e-9,
+        "expected {expected_ratio}, got {}",
+        ratio.as_f64()
+    );
+    // Round-trip cost should exceed 2× EXPECTED_SLIPPAGE_DEDUCTION (= 0.01)
+    // because both legs incur fee + price impact.
+    assert!(ratio.as_f64() > 2.0 * EXPECTED_SLIPPAGE_DEDUCTION);
+}
+
+#[test]
 fn test_estimate_trade_cost_above_max_new_token_count_bails() {
     // 境界値: new_token_count > MAX_NEW_TOKEN_COUNT (17) は bail! で除外される
     use blockchain::types::gas_price::GasPrice;

@@ -1,3 +1,4 @@
+use super::shrinkage;
 use crate::Result;
 use crate::types::{NearValue, TokenOutAccount, TokenPrice};
 use bigdecimal::{BigDecimal, FromPrimitive, RoundingMode, ToPrimitive};
@@ -8,6 +9,152 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::types::*;
+
+pub mod box_bounds;
+pub use box_bounds::{BoxBounds, BoxBoundsCap, BoxBoundsError};
+
+use crate::algorithm::aggregate_cap::{
+    AggregateCapSignal, AggregateCapStrategy, compose_aggregate_cap,
+};
+use crate::algorithm::half_kelly::compute_half_kelly_uppers;
+use crate::algorithm::regime::detect_regime_from_prices;
+use crate::algorithm::stop_loss::should_trigger_stop_loss;
+use crate::algorithm::vol_targeting::compute_vol_target_cap;
+
+/// Apply the cap-side adjustments dictated by `strategy` to `bounds`. Pure
+/// no-op when every signal is off (legacy code path).
+///
+/// Order:
+/// 1. Compose `AggregateCapSignal`s from vol-targeting (proxy σ via equal
+///    weights) and breadth-regime (per-token SMA).
+/// 2. Apply the composed cap via `BoxBounds::with_aggregate_cap`.
+/// 3. Apply per-asset half-Kelly uppers via `BoxBounds::apply_half_kelly`.
+fn apply_aggregate_cap_strategy(
+    bounds: BoxBounds,
+    strategy: &AggregateCapStrategy,
+    expected_returns: &[f64],
+    covariance_matrix: &Array2<f64>,
+    historical_prices: &BTreeMap<TokenOutAccount, crate::algorithm::types::PriceHistory>,
+) -> std::result::Result<BoxBounds, BoxBoundsError> {
+    if strategy.is_legacy() {
+        return Ok(bounds);
+    }
+
+    let mut signals: Vec<AggregateCapSignal> = Vec::new();
+
+    if let Some(sigma_target) = strategy.vol_target_sigma {
+        let n = expected_returns.len();
+        if n > 0 {
+            // Use equal-weighted portfolio σ as the proxy. This is independent
+            // of the optimizer's output (so we can apply the cap pre-solve)
+            // and reflects the diversified covariance structure.
+            let proxy_weights = vec![1.0 / n as f64; n];
+            let sigma_portfolio = calculate_portfolio_std(&proxy_weights, covariance_matrix);
+            signals.push(AggregateCapSignal::Volatility(compute_vol_target_cap(
+                sigma_target,
+                sigma_portfolio,
+            )));
+        }
+    }
+
+    if let Some((sma_period, scales)) = &strategy.regime_breadth {
+        let regime = detect_regime_from_prices(historical_prices, *sma_period);
+        signals.push(AggregateCapSignal::Breadth(regime.aggregate_cap(scales)));
+    }
+
+    let mut new_bounds = bounds;
+    if !signals.is_empty() {
+        let cap = compose_aggregate_cap(&signals);
+        new_bounds = new_bounds.with_aggregate_cap(cap)?;
+    }
+
+    if let Some(fraction) = strategy.half_kelly_fraction {
+        let diag_vars: Vec<f64> = (0..expected_returns.len())
+            .map(|i| covariance_matrix[[i, i]])
+            .collect();
+        let kelly_uppers =
+            compute_half_kelly_uppers(expected_returns, &diag_vars, RISK_FREE_RATE, fraction);
+        new_bounds = new_bounds.apply_half_kelly(&kelly_uppers)?;
+    }
+
+    Ok(new_bounds)
+}
+
+/// Zero out weights for positions whose latest price has dropped more than
+/// `threshold` below the recorded entry price. The remainder is renormalised
+/// so that `sum(w)` is preserved (we do not recover the cash freed by the
+/// triggered position; that is the responsibility of the caller's rebalance
+/// logic).
+fn apply_stop_loss_post_process(
+    weights: Vec<f64>,
+    selected_tokens: &[TokenData],
+    strategy: &AggregateCapStrategy,
+    historical_prices: &BTreeMap<TokenOutAccount, crate::algorithm::types::PriceHistory>,
+) -> Vec<f64> {
+    let (threshold, entry_prices) = match strategy.stop_loss.as_ref() {
+        Some(sl) => sl,
+        None => return weights,
+    };
+    let mut adjusted = weights;
+    let mut any_triggered = false;
+    for (i, token) in selected_tokens.iter().enumerate() {
+        if i >= adjusted.len() {
+            break;
+        }
+        let entry = match entry_prices.get(&token.symbol) {
+            Some(e) => e,
+            None => continue,
+        };
+        let latest = match historical_prices
+            .get(&token.symbol)
+            .and_then(|h| h.prices.last())
+        {
+            Some(p) => &p.price,
+            None => continue,
+        };
+        if should_trigger_stop_loss(entry, latest, *threshold) {
+            adjusted[i] = 0.0;
+            any_triggered = true;
+        }
+    }
+    if any_triggered {
+        let sum: f64 = adjusted.iter().sum();
+        if sum > 0.0 {
+            for w in &mut adjusted {
+                *w /= sum;
+            }
+        }
+    }
+    adjusted
+}
+
+/// Errors emitted by the box-constrained Sharpe maximizer.
+///
+/// Replaces the previous silent `default_weights` (equal-weight) fallback so
+/// that callers can fail-loud on numerical degeneracy. Existing callers
+/// preserve the old policy by mapping `Err` back to `default_weights`; future
+/// callers (cost-aware loop, strategy step) can choose `Hold` instead, or
+/// re-attempt with a relaxed `aggregate_cap`.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum OptimizerError {
+    /// Active-set iteration hit `max_iter` without satisfying KKT conditions.
+    #[error("active-set failed to converge after {max_iter} iterations")]
+    FailedToConverge { max_iter: usize },
+    /// `Σ_FF` and `Σ_FF + εI` were both unsolvable (Cholesky and LU both
+    /// failed). Indicates degenerate covariance: either ill-conditioned input
+    /// or a `cov` row/column structurally tied to a zero subspace.
+    #[error("singular covariance: Cholesky/LU/ridge all failed")]
+    SingularCovariance,
+    /// Lagrange-multiplier denominator (`Σ p`) collapsed to zero. Equivalent
+    /// to the active-set seeing no Sharpe gradient at this iteration; treated
+    /// as a hard failure rather than masking it as equal-weight.
+    #[error("degenerate Sharpe denominator: sum_p ≈ 0")]
+    DegenerateSharpe,
+    /// Bound configuration could not be honoured (e.g. `Free` set empty with
+    /// `Upper` set yielding `sum_upper < 1` and zero `Lower` capacity).
+    #[error("infeasible active set: {reason}")]
+    InfeasibleActiveSet { reason: &'static str },
+}
 
 // ==================== ポートフォリオ固有の型定義 ====================
 
@@ -105,6 +252,23 @@ pub struct PredErrDiagonal {
     pub mode: PredErrDiagonalMode,
 }
 
+/// 予測不確実性に基づく soft-threshold shrinkage の入力。
+///
+/// `μ_adj = sign(μ) × max(0, |μ| - λ × √MSRE)` の形で per-token 期待リターンを
+/// 縮小する。`PredErrDiagonal` が共分散行列の対角を膨らませる (分散経由) のに
+/// 対して、こちらは optimizer の `μ` を直接 (期待値経由) 縮小する独立した
+/// 不確実性ペナルティ。両者は同一の MSRE を再利用するが、適用箇所と意味論は
+/// 直交している。
+#[derive(Debug, Clone)]
+pub struct PredUncertainty {
+    /// 銘柄ごとの **MSRE**（return² スケール、`mean of (mape / 100)²`）。
+    /// `PredErrDiagonal::variances` と同一スケール。
+    pub msre: BTreeMap<TokenOutAccount, f64>,
+    /// shrinkage 強度 λ。`0.0` で no-op (μ_adj = μ)。
+    /// typed config 層で `[0.0, 1.0]` に clamp 済みである前提。
+    pub lambda: f64,
+}
+
 /// ポートフォリオデータ
 #[derive(Debug, Clone, Default)]
 pub struct PortfolioData {
@@ -120,6 +284,17 @@ pub struct PortfolioData {
     pub pred_err_diagonal: Option<PredErrDiagonal>,
     /// 銘柄ごとの取引コスト控除比率（empty で無効、改良 D で使用）
     pub cost_deductions: BTreeMap<TokenOutAccount, f64>,
+    /// 予測不確実性に基づく soft-threshold shrinkage の入力（None で無効）。
+    /// `λ > 0` のとき expected_return が `sign(μ) × max(0, |μ| - λ × √MSRE)` で
+    /// 縮小される。`pred_err_diagonal` と同時 on も技術的には可能だが、
+    /// 同一 MSRE が `μ` と `Σ` の両方に作用するため運用上は片方ずつが推奨。
+    pub pred_uncertainty: Option<PredUncertainty>,
+    /// PR-A: aggregate-cap pipeline (vol targeting / breadth / half-Kelly /
+    /// stop-loss). Defaults to `AggregateCapStrategy::legacy()` so the
+    /// optimizer behaves identically to the pre-PR-A path; callers that
+    /// want to enable any signal populate the relevant variant via
+    /// `trade::regime::build_aggregate_cap_strategy`.
+    pub aggregate_cap_strategy: crate::algorithm::aggregate_cap::AggregateCapStrategy,
 }
 
 impl PortfolioData {
@@ -147,6 +322,9 @@ impl PortfolioData {
             ped.variances.retain(|k, _| retain.contains(k));
         }
         self.cost_deductions.retain(|k, _| retain.contains(k));
+        if let Some(pu) = self.pred_uncertainty.as_mut() {
+            pu.msre.retain(|k, _| retain.contains(k));
+        }
     }
 
     /// 指定 token を除外し、token-indexed な全フィールドを同期 filter する。
@@ -168,6 +346,9 @@ impl PortfolioData {
             ped.variances.retain(|k, _| !exclude.contains(k));
         }
         self.cost_deductions.retain(|k, _| !exclude.contains(k));
+        if let Some(pu) = self.pred_uncertainty.as_mut() {
+            pu.msre.retain(|k, _| !exclude.contains(k));
+        }
     }
 }
 
@@ -186,8 +367,11 @@ pub struct PortfolioExecutionReport {
 /// リスクフリーレート（年率2%相当の日次レート: 0.02 / 365）
 const RISK_FREE_RATE: f64 = 5.479e-5;
 
-/// 単一トークンの最大保有比率（積極的設定）
-const MAX_POSITION_SIZE: f64 = 0.6;
+/// 単一トークンの最大保有比率（積極的設定）。
+///
+/// `pub`: alpha gate (`trade::alpha_gate`) と half-Kelly (`half_kelly`) も
+/// この値を共有する。複数モジュールから参照される SSoT として公開する。
+pub const MAX_POSITION_SIZE: f64 = 0.6;
 
 /// 最小保有比率
 const MIN_POSITION_SIZE: f64 = 0.05;
@@ -224,6 +408,22 @@ const RISK_PARITY_CONVERGENCE_TOLERANCE: f64 = 1e-6;
 /// 予測精度が低い場合の alpha 下限値
 /// confidence=0.0 のとき alpha はこの値まで下がる（Sharpe/RP 等配分に近づく）
 pub const PREDICTION_ALPHA_FLOOR: f64 = 0.5;
+
+/// C1 (held sell-only) 制約で「保有」と判定する weight の下限。
+/// BigDecimal → f64 変換に伴う dust（例: 5e-23）を除外し、実質的にゼロな
+/// 保有を non-held として扱う。1e-9 は総資産の10億分の1 (1 NEAR @ 10億 NEAR
+/// 規模) であり、現実的な最小保有を下回らない。
+const HELD_DUST_THRESHOLD: f64 = 1e-9;
+
+/// Ledoit-Wolf 縮小推定で要求する最小サンプル数 T。
+/// LW の i.i.d. 漸近論は十分な T でのみ有効。T < MIN_LEDOIT_WOLF_T のときは
+/// 縮小推定をスキップし、対角のみ（サンプル分散）の covariance を返す。
+const MIN_LEDOIT_WOLF_T: usize = 5;
+
+/// 分散の下限（数値安定性のため）。
+/// 0 または極小の分散は Cholesky 等で不安定になるため、対角値をこの値以上に
+/// クランプする。
+const MIN_VARIANCE_FLOOR: f64 = 1e-8;
 
 /// 内部 f64 weight を外部公開用 BigDecimal に変換する。
 /// 小数点以下10桁で丸める。
@@ -326,6 +526,21 @@ fn ledoit_wolf_shrink(daily_returns: &[Vec<f64>]) -> Array2<f64> {
     }
 
     let t = min_len;
+
+    // T が小さすぎると LW の漸近論が崩れるため、対角のみ（サンプル分散）で
+    // fallback する。i.i.d. 前提を壊さず、PSD も保証される。
+    if t < MIN_LEDOIT_WOLF_T {
+        let mut diag = Array2::zeros((n, n));
+        for i in 0..n {
+            let r = &daily_returns[i];
+            let start = r.len() - t;
+            let mean = r[start..].iter().sum::<f64>() / t as f64;
+            let var =
+                r[start..].iter().map(|&v| (v - mean).powi(2)).sum::<f64>() / (t as f64 - 1.0);
+            diag[[i, i]] = var.max(MIN_VARIANCE_FLOOR);
+        }
+        return diag;
+    }
 
     // 各トークンの平均リターン（T アライン済みデータ）
     let means: Vec<f64> = (0..n)
@@ -789,38 +1004,66 @@ enum BoundState {
 /// ボックス制約付き Sharpe 最大化（3集合 Active Set 法）
 ///
 /// 各資産の重みが [0, max_position] の範囲に収まるよう制約しつつ、
-/// Sharpe 比を最大化する。Free / Lower(=0) / Upper(=max_position) の
+/// Sharpe 比を最大化する。Free / Lower(=0) / Upper(=bounds.upper[i]) の
 /// 3 集合を管理し、KKT 条件に基づいて集合間を移動する。
 ///
-/// max_position >= 1.0 のとき既存 `maximize_sharpe_ratio()` と同一の解を返す。
-pub fn box_maximize_sharpe(
+/// 全 upper >= 1.0 のとき既存 `maximize_sharpe_ratio()` と同一の解を返す。
+///
+/// 注: 現状は `bounds.lower[i] = 0.0` を前提とする
+/// (`BoundState::Lower` は w=0 を意味する)。
+pub fn box_maximize_sharpe_bounded(
     expected_returns: &[f64],
     covariance_matrix: &Array2<f64>,
-    max_position: f64,
-) -> Vec<f64> {
+    bounds: &BoxBounds,
+) -> std::result::Result<Vec<f64>, OptimizerError> {
+    let weights = box_maximize_sharpe_bounded_inner(expected_returns, covariance_matrix, bounds)?;
+    Ok(apply_aggregate_cap(weights, bounds.aggregate_cap()))
+}
+
+/// Sharpe scale invariance: solving the simplex (`sum=1`) tangency portfolio
+/// and then multiplying weights by `cap` preserves the maximum-Sharpe direction
+/// (because `Sharpe(α·w) = Sharpe(w)` for `α > 0`). The remaining
+/// `1 - sum(w)` is implicit cash.
+///
+/// Equality (legacy) returns weights untouched, so this function is a no-op
+/// on the existing call paths.
+fn apply_aggregate_cap(weights: Vec<f64>, cap: BoxBoundsCap) -> Vec<f64> {
+    match cap {
+        BoxBoundsCap::Equality => weights,
+        BoxBoundsCap::AtMost(c) => weights.into_iter().map(|w| w * c).collect(),
+    }
+}
+
+fn box_maximize_sharpe_bounded_inner(
+    expected_returns: &[f64],
+    covariance_matrix: &Array2<f64>,
+    bounds: &BoxBounds,
+) -> std::result::Result<Vec<f64>, OptimizerError> {
     let n = expected_returns.len();
     if n == 0 {
-        return vec![];
+        return Ok(vec![]);
     }
     if n == 1 {
-        return vec![1.0];
+        return Ok(vec![1.0]);
     }
 
-    let default_weights = vec![1.0 / n as f64; n];
+    debug_assert_eq!(
+        bounds.len(),
+        n,
+        "bounds.len() must match expected_returns.len()"
+    );
 
-    // max_position が非実用的に小さい場合は等配分
-    let effective_max = if n as f64 * max_position < 1.0 {
-        1.0 / n as f64
-    } else {
-        max_position
-    };
+    // per-asset 上限 (sum_upper < 1.0 のときは比例スケーリング)
+    let effective_uppers = bounds.effective_uppers();
 
-    // max_position >= 1.0 なら制約なしと同等
-    if effective_max >= 1.0 {
-        return maximize_sharpe_ratio(expected_returns, covariance_matrix);
+    // 全資産が無制約 (>= 1.0) なら制約なしと同等
+    if effective_uppers.iter().all(|&u| u >= 1.0) {
+        return Ok(maximize_sharpe_ratio(expected_returns, covariance_matrix));
     }
 
-    // 全トークンの期待リターンが同一 → 等配分
+    // 全トークンの期待リターンが同一 → 等配分（degenerate だが well-defined な
+    // 解。`maximize_sharpe_ratio` も同入力で同じ等配分を返すため、これは silent
+    // failure ではなく optimal 解そのもの。）
     let min_ret = expected_returns
         .iter()
         .cloned()
@@ -830,7 +1073,7 @@ pub fn box_maximize_sharpe(
         .cloned()
         .fold(f64::NEG_INFINITY, f64::max);
     if (max_ret - min_ret).abs() < 1e-12 {
-        return default_weights;
+        return Ok(vec![1.0 / n as f64; n]);
     }
 
     let excess_returns: Vec<f64> = expected_returns
@@ -838,7 +1081,7 @@ pub fn box_maximize_sharpe(
         .map(|&r| r - RISK_FREE_RATE)
         .collect();
 
-    // 3 集合: Free / Lower (w=0) / Upper (w=max_position)
+    // 3 集合: Free / Lower (w=0) / Upper (w=effective_uppers[i])
     let mut state = vec![BoundState::Free; n];
     let max_iter = 3 * n + 10;
 
@@ -852,32 +1095,61 @@ pub fn box_maximize_sharpe(
         let upper: Vec<usize> = (0..n).filter(|&i| state[i] == BoundState::Upper).collect();
 
         if free.is_empty() {
-            // Free 集合が空: Upper に固定された資産のみで正規化
+            // Free 集合が空: Upper 固定の資産 + Lower 固定の資産で重みを構築
             if upper.is_empty() {
-                return default_weights;
+                return Err(OptimizerError::InfeasibleActiveSet {
+                    reason: "free and upper sets both empty",
+                });
             }
             let mut weights = vec![0.0; n];
             for &i in &upper {
-                weights[i] = effective_max;
+                weights[i] = effective_uppers[i];
             }
-            normalize_weights(&mut weights);
-            return weights;
+            let sum_upper_set: f64 = upper.iter().map(|&i| effective_uppers[i]).sum();
+
+            if sum_upper_set >= 1.0 - 1e-9 {
+                // Upper 集合だけで budget が満たされる（または超過）→ 比例縮小
+                // 各 weight[i] ≤ effective_uppers[i] が維持される
+                let scale = 1.0 / sum_upper_set;
+                for w in weights.iter_mut() {
+                    *w *= scale;
+                }
+                return Ok(weights);
+            }
+
+            // sum_upper_set < 1.0: 不足分を Lower 集合のトークンで埋める
+            // (Lower に固定された Sharpe の負トークンも budget を埋めるために必要)
+            // 各 Lower トークンの upper cap に比例して配分し、bounds 違反を防ぐ。
+            let deficit = 1.0 - sum_upper_set;
+            let lower_indices: Vec<usize> =
+                (0..n).filter(|&i| state[i] == BoundState::Lower).collect();
+            let sum_lower_caps: f64 = lower_indices.iter().map(|&i| effective_uppers[i]).sum();
+
+            if sum_lower_caps > 0.0 {
+                let scale = (deficit / sum_lower_caps).min(1.0);
+                for &i in &lower_indices {
+                    weights[i] = effective_uppers[i] * scale;
+                }
+            }
+            // sum_lower_caps == 0 や scale < 1.0 で sum < 1.0 のまま終わる場合あり。
+            // 呼び出し側で必要なら正規化されるが、bounds は破らない。
+            return Ok(weights);
         }
 
         let m = free.len();
 
-        // Upper 集合の固定重みによる budget 消費
-        let budget_upper: f64 = upper.iter().map(|_| effective_max).sum();
+        // Upper 集合の固定重みによる budget 消費 (per-asset)
+        let budget_upper: f64 = upper.iter().map(|&i| effective_uppers[i]).sum();
         let budget_free = 1.0 - budget_upper;
 
         if budget_free <= 0.0 {
-            // Upper 集合だけで budget を超過
+            // Upper 集合だけで budget を超過 → 比例縮小
             let mut weights = vec![0.0; n];
-            let total = upper.len() as f64 * effective_max;
+            let total = budget_upper;
             for &i in &upper {
-                weights[i] = effective_max / total;
+                weights[i] = effective_uppers[i] / total;
             }
-            return weights;
+            return Ok(weights);
         }
 
         // Free 集合のサブ問題を構築
@@ -892,7 +1164,7 @@ pub fn box_maximize_sharpe(
             .or_else(|| Some(Factored::Lu(cov_ff.lu())));
         let factored = match factored {
             Some(f) => f,
-            None => return default_weights,
+            None => return Err(OptimizerError::SingularCovariance),
         };
         let solve = |rhs: &nalgebra::DVector<f64>| -> Option<nalgebra::DVector<f64>> {
             let result = match &factored {
@@ -913,7 +1185,7 @@ pub fn box_maximize_sharpe(
         // p = Σ_FF⁻¹ · μ_excess_F
         let p = match solve(&excess_f) {
             Some(p) => p,
-            None => return default_weights,
+            None => return Err(OptimizerError::SingularCovariance),
         };
 
         // Σ_FU · w_U のベクトル → q = Σ_FF⁻¹ · (Σ_FU · w_U)
@@ -924,13 +1196,13 @@ pub fn box_maximize_sharpe(
             for (fi, &f_idx) in free.iter().enumerate() {
                 let mut sum = 0.0;
                 for &u_idx in &upper {
-                    sum += covariance_matrix[[f_idx, u_idx]] * effective_max;
+                    sum += covariance_matrix[[f_idx, u_idx]] * effective_uppers[u_idx];
                 }
                 cov_fu_wu[fi] = sum;
             }
             match solve(&cov_fu_wu) {
                 Some(q) => q,
-                None => return default_weights,
+                None => return Err(OptimizerError::SingularCovariance),
             }
         };
 
@@ -939,7 +1211,7 @@ pub fn box_maximize_sharpe(
         let sum_q: f64 = q.iter().sum();
 
         if sum_p.abs() < 1e-15 {
-            return default_weights;
+            return Err(OptimizerError::DegenerateSharpe);
         }
 
         let gamma = (budget_free + sum_q) / sum_p;
@@ -962,9 +1234,9 @@ pub fn box_maximize_sharpe(
             continue;
         }
 
-        // F→U: w > max_position
+        // F→U: w > effective_uppers[i] (per-asset)
         for (fi, &w) in w_free.iter().enumerate() {
-            if w > effective_max + 1e-10 {
+            if w > effective_uppers[free[fi]] + 1e-10 {
                 state[free[fi]] = BoundState::Upper;
                 moved = true;
                 break;
@@ -976,14 +1248,14 @@ pub fn box_maximize_sharpe(
 
         // L→F / U→F: 勾配条件チェック
         // Lower (w=0): ∂L/∂w_i > 0 なら Free に移動すべき
-        // Upper (w=max): ∂L/∂w_i < 0 なら Free に移動すべき
+        // Upper (w=effective_uppers[i]): ∂L/∂w_i < 0 なら Free に移動すべき
         // 勾配 = excess_returns[i] - γ * Σ_i· · w
         let mut weights = vec![0.0; n];
         for (fi, &f_idx) in free.iter().enumerate() {
             weights[f_idx] = w_free[fi];
         }
         for &u_idx in &upper {
-            weights[u_idx] = effective_max;
+            weights[u_idx] = effective_uppers[u_idx];
         }
 
         for i in 0..n {
@@ -1020,16 +1292,37 @@ pub fn box_maximize_sharpe(
         // 収束: 全 KKT 条件を満たす
         let sum: f64 = weights.iter().sum();
         if sum <= 0.0 {
-            return default_weights;
+            return Err(OptimizerError::InfeasibleActiveSet {
+                reason: "converged with non-positive weight sum",
+            });
         }
         normalize_weights(&mut weights);
-        clamp_and_normalize(&mut weights, effective_max);
+        clamp_and_normalize_per_asset(&mut weights, &effective_uppers);
 
-        return weights;
+        return Ok(weights);
     }
 
-    // 収束しなかった場合: 等配分にフォールバック
-    default_weights
+    // 収束しなかった場合は fail-loud (旧実装は等配分 fallback で silent failure)
+    Err(OptimizerError::FailedToConverge { max_iter })
+}
+
+/// 旧 API: 一様な上限 `max_position` で `box_maximize_sharpe_bounded` を呼ぶ薄い wrapper。
+///
+/// 既存テストとの後方互換のため残置。新規呼び出し元は
+/// `box_maximize_sharpe_bounded` を直接使うこと。
+///
+/// 旧 wrapper の `Vec<f64>` 戻り値を保つため、optimizer エラーは silent に
+/// 等配分へフォールバックする (これは旧実装の挙動を完全に再現する)。fail-loud
+/// が必要な呼び出し元は `box_maximize_sharpe_bounded` を直接呼ぶこと。
+pub fn box_maximize_sharpe(
+    expected_returns: &[f64],
+    covariance_matrix: &Array2<f64>,
+    max_position: f64,
+) -> Vec<f64> {
+    let bounds = BoxBounds::uniform(expected_returns.len(), max_position);
+    let n = expected_returns.len();
+    box_maximize_sharpe_bounded(expected_returns, covariance_matrix, &bounds)
+        .unwrap_or_else(|_| vec![1.0 / n.max(1) as f64; n])
 }
 
 /// リスクパリティ調整（反復収束版）
@@ -1091,10 +1384,12 @@ pub fn apply_risk_parity(weights: &mut [f64], covariance_matrix: &Array2<f64>) {
 
 /// ボックス制約付き Risk Parity（固定集合法）
 ///
-/// 各資産の重みが [0, max_position] に収まるよう制約しつつ、
-/// リスク寄与度の均等化を目指す。max_position に張り付いた資産を
-/// Pinned 集合として固定し、残りの Free 集合で RP を反復する。
-pub fn box_risk_parity(covariance_matrix: &Array2<f64>, max_position: f64) -> Vec<f64> {
+/// 各資産の重みが [0, bounds.upper[i]] に収まるよう制約しつつ、
+/// リスク寄与度の均等化を目指す。上限に張り付いた資産を Pinned 集合として
+/// 固定し、残りの Free 集合で RP を反復する。
+///
+/// 注: 現状は `bounds.lower[i] = 0.0` を前提とする。
+pub fn box_risk_parity_bounded(covariance_matrix: &Array2<f64>, bounds: &BoxBounds) -> Vec<f64> {
     let n = covariance_matrix.nrows();
     if n == 0 {
         return vec![];
@@ -1103,42 +1398,46 @@ pub fn box_risk_parity(covariance_matrix: &Array2<f64>, max_position: f64) -> Ve
         return vec![1.0];
     }
 
-    let effective_max = if n as f64 * max_position < 1.0 {
-        1.0 / n as f64
-    } else {
-        max_position
-    };
+    debug_assert_eq!(
+        bounds.len(),
+        n,
+        "bounds.len() must match covariance_matrix size"
+    );
 
-    // effective_max >= 1.0 なら制約なしのRP
-    if effective_max >= 1.0 {
+    let effective_uppers = bounds.effective_uppers();
+
+    // 全資産が無制約 (>= 1.0) なら制約なしの RP
+    if effective_uppers.iter().all(|&u| u >= 1.0) {
         let mut w = vec![1.0 / n as f64; n];
         apply_risk_parity(&mut w, covariance_matrix);
         return w;
     }
 
-    // pinned[i] = true なら w[i] = effective_max に固定
+    // pinned[i] = true なら w[i] = effective_uppers[i] に固定
     let mut pinned = vec![false; n];
     let mut weights = vec![1.0 / n as f64; n];
     let max_outer = 2 * n;
 
     for _ in 0..max_outer {
         let free: Vec<usize> = (0..n).filter(|&i| !pinned[i]).collect();
-        let pinned_count = n - free.len();
 
         if free.is_empty() {
-            // 全資産 pinned: 均等配分
-            let s = pinned_count as f64 * effective_max;
-            return vec![effective_max / s; n];
+            // 全資産 pinned: per-asset 上限を sum_pinned で正規化
+            let s: f64 = (0..n).map(|i| effective_uppers[i]).sum();
+            return (0..n).map(|i| effective_uppers[i] / s).collect();
         }
 
-        let budget_free = 1.0 - pinned_count as f64 * effective_max;
+        let sum_pinned: f64 = (0..n)
+            .filter(|&i| pinned[i])
+            .map(|i| effective_uppers[i])
+            .sum();
+        let budget_free = 1.0 - sum_pinned;
         if budget_free <= 0.0 {
             // pinned だけで budget 超過: pinned のみで正規化
-            let s = pinned_count as f64 * effective_max;
             let mut w = vec![0.0; n];
             for i in 0..n {
                 if pinned[i] {
-                    w[i] = effective_max / s;
+                    w[i] = effective_uppers[i] / sum_pinned;
                 }
             }
             return w;
@@ -1193,10 +1492,10 @@ pub fn box_risk_parity(covariance_matrix: &Array2<f64>, max_position: f64) -> Ve
             }
         }
 
-        // Free→Pinned: max_position 超過チェック
+        // Free→Pinned: effective_uppers[i] 超過チェック (per-asset)
         let mut any_change = false;
         for (fi, &f_idx) in free.iter().enumerate() {
-            if w_free[fi] > effective_max + 1e-10 {
+            if w_free[fi] > effective_uppers[f_idx] + 1e-10 {
                 pinned[f_idx] = true;
                 any_change = true;
             }
@@ -1212,7 +1511,7 @@ pub fn box_risk_parity(covariance_matrix: &Array2<f64>, max_position: f64) -> Ve
             }
             for i in 0..n {
                 if pinned[i] {
-                    current_w[i] = effective_max;
+                    current_w[i] = effective_uppers[i];
                 }
             }
             let cw = Array1::from(current_w.clone());
@@ -1241,12 +1540,12 @@ pub fn box_risk_parity(covariance_matrix: &Array2<f64>, max_position: f64) -> Ve
             }
             for i in 0..n {
                 if pinned[i] {
-                    weights[i] = effective_max;
+                    weights[i] = effective_uppers[i];
                 }
             }
 
             normalize_weights(&mut weights);
-            clamp_and_normalize(&mut weights, effective_max);
+            clamp_and_normalize_per_asset(&mut weights, &effective_uppers);
 
             return weights;
         }
@@ -1254,6 +1553,15 @@ pub fn box_risk_parity(covariance_matrix: &Array2<f64>, max_position: f64) -> Ve
 
     // 収束しなかった場合: 等配分
     vec![1.0 / n as f64; n]
+}
+
+/// 旧 API: 一様な上限 `max_position` で `box_risk_parity_bounded` を呼ぶ薄い wrapper。
+///
+/// 既存テストとの後方互換のため残置。新規呼び出し元は
+/// `box_risk_parity_bounded` を直接使うこと。
+pub fn box_risk_parity(covariance_matrix: &Array2<f64>, max_position: f64) -> Vec<f64> {
+    let bounds = BoxBounds::uniform(covariance_matrix.nrows(), max_position);
+    box_risk_parity_bounded(covariance_matrix, &bounds)
 }
 
 // ==================== 案 I ユーティリティ関数群 ====================
@@ -1268,10 +1576,15 @@ fn normalize_weights(weights: &mut [f64]) {
     }
 }
 
-/// box clamp + 正規化（浮動小数点誤差対策）
-fn clamp_and_normalize(weights: &mut [f64], max_position: f64) {
-    for w in weights.iter_mut() {
-        *w = w.clamp(0.0, max_position);
+/// per-asset box clamp + 正規化（浮動小数点誤差対策）
+fn clamp_and_normalize_per_asset(weights: &mut [f64], uppers: &[f64]) {
+    debug_assert_eq!(
+        weights.len(),
+        uppers.len(),
+        "weights and uppers must have the same length"
+    );
+    for (w, &u) in weights.iter_mut().zip(uppers.iter()) {
+        *w = w.clamp(0.0, u);
     }
     normalize_weights(weights);
 }
@@ -1279,10 +1592,11 @@ fn clamp_and_normalize(weights: &mut [f64], max_position: f64) {
 /// box_sharpe + box_rp → alpha ブレンド → 正規化 → フルサイズ展開
 ///
 /// サブセットの最適化結果を n_total サイズのベクトルに展開して返す。
+/// `sub_bounds` はサブセット (`subset_indices`) に対応するサイズの BoxBounds。
 fn blend_and_expand(
     sub_returns: &[f64],
     sub_cov: &Array2<f64>,
-    max_position: f64,
+    sub_bounds: &BoxBounds,
     alphas: &[f64],
     subset_indices: &[usize],
     n_total: usize,
@@ -1295,8 +1609,13 @@ fn blend_and_expand(
         subset_indices.iter().all(|&idx| idx < n_total),
         "subset_indices contains out-of-bounds index"
     );
-    let w_sharpe = box_maximize_sharpe(sub_returns, sub_cov, max_position);
-    let w_rp = box_risk_parity(sub_cov, max_position);
+    // 旧実装は box_maximize_sharpe_bounded が等配分 fallback を返していたため、
+    // ここでも `OptimizerError` を等配分にマップして blend を継続する。fail-loud
+    // への切り替えは optimizer 統合 (BoxBoundsCap::AtMost) と同 PR で行う。
+    let n_sub = sub_returns.len();
+    let w_sharpe = box_maximize_sharpe_bounded(sub_returns, sub_cov, sub_bounds)
+        .unwrap_or_else(|_| vec![1.0 / n_sub.max(1) as f64; n_sub]);
+    let w_rp = box_risk_parity_bounded(sub_cov, sub_bounds);
 
     let mut blended: Vec<f64> = w_sharpe
         .iter()
@@ -1322,7 +1641,7 @@ fn blend_and_expand(
 struct SubsetOptParams<'a> {
     expected_returns: &'a [f64],
     covariance_matrix: &'a Array2<f64>,
-    max_position: f64,
+    bounds: &'a BoxBounds,
     alphas: &'a [f64],
 }
 
@@ -1343,10 +1662,11 @@ fn cached_blend_and_expand(
         params.covariance_matrix,
         subset_indices,
     );
+    let sub_bounds = params.bounds.subset(subset_indices);
     let weights = blend_and_expand(
         &sub_ret,
         &sub_cov,
-        params.max_position,
+        &sub_bounds,
         params.alphas,
         subset_indices,
         n_total,
@@ -1541,7 +1861,7 @@ fn exhaustive_optimize(
     active_indices: &[usize],
     expected_returns: &[f64],
     covariance_matrix: &Array2<f64>,
-    max_position: f64,
+    bounds: &BoxBounds,
     max_holdings: usize,
     min_position_size: f64,
     alphas: &[f64],
@@ -1556,7 +1876,7 @@ fn exhaustive_optimize(
     let params = SubsetOptParams {
         expected_returns,
         covariance_matrix,
-        max_position,
+        bounds,
         alphas,
     };
 
@@ -1674,7 +1994,7 @@ fn unified_optimize(
     expected_returns: &[f64],
     covariance_matrix: &Array2<f64>,
     liquidity_scores: &[f64],
-    max_position: f64,
+    bounds: &BoxBounds,
     max_holdings: usize,
     min_position_size: f64,
     alphas: &[f64],
@@ -1687,12 +2007,22 @@ fn unified_optimize(
         return vec![1.0];
     }
 
+    debug_assert_eq!(
+        bounds.len(),
+        n,
+        "bounds.len() must match expected_returns.len()"
+    );
+
     // 流動性調整リターン
     let adj_returns = adjust_returns_for_liquidity(expected_returns, liquidity_scores);
 
     // Phase 1: 全 n トークンで独立に最適化
-    let w_sharpe = box_maximize_sharpe(&adj_returns, covariance_matrix, max_position);
-    let w_rp = box_risk_parity(covariance_matrix, max_position);
+    // 旧実装は box_maximize_sharpe_bounded が等配分 fallback を返していたため、
+    // ここでも `OptimizerError` を等配分にマップして Phase 2 (blend) を継続。
+    // fail-loud への切り替えは optimizer 統合 (BoxBoundsCap::AtMost) と同 PR で行う。
+    let w_sharpe = box_maximize_sharpe_bounded(&adj_returns, covariance_matrix, bounds)
+        .unwrap_or_else(|_| vec![1.0 / n as f64; n]);
+    let w_rp = box_risk_parity_bounded(covariance_matrix, bounds);
 
     // Phase 2: 枝刈り — Sharpe 上位 ∪ RP 上位 の和集合
     let keep = PRUNE_KEEP_PER.min(n);
@@ -1746,7 +2076,7 @@ fn unified_optimize(
         &active_indices,
         &adj_returns,
         covariance_matrix,
-        max_position,
+        bounds,
         max_holdings,
         min_position_size,
         alphas,
@@ -1881,26 +2211,28 @@ pub async fn execute_portfolio_optimization(
     // ハードフィルタ: 流動性 + 時価総額の最低条件
     let filtered_tokens = hard_filter_tokens(&portfolio_data.tokens);
 
+    let hold_report = || PortfolioExecutionReport {
+        actions: vec![TradingAction::Hold],
+        optimal_weights: PortfolioWeights {
+            weights: BTreeMap::new(),
+            timestamp: Utc::now(),
+            expected_return: 0.0,
+            expected_volatility: 0.0,
+            sharpe_ratio: 0.0,
+        },
+        rebalance_needed: false,
+        expected_metrics: PortfolioMetrics {
+            sortino_ratio: 0.0,
+            max_drawdown: 0.0,
+            calmar_ratio: 0.0,
+            turnover_rate: 0.0,
+        },
+        timestamp: Utc::now(),
+    };
+
     // フィルタを通過するトークンがない場合は Hold で早期リターン
     if filtered_tokens.is_empty() {
-        return Ok(PortfolioExecutionReport {
-            actions: vec![TradingAction::Hold],
-            optimal_weights: PortfolioWeights {
-                weights: BTreeMap::new(),
-                timestamp: Utc::now(),
-                expected_return: 0.0,
-                expected_volatility: 0.0,
-                sharpe_ratio: 0.0,
-            },
-            rebalance_needed: false,
-            expected_metrics: PortfolioMetrics {
-                sortino_ratio: 0.0,
-                max_drawdown: 0.0,
-                calmar_ratio: 0.0,
-                turnover_rate: 0.0,
-            },
-            timestamp: Utc::now(),
-        });
+        return Ok(hold_report());
     }
 
     // historical_prices に存在するトークンのみに絞り込み
@@ -1920,7 +2252,11 @@ pub async fn execute_portfolio_optimization(
     // 期待リターンを計算
     let raw_expected_returns = calculate_expected_returns(&selected_tokens, &selected_predictions);
 
-    // 取引コスト控除（cost_deductions が空のときは raw を素通し）
+    // 予測不確実性 shrinkage を先に適用してから取引コストを控除する。
+    // 順序: shrinkage → cost
+    // 理由: cost を先に引くと小さな μ ほど soft-threshold が ER をゼロ化しやすく
+    // なり、不確実性ペナルティの効きが過剰になる。raw のスケールで shrinkage
+    // を適用し、その後コストを線形に引くことで両者を独立に評価できる。
     //
     // Consumer-side re-guard: `cost_deductions` は pub フィールドのため struct
     // literal 経由で `CostDeduction::new` の不変条件 (`is_finite() && >= 0.0`)
@@ -1928,12 +2264,23 @@ pub async fn execute_portfolio_optimization(
     // `r - NaN = NaN` cascade で box_maximize_sharpe Cholesky 後段の NaN 比較
     // ガード（`sum_p.abs() < 1e-15` 等）が無効化される経路を遮断する。
     // follow-up: BTreeMap<_, CostDeduction> へ型 lift して入口で塞ぐ。
+    let shrunk_expected_returns: Vec<f64> = match &portfolio_data.pred_uncertainty {
+        Some(pu) if pu.lambda > 0.0 => selected_tokens
+            .iter()
+            .zip(raw_expected_returns.iter())
+            .map(|(t, &r)| {
+                let msre = pu.msre.get(&t.symbol).copied();
+                shrinkage::apply_soft_threshold(r, msre, pu.lambda)
+            })
+            .collect(),
+        _ => raw_expected_returns,
+    };
     let expected_returns: Vec<f64> = if portfolio_data.cost_deductions.is_empty() {
-        raw_expected_returns
+        shrunk_expected_returns
     } else {
         selected_tokens
             .iter()
-            .zip(raw_expected_returns.iter())
+            .zip(shrunk_expected_returns.iter())
             .map(|(t, &r)| {
                 let deduction = portfolio_data
                     .cost_deductions
@@ -2006,19 +2353,70 @@ pub async fn execute_portfolio_optimization(
         .map(|t| t.liquidity_score.unwrap_or(0.0))
         .collect();
 
+    // 現在のポートフォリオ重みを計算（C1: 保有トークンの sell-only 制約に使用）
+    let current_weights = calculate_current_weights(&selected_tokens, wallet);
+
+    // 保有トークン集合（dust を除外: current_weight > HELD_DUST_THRESHOLD）
+    let held: std::collections::BTreeSet<TokenOutAccount> = selected_tokens
+        .iter()
+        .zip(current_weights.iter())
+        .filter(|&(_, &w)| w > HELD_DUST_THRESHOLD)
+        .map(|(t, _)| t.symbol.clone())
+        .collect();
+
+    // C1: 保有トークンに sell-only 制約を適用したボックス制約を構築
+    // sell_only_epsilon = 0.0 で厳密 sell-only。
+    // infeasible (sum_upper < 1.0 等) のときは fail-safe で Hold を返す。
+    let bounds = if held.is_empty() {
+        BoxBounds::uniform(selected_token_symbols.len(), max_position)
+    } else {
+        match BoxBounds::with_held_sell_only(
+            &selected_token_symbols,
+            &current_weights,
+            &held,
+            max_position,
+            0.0,
+        ) {
+            Ok(b) => b,
+            Err(_) => return Ok(hold_report()),
+        }
+    };
+
+    // PR-A: aggregate-cap pipeline (vol targeting + breadth + half-Kelly).
+    // Legacy strategy (every signal off) leaves `bounds` untouched, so the
+    // optimizer behaves identically to the pre-PR-A path.
+    let bounds = match apply_aggregate_cap_strategy(
+        bounds,
+        &portfolio_data.aggregate_cap_strategy,
+        &expected_returns,
+        &covariance,
+        &portfolio_data.historical_prices,
+    ) {
+        Ok(b) => b,
+        Err(_) => return Ok(hold_report()),
+    };
+
     // 統合最適化（案 I: 3 フェーズ）
     let optimal_weights = unified_optimize(
         &expected_returns,
         &covariance,
         &liquidity_scores,
-        max_position,
+        &bounds,
         MAX_HOLDINGS,
         MIN_POSITION_SIZE,
         &alphas,
     );
 
-    // 現在のポートフォリオ重みを計算
-    let current_weights = calculate_current_weights(&selected_tokens, wallet);
+    // PR-A Phase 3b: per-token stop-loss is a post-processing step. The
+    // optimizer chose weights against the predicted return; if a position
+    // is already in realised drawdown beyond `threshold` we force its
+    // weight to 0 (sell-only) and renormalise the remainder.
+    let optimal_weights = apply_stop_loss_post_process(
+        optimal_weights,
+        &selected_tokens,
+        &portfolio_data.aggregate_cap_strategy,
+        &portfolio_data.historical_prices,
+    );
 
     // リバランスが必要かチェック
     let rebalance_needed =
