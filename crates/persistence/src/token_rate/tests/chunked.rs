@@ -35,7 +35,7 @@ use std::panic::AssertUnwindSafe;
 /// `token_rates`, add a dedicated rollback test here rather than continuing
 /// to rely on the proxy.
 #[tokio::test]
-#[serial(persistence_chunked)]
+#[serial(token_rate, persistence_chunked)]
 async fn test_insert_chunked_with_multi_chunk_happy_path() -> Result<()> {
     clean_table().await?;
 

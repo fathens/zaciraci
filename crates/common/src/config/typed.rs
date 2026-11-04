@@ -1593,6 +1593,36 @@ define_typed_config! {
         default: "0 0 4 * * 7"
     }
 
+    // ── ref_flow (NearBlocks Ref Finance flow collector) ──
+
+    /// Enable the ref_flow collector loop (default OFF; also needs
+    /// NEARBLOCKS_API_KEY at startup)
+    fn ref_flow_enabled() -> bool {
+        key: "REF_FLOW_ENABLED",
+        default: false
+    }
+
+    /// Cron schedule of one ref_flow collection cycle
+    fn ref_flow_cron_schedule() -> String {
+        key: "REF_FLOW_CRON_SCHEDULE",
+        default: "0 0,30 * * * *"
+    }
+
+    /// Retention period for ref_flow receipts/txs/trades in days
+    /// (clamped to a 31-day minimum by persistence)
+    fn ref_flow_retention_days() -> u32 {
+        key: "REF_FLOW_RETENTION_DAYS",
+        default: 90
+    }
+
+    /// Operator cap on the collector's daily NearBlocks request budget.
+    /// Can only lower the hard-coded plan limit, never raise it; used to
+    /// share the quota with another collector during a migration.
+    fn ref_flow_day_allow_cap() -> u64 {
+        key: "REF_FLOW_DAY_ALLOW_CAP",
+        default: 113000
+    }
+
     // ── wallet / logging: moved to StartupConfig ──
 
     // ── portfolio/liquidity ──

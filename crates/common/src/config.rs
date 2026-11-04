@@ -1,6 +1,9 @@
+pub mod secret;
 pub mod startup;
 pub mod store;
 mod typed;
+
+pub use secret::SecretString;
 
 pub use typed::{
     ConfigAccess, ConfigResolver, ConfigValueType, KEY_DEFINITIONS, KeyDefinition, MockConfig,

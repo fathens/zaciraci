@@ -273,6 +273,7 @@ Zaciraciは、NEAR ブロックチェーン上でのDeFi裁定取引を行うRus
 - **crates/blockchain**: NEAR ブロックチェーン連携（JSON-RPC、REF Finance、ウォレット）
 - **crates/trade**: ポートフォリオベース自動取引エンジン
 - **crates/arbitrage**: 裁定取引エンジン
+- **crates/ref_flow**: NearBlocks API から Ref Finance の swap フローを収集するコレクタ（予算管理・レート制限・レシート解析・周期実行）
 
 ### 主要コンポーネント
 - **裁定取引エンジン** (`crates/arbitrage/`): 裁定取引アルゴリズム

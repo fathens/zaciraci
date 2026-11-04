@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-#[serial]
+#[serial(token_rate)]
 async fn test_token_rate_single_insert() -> Result<()> {
     // 1. テーブルの全レコード削除
     clean_table().await?;
@@ -31,7 +31,7 @@ async fn test_token_rate_single_insert() -> Result<()> {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(token_rate)]
 async fn test_token_rate_batch_insert_history() -> Result<()> {
     // 1. テーブルの全レコード削除
     clean_table().await?;
@@ -115,7 +115,7 @@ async fn test_token_rate_batch_insert_history() -> Result<()> {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(token_rate)]
 async fn test_token_rate_different_pairs() -> Result<()> {
     // 1. テーブルの全レコード削除
     clean_table().await?;
@@ -198,7 +198,7 @@ async fn test_token_rate_different_pairs() -> Result<()> {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(token_rate)]
 async fn test_get_by_volatility_in_time_range() -> Result<()> {
     // 1. テーブルの全レコード削除
     clean_table().await?;
@@ -378,7 +378,7 @@ async fn test_get_by_volatility_in_time_range() -> Result<()> {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(token_rate)]
 async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
     // 1. テーブルの全レコード削除
     clean_table().await?;
@@ -711,7 +711,7 @@ async fn test_get_by_volatility_in_time_range_edge_cases() -> Result<()> {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(token_rate)]
 async fn test_rate_difference_calculation() -> Result<()> {
     // 1. テーブルの全レコード削除
     clean_table().await?;
@@ -849,7 +849,7 @@ async fn test_rate_difference_calculation() -> Result<()> {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(token_rate)]
 async fn test_cleanup_old_records() -> Result<()> {
     // 1. テーブルの全レコード削除
     clean_table().await?;
@@ -1025,7 +1025,7 @@ async fn test_cleanup_old_records() -> Result<()> {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(token_rate)]
 async fn test_get_rates_for_multiple_tokens() -> Result<()> {
     clean_table().await?;
 
@@ -1075,7 +1075,7 @@ async fn test_get_rates_for_multiple_tokens() -> Result<()> {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(token_rate)]
 async fn test_get_rates_for_multiple_tokens_empty() -> Result<()> {
     clean_table().await?;
 
@@ -1103,7 +1103,7 @@ async fn test_get_rates_for_multiple_tokens_empty() -> Result<()> {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(token_rate)]
 async fn test_get_rates_for_multiple_tokens_empty_input() -> Result<()> {
     let quote: TokenInAccount = TokenAccount::from_str("wrap.near")?.into();
     let now = chrono::Utc::now().naive_utc();
@@ -1123,7 +1123,7 @@ async fn test_get_rates_for_multiple_tokens_empty_input() -> Result<()> {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(token_rate)]
 async fn test_swap_path_jsonb_roundtrip() -> Result<()> {
     use common::types::TokenSmallestUnits;
 
@@ -1193,7 +1193,7 @@ async fn test_swap_path_jsonb_roundtrip() -> Result<()> {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(token_rate)]
 async fn test_get_spot_rates_at_time_latest_before() -> Result<()> {
     clean_table().await?;
 
@@ -1237,7 +1237,7 @@ async fn test_get_spot_rates_at_time_latest_before() -> Result<()> {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(token_rate)]
 async fn test_get_spot_rates_at_time_empty() -> Result<()> {
     clean_table().await?;
 
@@ -1268,7 +1268,7 @@ async fn test_get_spot_rates_at_time_empty() -> Result<()> {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(token_rate)]
 async fn test_get_spot_rates_at_time_swap_path_fallback() -> Result<()> {
     use common::types::TokenSmallestUnits;
 
@@ -1332,7 +1332,7 @@ async fn test_get_spot_rates_at_time_swap_path_fallback() -> Result<()> {
 
 /// 最新レートが swap_path を持つ場合、フォールバックではなく自身の swap_path を使用する
 #[tokio::test]
-#[serial]
+#[serial(token_rate)]
 async fn test_get_spot_rates_at_time_own_swap_path_preferred() -> Result<()> {
     use common::types::TokenSmallestUnits;
 
@@ -1403,7 +1403,7 @@ async fn test_get_spot_rates_at_time_own_swap_path_preferred() -> Result<()> {
 
 /// swap_path が一切ない場合、補正なしの生レートが返る
 #[tokio::test]
-#[serial]
+#[serial(token_rate)]
 async fn test_get_spot_rates_at_time_no_swap_path_anywhere() -> Result<()> {
     clean_table().await?;
 
@@ -1437,7 +1437,7 @@ async fn test_get_spot_rates_at_time_no_swap_path_anywhere() -> Result<()> {
 
 /// 複数トークンで swap_path の有無が混在するケース
 #[tokio::test]
-#[serial]
+#[serial(token_rate)]
 async fn test_get_spot_rates_at_time_mixed_swap_path() -> Result<()> {
     use common::types::TokenSmallestUnits;
 
@@ -1522,7 +1522,7 @@ async fn test_get_spot_rates_at_time_mixed_swap_path() -> Result<()> {
 
 /// 存在しないトークンを含むリクエスト
 #[tokio::test]
-#[serial]
+#[serial(token_rate)]
 async fn test_get_spot_rates_at_time_partial_tokens() -> Result<()> {
     clean_table().await?;
 
@@ -1554,7 +1554,7 @@ async fn test_get_spot_rates_at_time_partial_tokens() -> Result<()> {
 
 /// 異なる quote トークンのレートが混入しないことを検証
 #[tokio::test]
-#[serial]
+#[serial(token_rate)]
 async fn test_get_spot_rates_at_time_quote_isolation() -> Result<()> {
     clean_table().await?;
 
@@ -1598,7 +1598,7 @@ async fn test_get_spot_rates_at_time_quote_isolation() -> Result<()> {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(token_rate)]
 async fn test_get_all_decimals() -> Result<()> {
     clean_table().await?;
 
@@ -1629,7 +1629,7 @@ async fn test_get_all_decimals() -> Result<()> {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(token_rate)]
 async fn test_get_all_decimals_empty_table() -> Result<()> {
     clean_table().await?;
 
@@ -1644,7 +1644,7 @@ async fn test_get_all_decimals_empty_table() -> Result<()> {
 // =============================================================================
 
 #[tokio::test]
-#[serial]
+#[serial(token_rate)]
 async fn test_get_all_latest_rates_empty() -> Result<()> {
     clean_table().await?;
 
@@ -1656,7 +1656,7 @@ async fn test_get_all_latest_rates_empty() -> Result<()> {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(token_rate)]
 async fn test_get_all_latest_rates_returns_latest() -> Result<()> {
     clean_table().await?;
 
@@ -1688,7 +1688,7 @@ async fn test_get_all_latest_rates_returns_latest() -> Result<()> {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(token_rate)]
 async fn test_get_all_latest_rates_quote_isolation() -> Result<()> {
     clean_table().await?;
 
@@ -1726,7 +1726,7 @@ async fn test_get_all_latest_rates_quote_isolation() -> Result<()> {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(token_rate)]
 async fn test_get_all_latest_rates_swap_path_fallback() -> Result<()> {
     clean_table().await?;
 
@@ -1793,7 +1793,7 @@ async fn test_get_all_latest_rates_swap_path_fallback() -> Result<()> {
 /// 複数トークンで swap_path の有無が混在するケースで、
 /// DISTINCT ON + LEFT JOIN fallback がトークン間で混線しないことを検証
 #[tokio::test]
-#[serial]
+#[serial(token_rate)]
 async fn test_get_all_latest_rates_multi_token_mixed() -> Result<()> {
     use common::types::TokenSmallestUnits;
 
