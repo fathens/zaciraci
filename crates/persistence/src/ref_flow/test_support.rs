@@ -59,15 +59,17 @@ pub const FEE_FIXTURE_POOL_ID_MIN: u32 = 900_000;
 /// (multi-million row) table, which makes tests slow and flaky. Tests
 /// using this must also hold `#[serial(pool_info)]`.
 pub async fn insert_pool_fee_snapshot(pool_id: u32, fee: u32, at: NaiveDateTime) -> Result<()> {
+    let pool_id = i32::try_from(pool_id).map_err(|_| anyhow!("pool_id {pool_id} exceeds i32"))?;
+    let fee = i32::try_from(fee).map_err(|_| anyhow!("fee {fee} exceeds i32"))?;
     let conn = connection_pool::get_test_only().await?;
     conn.interact(move |conn| {
         diesel::insert_into(pool_info::table)
             .values((
-                pool_info::pool_id.eq(pool_id as i32),
+                pool_info::pool_id.eq(pool_id),
                 pool_info::pool_kind.eq("SIMPLE_POOL"),
                 pool_info::token_account_ids.eq(serde_json::json!(["a.near", "b.near"])),
                 pool_info::amounts.eq(serde_json::json!(["1", "1"])),
-                pool_info::total_fee.eq(fee as i32),
+                pool_info::total_fee.eq(fee),
                 pool_info::shares_total_supply.eq(serde_json::json!("1")),
                 pool_info::amp.eq(0i64),
                 pool_info::timestamp.eq(at),
@@ -83,9 +85,11 @@ pub async fn insert_pool_fee_snapshot(pool_id: u32, fee: u32, at: NaiveDateTime)
 pub async fn clear_pool_fee_snapshots() -> Result<()> {
     let conn = connection_pool::get_test_only().await?;
     conn.interact(|conn| {
-        diesel::delete(
-            pool_info::table.filter(pool_info::pool_id.ge(FEE_FIXTURE_POOL_ID_MIN as i32)),
-        )
+        diesel::delete(pool_info::table.filter(
+            pool_info::pool_id.ge(
+                i32::try_from(FEE_FIXTURE_POOL_ID_MIN).expect("fixture pool id range fits i32"),
+            ),
+        ))
         .execute(conn)
     })
     .await
