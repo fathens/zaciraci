@@ -115,9 +115,9 @@ pub trait NearBlocksApi: Send + Sync {
 
     /// 429 answers received so far (including the ones absorbed by a
     /// retry). The collector records the per-pass delta on the run rows.
-    fn http429_total(&self) -> u64 {
-        0
-    }
+    /// Required rather than defaulted: an implementation that forgot to
+    /// count would otherwise report a healthy 0 forever.
+    fn http429_total(&self) -> u64;
 }
 
 pub struct NearBlocksClient {
