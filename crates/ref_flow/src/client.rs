@@ -254,7 +254,7 @@ enum Attempt {
 
 /// `Retry-After` in seconds (the delay form, `1*DIGIT` per RFC 9110; the
 /// HTTP-date form is rare and ignored). Absent or anything else: `None`.
-pub fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
     let text = headers
         .get(reqwest::header::RETRY_AFTER)?
         .to_str()
@@ -271,7 +271,7 @@ pub fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
 /// than [`MAX_RETRY_AFTER`]. Written without `clamp` so an `after_429`
 /// above the cap (the fields of [`RetryDelays`] are public) widens the cap
 /// instead of panicking.
-pub fn backoff_after_429(retry_after: Option<Duration>, after_429: Duration) -> Duration {
+fn backoff_after_429(retry_after: Option<Duration>, after_429: Duration) -> Duration {
     let cap = MAX_RETRY_AFTER.max(after_429);
     retry_after.unwrap_or(after_429).max(after_429).min(cap)
 }
