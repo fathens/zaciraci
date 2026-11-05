@@ -10,7 +10,7 @@
 use crate::Result;
 use crate::batch;
 use crate::connection_pool;
-use crate::schema::{pool_info, ref_flow_trades};
+use crate::schema::ref_flow_trades;
 use anyhow::{Context, anyhow};
 use bigdecimal::BigDecimal;
 use chrono::NaiveDateTime;
@@ -284,104 +284,111 @@ pub async fn get_in_time_range(range: &TimeRange) -> Result<Vec<Trade>> {
     rows.into_iter().map(from_db).collect()
 }
 
-/// Pool fee (`PoolInfo.total_fee`) of every hop, taken from the latest
-/// `pool_info` snapshot at or before `block_time`.
-///
-/// Returns `None` when any hop's pool has no snapshot at or before that
-/// time: fees are stored all-or-nothing because the multi-hop fee
-/// correction needs every hop. The caller attaches the result with
-/// [`Trade::with_fees`].
-pub async fn lookup_hop_fees(hops: &[Hop], block_time: NaiveDateTime) -> Result<Option<Vec<u32>>> {
-    let pool_ids = hops
-        .iter()
-        .map(|h| {
-            i32::try_from(h.pool_id).with_context(|| format!("pool_id {} exceeds i32", h.pool_id))
-        })
-        .collect::<Result<Vec<i32>>>()?;
-    let conn = connection_pool::get().await?;
-    let fees = conn
-        .interact(move |conn| -> QueryResult<Option<Vec<i32>>> {
-            let mut fees = Vec::with_capacity(pool_ids.len());
-            for pool_id in pool_ids {
-                let fee = pool_info::table
-                    .filter(pool_info::pool_id.eq(pool_id))
-                    .filter(pool_info::timestamp.le(block_time))
-                    .order(pool_info::timestamp.desc())
-                    .select(pool_info::total_fee)
-                    .first::<i32>(conn)
-                    .optional()?;
-                match fee {
-                    Some(fee) => fees.push(fee),
-                    None => return Ok(None),
-                }
-            }
-            Ok(Some(fees))
-        })
-        .await
-        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-    fees.map(|fees| {
-        fees.into_iter()
-            .map(|f| {
-                u32::try_from(f).with_context(|| format!("negative total_fee {f} in pool_info"))
-            })
-            .collect::<Result<Vec<u32>>>()
-    })
-    .transpose()
+/// One `(pool, instant)` to resolve with [`lookup_pool_fees_at`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PoolFeePoint {
+    pub pool_id: u32,
+    pub at: NaiveDateTime,
 }
 
-/// Latest `total_fee` of each of `pool_ids` at or before `at`, keyed by
-/// pool id. Pools without a snapshot by then are absent. One query for
-/// the whole set: the importer resolves the fees of a chunk of trades
-/// with it instead of one [`lookup_hop_fees`] round trip per trade.
+/// Latest `total_fee` of each point's pool at or before the point's
+/// instant, in the order of `points` (`None`: no snapshot by then). One
+/// query for the whole set, so the importer resolves every trade of a
+/// chunk at its own block time in a single round trip, and the live
+/// path's [`lookup_hop_fees`] is the one-trade special case.
 ///
-/// Written as one `LIMIT 1` sub-select per pool: that is an index
-/// backward scan on `(pool_id, timestamp)` per pool, while `DISTINCT ON`
-/// over the same filter read every snapshot of every pool (seconds for
-/// 50 pools against a 25M-row table).
-pub async fn lookup_pool_fees_at(
-    pool_ids: &[u32],
-    at: NaiveDateTime,
-) -> Result<std::collections::HashMap<u32, u32>> {
+/// Each point is one `ORDER BY timestamp DESC LIMIT 1` sub-select: an
+/// index backward scan on `(pool_id, timestamp)`. `DISTINCT ON` over the
+/// same filter read every snapshot of every pool (seconds for 50 pools
+/// against a 25M-row table). Results come back by ordinality, not by
+/// timestamp: `timestamp` has microsecond precision and would not round-
+/// trip the nanosecond block times used as keys.
+pub async fn lookup_pool_fees_at(points: &[PoolFeePoint]) -> Result<Vec<Option<u32>>> {
     #[derive(QueryableByName)]
     struct FeeRow {
-        #[diesel(sql_type = diesel::sql_types::Integer)]
-        pool_id: i32,
+        #[diesel(sql_type = diesel::sql_types::BigInt)]
+        ord: i64,
         #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Integer>)]
         total_fee: Option<i32>,
     }
-    let ids = pool_ids
-        .iter()
-        .map(|&p| i32::try_from(p).with_context(|| format!("pool_id {p} exceeds i32")))
-        .collect::<Result<Vec<i32>>>()?;
-    if ids.is_empty() {
-        return Ok(Default::default());
+    if points.is_empty() {
+        return Ok(Vec::new());
     }
+    let ids = points
+        .iter()
+        .map(|p| {
+            i32::try_from(p.pool_id).with_context(|| format!("pool_id {} exceeds i32", p.pool_id))
+        })
+        .collect::<Result<Vec<i32>>>()?;
+    let ats: Vec<NaiveDateTime> = points.iter().map(|p| p.at).collect();
+    if ids.len() != ats.len() {
+        return Err(anyhow!(
+            "pool fee points: {} ids but {} instants",
+            ids.len(),
+            ats.len()
+        ));
+    }
+    let expected = points.len();
     let conn = connection_pool::get().await?;
     let rows = conn
         .interact(move |conn| {
             diesel::sql_query(
-                "SELECT p.pool_id, \
+                "SELECT p.ord, \
                         (SELECT i.total_fee FROM pool_info AS i \
-                          WHERE i.pool_id = p.pool_id AND i.timestamp <= $2 \
+                          WHERE i.pool_id = p.pool_id AND i.timestamp <= p.at \
                           ORDER BY i.timestamp DESC LIMIT 1) AS total_fee \
-                   FROM unnest($1::integer[]) AS p(pool_id)",
+                   FROM unnest($1::integer[], $2::timestamp[]) WITH ORDINALITY AS p(pool_id, at, ord) \
+                  ORDER BY p.ord",
             )
             .bind::<diesel::sql_types::Array<diesel::sql_types::Integer>, _>(&ids)
-            .bind::<diesel::sql_types::Timestamp, _>(at)
+            .bind::<diesel::sql_types::Array<diesel::sql_types::Timestamp>, _>(&ats)
             .load::<FeeRow>(conn)
         })
         .await
         .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+    if rows.len() != expected {
+        return Err(anyhow!(
+            "pool fee lookup returned {} rows for {} points",
+            rows.len(),
+            expected
+        ));
+    }
     rows.into_iter()
-        .filter_map(|r| r.total_fee.map(|fee| (r.pool_id, fee)))
-        .map(|(pool_id, fee)| {
-            Ok((
-                u32::try_from(pool_id).with_context(|| format!("negative pool_id {pool_id}"))?,
-                u32::try_from(fee)
-                    .with_context(|| format!("negative total_fee {fee} in pool_info"))?,
-            ))
+        .enumerate()
+        .map(|(i, r)| {
+            if usize::try_from(r.ord).ok() != Some(i + 1) {
+                return Err(anyhow!("pool fee lookup rows out of order at {i}"));
+            }
+            r.total_fee
+                .map(|fee| {
+                    u32::try_from(fee)
+                        .with_context(|| format!("negative total_fee {fee} in pool_info"))
+                })
+                .transpose()
         })
         .collect()
+}
+
+/// Per-hop fees resolved all-or-nothing: `Some` only when every hop has
+/// one, because the multi-hop fee correction needs all of them. Shared by
+/// the live path and the importer so the rule lives in one place.
+pub fn all_hop_fees(per_hop: &[Option<u32>]) -> Option<Vec<u32>> {
+    per_hop.iter().copied().collect()
+}
+
+/// Pool fee of every hop at `block_time` (the trade's own instant), or
+/// `None` when any hop's pool has no snapshot by then. The caller attaches
+/// the result with [`Trade::with_fees`].
+pub async fn lookup_hop_fees(hops: &[Hop], block_time: NaiveDateTime) -> Result<Option<Vec<u32>>> {
+    let points: Vec<PoolFeePoint> = hops
+        .iter()
+        .map(|h| PoolFeePoint {
+            pool_id: h.pool_id,
+            at: block_time,
+        })
+        .collect();
+    let per_hop = lookup_pool_fees_at(&points).await?;
+    Ok(all_hop_fees(&per_hop))
 }
 
 #[cfg(test)]

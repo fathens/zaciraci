@@ -217,3 +217,242 @@ fn trades_csv_loader_reads_the_python_columns() {
     assert_eq!(csv["rid1"].amount_out, "7");
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+// ------------------------------------------------------------ apply (DB)
+
+mod apply {
+    use super::*;
+    use chrono::{NaiveDateTime, TimeDelta, Timelike, Utc};
+    use common::types::{ReceiptId, TokenAccount, TokenSmallestUnits};
+    use dex::ref_trade::TradeParts;
+    use dex::{Hop, TradeRoute};
+    use persistence::ref_flow::receipt::{RefReceipt, RefReceiptParts, ingest_receipts};
+    use persistence::ref_flow::test_support::{
+        FEE_FIXTURE_POOL_ID_MIN, clean_tables, clear_pool_fee_snapshots, insert_pool_fee_snapshot,
+    };
+    use persistence::ref_flow::trade as trade_store;
+    use persistence::ref_flow::tx as tx_store;
+    use serial_test::serial;
+
+    const POOL_A: u32 = FEE_FIXTURE_POOL_ID_MIN + 11;
+    const POOL_B: u32 = FEE_FIXTURE_POOL_ID_MIN + 12;
+    const POOL_UNKNOWN: u32 = FEE_FIXTURE_POOL_ID_MIN + 13;
+
+    fn id(n: u32) -> String {
+        let mut bytes = [0u8; 32];
+        bytes[..4].copy_from_slice(&n.to_be_bytes());
+        bytes[31] = 7;
+        bs58::encode(bytes).into_string()
+    }
+
+    fn tx_hash(n: u32) -> TxHash {
+        TxHash::new(&id(n)).unwrap()
+    }
+
+    fn hop(pool_id: u32) -> Hop {
+        let a: TokenAccount = "a.near".parse().unwrap();
+        let b: TokenAccount = "b.near".parse().unwrap();
+        Hop {
+            pool_id,
+            token_in: a.to_in(),
+            token_out: b.to_out(),
+            amount_in: TokenSmallestUnits::from_u128(1_000),
+            amount_out: TokenSmallestUnits::from_u128(999),
+        }
+    }
+
+    fn trade(n: u32, tx: u32, at: NaiveDateTime, hops: Vec<Hop>) -> Trade {
+        Trade::new(TradeParts {
+            receipt_id: ReceiptId::new(&id(500_000 + n)).unwrap(),
+            tx_hash: tx_hash(tx),
+            block_height: 1,
+            block_time: at,
+            sender: "trader.near".parse().unwrap(),
+            route: TradeRoute::Swap,
+            amount_in: hops[0].amount_in.clone(),
+            amount_out: hops[hops.len() - 1].amount_out.clone(),
+            hops,
+            fees: None,
+        })
+        .unwrap()
+    }
+
+    /// Frame row for `tx` at `at` (one successful swap receipt).
+    async fn seed(tx: u32, at: NaiveDateTime) -> Result<()> {
+        let receipt = RefReceipt::new(RefReceiptParts {
+            receipt_id: ReceiptId::new(&id(700_000 + tx)).unwrap(),
+            tx_hash: tx_hash(tx),
+            block_height: 1,
+            block_time: at,
+            predecessor: "seed.near".parse().unwrap(),
+            methods: vec!["swap".to_owned()],
+            ok: true,
+        })
+        .unwrap();
+        ingest_receipts(&[receipt]).await?;
+        Ok(())
+    }
+
+    fn parsed(trades: Vec<Trade>) -> ParsedTx {
+        ParsedTx {
+            trades,
+            ..ParsedTx::default()
+        }
+    }
+
+    async fn stored_fees(tx: u32) -> Result<Vec<Option<Vec<u32>>>> {
+        Ok(trade_store::get_by_tx_hash(&tx_hash(tx))
+            .await?
+            .iter()
+            .map(|t| t.fees().map(<[u32]>::to_vec))
+            .collect())
+    }
+
+    #[tokio::test]
+    #[serial(ref_flow_db, pool_info)]
+    async fn fees_follow_each_trade_time_all_or_nothing() -> Result<()> {
+        clean_tables().await?;
+        clear_pool_fee_snapshots().await?;
+        let now = Utc::now().naive_utc();
+        let h = |n: i64| now - TimeDelta::hours(n);
+        insert_pool_fee_snapshot(POOL_A, 30, h(3)).await?;
+        insert_pool_fee_snapshot(POOL_A, 40, h(1)).await?;
+        insert_pool_fee_snapshot(POOL_B, 7, h(3)).await?;
+        for (tx, at) in [
+            (1, h(2)),
+            (2, h(4)),
+            (3, h(1)),
+            (4, h(2)),
+            (5, h(2)),
+            (6, h(2)),
+        ] {
+            seed(tx, at).await?;
+        }
+        let ns = h(2).with_nanosecond(123_456_789).unwrap();
+        // Hash order on purpose: the chunk mixes every instant.
+        let input = vec![
+            (
+                tx_hash(1),
+                parsed(vec![trade(1, 1, h(2), vec![hop(POOL_A)])]),
+            ), // between snapshots
+            (
+                tx_hash(2),
+                parsed(vec![trade(2, 2, h(4), vec![hop(POOL_A)])]),
+            ), // before the first one
+            (
+                tx_hash(3),
+                parsed(vec![trade(3, 3, h(1), vec![hop(POOL_A), hop(POOL_B)])]),
+            ), // 2 hops
+            (
+                tx_hash(4),
+                parsed(vec![trade(
+                    4,
+                    4,
+                    h(2),
+                    vec![hop(POOL_A), hop(POOL_UNKNOWN)],
+                )]),
+            ), // one hop unknown
+            (tx_hash(5), parsed(vec![trade(5, 5, ns, vec![hop(POOL_A)])])), // nanoseconds
+            (tx_hash(6), parsed(vec![])),                                   // no trades
+        ];
+        let out = apply_enriched(&input, now).await?;
+        assert_eq!(out.recorded, 6);
+        assert_eq!(out.trades, 5);
+        assert_eq!(
+            stored_fees(1).await?,
+            vec![Some(vec![30])],
+            "older snapshot applies"
+        );
+        assert_eq!(stored_fees(2).await?, vec![None], "no snapshot yet: no fee");
+        assert_eq!(stored_fees(3).await?, vec![Some(vec![40, 7])]);
+        assert_eq!(stored_fees(4).await?, vec![None], "all hops or none");
+        assert_eq!(
+            stored_fees(5).await?,
+            vec![Some(vec![30])],
+            "nanosecond block time"
+        );
+        assert_eq!(
+            tx_store::get(&tx_hash(6)).await?.unwrap().trade_count,
+            Some(0)
+        );
+
+        // The same transactions in time order give the same answer.
+        clean_tables().await?;
+        for (tx, at) in [
+            (1, h(2)),
+            (2, h(4)),
+            (3, h(1)),
+            (4, h(2)),
+            (5, h(2)),
+            (6, h(2)),
+        ] {
+            seed(tx, at).await?;
+        }
+        let mut by_time = input.clone();
+        by_time.sort_by_key(|(_, p)| p.trades.first().map(|t| t.block_time));
+        apply_enriched(&by_time, now).await?;
+        assert_eq!(stored_fees(1).await?, vec![Some(vec![30])]);
+        assert_eq!(stored_fees(2).await?, vec![None]);
+        assert_eq!(stored_fees(3).await?, vec![Some(vec![40, 7])]);
+        clear_pool_fee_snapshots().await
+    }
+
+    #[tokio::test]
+    #[serial(ref_flow_db, pool_info)]
+    async fn chunks_cover_every_transaction_and_skip_live_rows() -> Result<()> {
+        clean_tables().await?;
+        clear_pool_fee_snapshots().await?;
+        let now = Utc::now().naive_utc();
+        let n = u32::try_from(APPLY_CHUNK_TXS).unwrap() + 1; // forces a second chunk
+        let mut receipts = Vec::with_capacity(n as usize);
+        for tx in 1..=n {
+            receipts.push(
+                RefReceipt::new(RefReceiptParts {
+                    receipt_id: ReceiptId::new(&id(700_000 + tx)).unwrap(),
+                    tx_hash: tx_hash(tx),
+                    block_height: 1,
+                    block_time: now - TimeDelta::seconds(i64::from(tx)),
+                    predecessor: "seed.near".parse().unwrap(),
+                    methods: vec!["swap".to_owned()],
+                    ok: true,
+                })
+                .unwrap(),
+            );
+        }
+        ingest_receipts(&receipts).await?;
+        // The live collector already enriched one of them.
+        tx_store::record_enrichment(
+            &tx_hash(n),
+            &[trade(
+                9_000,
+                n,
+                now - TimeDelta::seconds(i64::from(n)),
+                vec![hop(POOL_A)],
+            )],
+            now,
+        )
+        .await?;
+        let input: Vec<(TxHash, ParsedTx)> = (1..=n)
+            .map(|tx| {
+                let at = now - TimeDelta::seconds(i64::from(tx));
+                (
+                    tx_hash(tx),
+                    parsed(vec![trade(tx, tx, at, vec![hop(POOL_A)])]),
+                )
+            })
+            .chain(std::iter::once((tx_hash(n + 1), parsed(vec![])))) // no frame row
+            .collect();
+        let out = apply_enriched(&input, now).await?;
+        assert_eq!(out.recorded, usize::from(n as u16) - 1);
+        assert_eq!(out.trades, usize::from(n as u16) - 1);
+        assert_eq!(out.skipped_live, 1);
+        assert_eq!(out.not_in_frame, 1);
+        let live = trade_store::get_by_tx_hash(&tx_hash(n)).await?;
+        assert_eq!(live.len(), 1);
+        assert_eq!(
+            live[0].receipt_id,
+            ReceiptId::new(&id(500_000 + 9_000)).unwrap()
+        );
+        Ok(())
+    }
+}
