@@ -205,9 +205,7 @@ impl NearBlocksClient {
                     // Back off for what the provider asked (at least our own
                     // delay) and hold the other workers too, or the retry
                     // lands in the same refused window.
-                    let pause = retry_after
-                        .unwrap_or(self.delays.after_429)
-                        .clamp(self.delays.after_429, MAX_RETRY_AFTER);
+                    let pause = backoff_after_429(retry_after, self.delays.after_429);
                     self.limiter.pause_for(pause).await;
                     tokio::time::sleep(pause).await;
                 }
@@ -235,7 +233,7 @@ impl NearBlocksClient {
             .map_err(|e| Attempt::Network(e.without_url().to_string()))?;
         let status = response.status();
         if status == StatusCode::TOO_MANY_REQUESTS {
-            return Err(Attempt::RateLimited(retry_after(&response)));
+            return Err(Attempt::RateLimited(retry_after(response.headers())));
         }
         if !status.is_success() {
             return Err(Attempt::Status(status));
@@ -253,18 +251,28 @@ enum Attempt {
     Fatal(FetchError),
 }
 
-/// `Retry-After` in seconds (the delay form; the HTTP-date form is rare
-/// and ignored). Absent or unparsable: `None`.
-fn retry_after(response: &reqwest::Response) -> Option<Duration> {
-    response
-        .headers()
+/// `Retry-After` in seconds (the delay form, `1*DIGIT` per RFC 9110; the
+/// HTTP-date form is rare and ignored). Absent or anything else: `None`.
+pub fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    let text = headers
         .get(reqwest::header::RETRY_AFTER)?
         .to_str()
         .ok()?
-        .trim()
-        .parse::<u64>()
-        .ok()
-        .map(Duration::from_secs)
+        .trim();
+    if text.is_empty() || !text.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    text.parse::<u64>().ok().map(Duration::from_secs)
+}
+
+/// How long to hold every worker after a 429: the provider's `Retry-After`
+/// when given, never less than our own `after_429` delay and never more
+/// than [`MAX_RETRY_AFTER`]. Written without `clamp` so an `after_429`
+/// above the cap (the fields of [`RetryDelays`] are public) widens the cap
+/// instead of panicking.
+pub fn backoff_after_429(retry_after: Option<Duration>, after_429: Duration) -> Duration {
+    let cap = MAX_RETRY_AFTER.max(after_429);
+    retry_after.unwrap_or(after_429).max(after_429).min(cap)
 }
 
 /// Stream the body into memory, aborting once it exceeds `cap` (guards

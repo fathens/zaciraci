@@ -395,3 +395,57 @@ async fn a_429_with_retry_after_pauses_the_shared_limiter() {
         "pause has lapsed by now"
     );
 }
+
+#[test]
+fn retry_after_accepts_only_whole_seconds() {
+    use reqwest::header::{HeaderMap, HeaderValue, RETRY_AFTER};
+    let with = |v: &str| {
+        let mut h = HeaderMap::new();
+        h.insert(RETRY_AFTER, HeaderValue::from_str(v).unwrap());
+        retry_after(&h)
+    };
+    assert_eq!(with("7"), Some(Duration::from_secs(7)));
+    assert_eq!(with(" 0 "), Some(Duration::ZERO));
+    assert_eq!(
+        with("18446744073709551615"),
+        Some(Duration::from_secs(u64::MAX))
+    );
+    assert_eq!(with("+5"), None, "sign is not part of the delay form");
+    assert_eq!(with("-5"), None);
+    assert_eq!(with("1.5"), None);
+    assert_eq!(with("1e9"), None);
+    assert_eq!(
+        with("Wed, 21 Oct 2026 07:28:00 GMT"),
+        None,
+        "HTTP-date ignored"
+    );
+    assert_eq!(retry_after(&HeaderMap::new()), None);
+}
+
+#[test]
+fn backoff_is_bounded_by_our_delay_and_the_cap_without_panicking() {
+    let d = Duration::from_secs(10);
+    assert_eq!(backoff_after_429(None, d), d);
+    assert_eq!(
+        backoff_after_429(Some(Duration::ZERO), d),
+        d,
+        "never below our delay"
+    );
+    assert_eq!(
+        backoff_after_429(Some(Duration::from_secs(30)), d),
+        Duration::from_secs(30)
+    );
+    assert_eq!(
+        backoff_after_429(Some(Duration::from_secs(u64::MAX)), d),
+        MAX_RETRY_AFTER,
+        "huge Retry-After is capped"
+    );
+    // A delay above the cap used to make Duration::clamp panic.
+    let big = MAX_RETRY_AFTER + Duration::from_secs(60);
+    assert_eq!(backoff_after_429(None, big), big);
+    assert_eq!(backoff_after_429(Some(Duration::from_secs(1)), big), big);
+    assert_eq!(
+        backoff_after_429(Some(Duration::from_secs(u64::MAX)), big),
+        big
+    );
+}
