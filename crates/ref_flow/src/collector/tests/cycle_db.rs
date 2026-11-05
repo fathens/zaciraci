@@ -315,6 +315,12 @@ async fn rate_limit_aborts_and_sets_cooldown() -> Result<()> {
         .unwrap();
     assert_eq!(rec.attempts, 0);
     assert!(!rec.is_enriched());
+    // The 429 is visible on the pass's run row.
+    let enrich = persistence::ref_flow::runs::latest(Some(RunStream::Enrich))
+        .await?
+        .unwrap();
+    assert_eq!(enrich.http429, 1);
+    assert_eq!(report.enrich.stop, Some(Stop::RateLimited));
     Ok(())
 }
 

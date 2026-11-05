@@ -112,6 +112,12 @@ pub trait NearBlocksApi: Send + Sync {
         tx_hash: &TxHash,
         credits: &dyn CreditSource,
     ) -> impl Future<Output = Result<Vec<Value>, FetchError>> + Send;
+
+    /// 429 answers received so far (including the ones absorbed by a
+    /// retry). The collector records the per-pass delta on the run rows.
+    fn http429_total(&self) -> u64 {
+        0
+    }
 }
 
 pub struct NearBlocksClient {
@@ -119,6 +125,7 @@ pub struct NearBlocksClient {
     base: Url,
     limiter: Arc<RateLimiter>,
     delays: RetryDelays,
+    http429: std::sync::atomic::AtomicU64,
 }
 
 impl std::fmt::Debug for NearBlocksClient {
@@ -158,6 +165,7 @@ impl NearBlocksClient {
             base,
             limiter,
             delays,
+            http429: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -185,6 +193,8 @@ impl NearBlocksClient {
             match self.send_once(credit, url.clone()).await {
                 Ok(value) => return Ok(value),
                 Err(Attempt::RateLimited(retry_after)) => {
+                    self.http429
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     // The single 429 retry counts against MAX_ATTEMPTS too:
                     // one call never takes more than MAX_ATTEMPTS credits,
                     // which is what the collector reserves per request.
@@ -288,6 +298,10 @@ fn data_array(mut value: Value) -> Result<Vec<Value>, FetchError> {
 }
 
 impl NearBlocksApi for NearBlocksClient {
+    fn http429_total(&self) -> u64 {
+        self.http429.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     async fn list_receipts(
         &self,
         from: &ListFrom,

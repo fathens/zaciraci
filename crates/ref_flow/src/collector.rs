@@ -321,7 +321,7 @@ impl<A: NearBlocksApi + 'static, L: LedgerStore> Cycle<A, L> {
 
     async fn forward_pass(&mut self, state: &mut CollectorState) -> Result<ListWalk> {
         let since_ns = state.since_ns;
-        let credits_at_start = self.tracker.calls_this_run();
+        let pass = self.pass_start();
         let walk = self
             .list_walk(
                 Stream::Forward,
@@ -349,7 +349,7 @@ impl<A: NearBlocksApi + 'static, L: LedgerStore> Cycle<A, L> {
         self.record_run(
             RunStream::Fwd,
             &walk,
-            credits_at_start,
+            pass,
             format!("complete={}", u8::from(walk.complete)),
         )
         .await;
@@ -396,7 +396,7 @@ impl<A: NearBlocksApi + 'static, L: LedgerStore> Cycle<A, L> {
                 (None, Some(oldest)) => ListFrom::BeforeNs(oldest.saturating_add(1)),
                 (None, None) => ListFrom::Newest,
             };
-            let credits_at_start = self.tracker.calls_this_run();
+            let pass = self.pass_start();
             let walk = self
                 .list_walk(Stream::Gap, from, gap.until_ns, u32::MAX, Some(limit))
                 .await?;
@@ -415,7 +415,7 @@ impl<A: NearBlocksApi + 'static, L: LedgerStore> Cycle<A, L> {
             self.record_run(
                 RunStream::Gap,
                 &walk,
-                credits_at_start,
+                pass,
                 format!("closed={}", u8::from(closed)),
             )
             .await;
@@ -428,19 +428,28 @@ impl<A: NearBlocksApi + 'static, L: LedgerStore> Cycle<A, L> {
         Ok(closed_count)
     }
 
-    /// Record one list pass; `credits_at_start` is the cycle's charge
-    /// counter before the pass so the row carries the pass's own spend.
-    async fn record_run(
-        &self,
-        stream: RunStream,
-        walk: &ListWalk,
-        credits_at_start: u64,
-        note: String,
-    ) {
-        let credits = self
-            .tracker
-            .calls_this_run()
-            .saturating_sub(credits_at_start);
+    /// Counters at the start of a pass, so its run row carries the pass's
+    /// own spend and 429s rather than the cycle's running totals.
+    fn pass_start(&self) -> PassStart {
+        PassStart {
+            credits: self.tracker.calls_this_run(),
+            http429: self.api.http429_total(),
+        }
+    }
+
+    /// (credits, http429) spent since `start`.
+    fn pass_delta(&self, start: PassStart) -> (u32, u32) {
+        let credits = self.tracker.calls_this_run().saturating_sub(start.credits);
+        let http429 = self.api.http429_total().saturating_sub(start.http429);
+        (
+            u32::try_from(credits).unwrap_or(u32::MAX),
+            u32::try_from(http429).unwrap_or(u32::MAX),
+        )
+    }
+
+    /// Record one list pass.
+    async fn record_run(&self, stream: RunStream, walk: &ListWalk, start: PassStart, note: String) {
+        let (credits, http429) = self.pass_delta(start);
         let record = RunRecord {
             run_at: Self::now(),
             stream,
@@ -449,8 +458,8 @@ impl<A: NearBlocksApi + 'static, L: LedgerStore> Cycle<A, L> {
             trades: 0,
             from_time: walk.oldest_ns.and_then(parse::ns_to_time),
             to_time: walk.newest_ns.and_then(parse::ns_to_time),
-            credits: u32::try_from(credits).unwrap_or(u32::MAX),
-            http429: 0,
+            credits,
+            http429,
             failures: u32::from(walk.failed) + walk.parse_errors,
             note,
             parse_stats: None,
@@ -472,7 +481,7 @@ impl<A: NearBlocksApi + 'static, L: LedgerStore> Cycle<A, L> {
         summary.candidates = candidates.len();
         let mut order = round_robin_by_bucket(candidates);
         order.reverse(); // pop() from the back
-        let credits_at_start = self.tracker.calls_this_run();
+        let pass = self.pass_start();
         let credits = self.tracker.credits();
         let api = Arc::clone(&self.api);
         let mut in_flight: FuturesUnordered<FetchTask> = FuturesUnordered::new();
@@ -552,6 +561,7 @@ impl<A: NearBlocksApi + 'static, L: LedgerStore> Cycle<A, L> {
             }
         }
         summary.stats = stats;
+        let (credits, http429) = self.pass_delta(pass);
         let record = RunRecord {
             run_at: Self::now(),
             stream: RunStream::Enrich,
@@ -560,9 +570,8 @@ impl<A: NearBlocksApi + 'static, L: LedgerStore> Cycle<A, L> {
             trades: summary.trades,
             from_time: None,
             to_time: None,
-            credits: u32::try_from(self.tracker.calls_this_run() - credits_at_start)
-                .unwrap_or(u32::MAX),
-            http429: 0,
+            credits,
+            http429,
             failures: summary.failed,
             note: format!("candidates={} stop={:?}", summary.candidates, summary.stop),
             parse_stats: Some(summary.stats.to_json()),
@@ -649,6 +658,13 @@ impl<A: NearBlocksApi + 'static, L: LedgerStore> Cycle<A, L> {
             error!(self.log, "run log cleanup failed"; "error" => %e);
         }
     }
+}
+
+/// Snapshot of the running counters when a pass begins.
+#[derive(Debug, Clone, Copy)]
+struct PassStart {
+    credits: u64,
+    http429: u64,
 }
 
 /// A spawned enrich fetch: the candidate and the provider's answer.
