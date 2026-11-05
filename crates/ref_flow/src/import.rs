@@ -11,7 +11,8 @@
 //!   line, tagged with `_tx_hash` by the Python collector.
 //!
 //! Rows written by the live collector always win: receipts and frame rows
-//! use `ON CONFLICT DO NOTHING`, trades use `ReplacePolicy::OnlyIfPending`.
+//! use `ON CONFLICT DO NOTHING`, enrichment data goes through
+//! `record_enrichment_batch`, which writes pending transactions only.
 //! The importer never touches the state, ledger or run tables.
 
 use crate::parse::{self, ParsedTx};

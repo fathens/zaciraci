@@ -119,24 +119,10 @@ pub async fn pending_candidates(not_before: NaiveDateTime, limit: i64) -> Result
         .collect()
 }
 
-/// Whether [`record_enrichment`] may overwrite a transaction that is
-/// already enriched.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReplacePolicy {
-    /// Replace unconditionally (collector re-fetch, parser upgrade).
-    Always,
-    /// Write only if the transaction is still pending (importer: rows
-    /// written by the live collector win).
-    OnlyIfPending,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EnrichmentOutcome {
     /// Trades written and the frame row marked enriched.
     Recorded { trades: usize },
-    /// The transaction was already enriched and the policy forbids
-    /// replacing it. Nothing was written.
-    Skipped,
     /// No frame row exists for the transaction. Nothing was written.
     NotInFrame,
 }
@@ -150,10 +136,13 @@ diesel::define_sql_function! {
 /// first, `enriched_at` is set only the first time, and `trade_count`
 /// always reflects this write. An empty `trades` slice is valid and marks
 /// the transaction enriched with zero trades.
+///
+/// This is the live collector's path and replaces unconditionally (re-fetch
+/// after a parser upgrade included). The importer, whose rows must never
+/// override the collector's, uses [`record_enrichment_batch`] instead.
 pub async fn record_enrichment(
     tx_hash: &TxHash,
     trades: &[Trade],
-    policy: ReplacePolicy,
     now: NaiveDateTime,
 ) -> Result<EnrichmentOutcome> {
     if let Some(stray) = trades.iter().find(|t| &t.tx_hash != tx_hash) {
@@ -176,25 +165,15 @@ pub async fn record_enrichment(
         .interact(move |conn| {
             conn.transaction::<_, diesel::result::Error, _>(|conn| {
                 let target = ref_flow_txs::table.filter(ref_flow_txs::tx_hash.eq(&key));
-                let update = diesel::update(target).set((
-                    ref_flow_txs::enriched_at
-                        .eq(coalesce(ref_flow_txs::enriched_at, now).nullable()),
-                    ref_flow_txs::trade_count.eq(Some(trade_count)),
-                ));
-                let updated = match policy {
-                    ReplacePolicy::Always => update.execute(conn)?,
-                    ReplacePolicy::OnlyIfPending => update
-                        .filter(ref_flow_txs::enriched_at.is_null())
-                        .execute(conn)?,
-                };
+                let updated = diesel::update(target)
+                    .set((
+                        ref_flow_txs::enriched_at
+                            .eq(coalesce(ref_flow_txs::enriched_at, now).nullable()),
+                        ref_flow_txs::trade_count.eq(Some(trade_count)),
+                    ))
+                    .execute(conn)?;
                 if updated == 0 {
-                    let exists =
-                        diesel::select(diesel::dsl::exists(target)).get_result::<bool>(conn)?;
-                    return Ok(if exists {
-                        EnrichmentOutcome::Skipped
-                    } else {
-                        EnrichmentOutcome::NotInFrame
-                    });
+                    return Ok(EnrichmentOutcome::NotInFrame);
                 }
                 trade::delete_by_tx_hash(&key, conn)?;
                 let inserted = trade::insert_chunked_with(&rows, NewDbRefTrade::CHUNK_ROWS, conn)?;
@@ -208,7 +187,7 @@ pub async fn record_enrichment(
 
 /// Result of [`record_enrichment_batch`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct BatchOutcome {
+pub struct EnrichmentBatchOutcome {
     /// Transactions marked enriched by this call.
     pub recorded: usize,
     /// Trade rows inserted for them.
@@ -225,17 +204,19 @@ struct HashRow {
     tx_hash: String,
 }
 
-/// [`record_enrichment`] with [`ReplacePolicy::OnlyIfPending`] for many
-/// transactions in one DB transaction and a handful of statements: the
-/// importer's path, where one round trip per transaction is far too slow
-/// through the proxy. Pending transactions are marked and get their
-/// trades; enriched ones are skipped; unknown ones are counted.
+/// The importer's path: record many transactions in one DB transaction and
+/// a handful of statements, writing **only transactions still pending** so
+/// that rows produced by the live collector always win. Pending
+/// transactions are marked and get their trades (replacing any stale
+/// ones); enriched ones are skipped; unknown ones are counted. One round
+/// trip per transaction, as the live path does, is far too slow through
+/// the proxy for this use.
 pub async fn record_enrichment_batch(
     items: &[(TxHash, Vec<Trade>)],
     now: NaiveDateTime,
-) -> Result<BatchOutcome> {
+) -> Result<EnrichmentBatchOutcome> {
     if items.is_empty() {
-        return Ok(BatchOutcome::default());
+        return Ok(EnrichmentBatchOutcome::default());
     }
     let mut hashes = Vec::with_capacity(items.len());
     let mut counts = Vec::with_capacity(items.len());
@@ -305,7 +286,7 @@ pub async fn record_enrichment_batch(
                 )
                 .execute(conn)?;
                 let inserted = trade::insert_chunked_with(&rows, NewDbRefTrade::CHUNK_ROWS, conn)?;
-                Ok(BatchOutcome {
+                Ok(EnrichmentBatchOutcome {
                     recorded: marked.len(),
                     trades: inserted,
                     skipped: known.saturating_sub(marked.len()),

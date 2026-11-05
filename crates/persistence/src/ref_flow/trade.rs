@@ -1,9 +1,11 @@
 //! `ref_flow_trades`: executed trades, one row per Ref receipt.
 //!
-//! Rows are written only through `ref_flow::tx::record_enrichment`, which
-//! owns the transaction and keeps the frame row in sync; this module holds
-//! the Diesel models, the domain conversions, the read queries and the
-//! pool-fee lookup.
+//! Rows are written only through `ref_flow::tx::record_enrichment` (live
+//! collector, one transaction at a time) and
+//! `ref_flow::tx::record_enrichment_batch` (importer, pending transactions
+//! only), which own the DB transaction and keep the frame row in sync; this
+//! module holds the Diesel models, the domain conversions, the read queries
+//! and the pool-fee lookups.
 
 use crate::Result;
 use crate::batch;
