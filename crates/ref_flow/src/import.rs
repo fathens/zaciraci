@@ -11,7 +11,8 @@
 //!   line, tagged with `_tx_hash` by the Python collector.
 //!
 //! Rows written by the live collector always win: receipts and frame rows
-//! use `ON CONFLICT DO NOTHING`, trades use `ReplacePolicy::OnlyIfPending`.
+//! use `ON CONFLICT DO NOTHING`, enrichment data goes through
+//! `record_enrichment_batch`, which writes pending transactions only.
 //! The importer never touches the state, ledger or run tables.
 
 use crate::parse::{self, ParsedTx};
@@ -21,8 +22,8 @@ use common::types::{ReceiptId, TxHash};
 use dex::Trade;
 use flate2::read::MultiGzDecoder;
 use persistence::ref_flow::receipt::{RefReceipt, ingest_receipts};
-use persistence::ref_flow::trade as trade_store;
-use persistence::ref_flow::tx::{self as tx_store, EnrichmentOutcome, ReplacePolicy};
+use persistence::ref_flow::trade::{self as trade_store, PoolFeePoint};
+use persistence::ref_flow::tx as tx_store;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::io::{BufRead, BufReader, Read};
@@ -327,32 +328,66 @@ pub struct ApplyEnrichSummary {
     pub not_in_frame: usize,
 }
 
-/// Record parsed trades for transactions still pending. Pool fees are
-/// attached from `pool_info` when a snapshot exists.
+/// Transactions per DB transaction when applying enrichment data.
+const APPLY_CHUNK_TXS: usize = 500;
+const _: () = assert!(APPLY_CHUNK_TXS > 0);
+
+/// Record parsed trades for transactions still pending, in chunks of
+/// [`APPLY_CHUNK_TXS`]. Pool fees are attached exactly as the live
+/// collector does it: at each trade's own block time, all hops or none,
+/// and only where a `pool_info` snapshot exists by then. The whole chunk's
+/// `(pool, block time)` points are resolved in one query.
 pub async fn apply_enriched(
     parsed: &[(TxHash, ParsedTx)],
     now: NaiveDateTime,
 ) -> Result<ApplyEnrichSummary> {
     let mut summary = ApplyEnrichSummary::default();
-    for (tx_hash, parsed) in parsed {
-        let mut trades = Vec::with_capacity(parsed.trades.len());
-        for trade in &parsed.trades {
-            let trade = match trade_store::lookup_hop_fees(trade.hops(), trade.block_time).await? {
-                Some(fees) => trade.clone().with_fees(fees).context("attach pool fees")?,
-                None => trade.clone(),
-            };
-            trades.push(trade);
-        }
-        match tx_store::record_enrichment(tx_hash, &trades, ReplacePolicy::OnlyIfPending, now)
-            .await?
-        {
-            EnrichmentOutcome::Recorded { trades: n } => {
-                summary.recorded += 1;
-                summary.trades += n;
+    for chunk in parsed.chunks(APPLY_CHUNK_TXS) {
+        let mut points: Vec<PoolFeePoint> = chunk
+            .iter()
+            .flat_map(|(_, p)| p.trades.iter())
+            .flat_map(|t| {
+                t.hops().iter().map(move |h| PoolFeePoint {
+                    pool_id: h.pool_id,
+                    at: t.block_time,
+                })
+            })
+            .collect();
+        points.sort_unstable_by_key(|p| (p.pool_id, p.at));
+        points.dedup();
+        let resolved = trade_store::lookup_pool_fees_at(&points).await?;
+        // Keyed by the Rust-side values that were bound, never by what the
+        // database echoed back (microsecond precision).
+        let fees: HashMap<PoolFeePoint, Option<u32>> =
+            points.iter().copied().zip(resolved).collect();
+        let mut items = Vec::with_capacity(chunk.len());
+        for (tx_hash, parsed) in chunk {
+            let mut trades = Vec::with_capacity(parsed.trades.len());
+            for trade in &parsed.trades {
+                let per_hop: Vec<Option<u32>> = trade
+                    .hops()
+                    .iter()
+                    .map(|h| {
+                        fees.get(&PoolFeePoint {
+                            pool_id: h.pool_id,
+                            at: trade.block_time,
+                        })
+                        .copied()
+                        .flatten()
+                    })
+                    .collect();
+                trades.push(match trade_store::all_hop_fees(&per_hop) {
+                    Some(f) => trade.clone().with_fees(f).context("attach pool fees")?,
+                    None => trade.clone(),
+                });
             }
-            EnrichmentOutcome::Skipped => summary.skipped_live += 1,
-            EnrichmentOutcome::NotInFrame => summary.not_in_frame += 1,
+            items.push((tx_hash.clone(), trades));
         }
+        let out = tx_store::record_enrichment_batch(&items, now).await?;
+        summary.recorded += out.recorded;
+        summary.trades += out.trades;
+        summary.skipped_live += out.skipped;
+        summary.not_in_frame += out.not_in_frame;
     }
     Ok(summary)
 }

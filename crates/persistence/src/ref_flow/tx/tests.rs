@@ -21,13 +21,8 @@ async fn seed(tx: u32, secs: i64) -> Result<()> {
     Ok(())
 }
 
-async fn record(
-    tx: u32,
-    trades: &[Trade],
-    policy: ReplacePolicy,
-    secs: i64,
-) -> Result<EnrichmentOutcome> {
-    record_enrichment(&tx_hash(tx), trades, policy, ts(secs)).await
+async fn record(tx: u32, trades: &[Trade], secs: i64) -> Result<EnrichmentOutcome> {
+    record_enrichment(&tx_hash(tx), trades, ts(secs)).await
 }
 
 #[tokio::test]
@@ -40,7 +35,7 @@ async fn record_enrichment_replaces_trades_and_marks_once() -> Result<()> {
         make_trade(2, 1, 20, chain_hops()),
     ];
     assert_eq!(
-        record(1, &first, ReplacePolicy::Always, 1000).await?,
+        record(1, &first, 1000).await?,
         EnrichmentOutcome::Recorded { trades: 2 }
     );
     let rec = get(&tx_hash(1)).await?.unwrap();
@@ -52,7 +47,7 @@ async fn record_enrichment_replaces_trades_and_marks_once() -> Result<()> {
     // keeps the first timestamp, trade_count follows the new write.
     let second = vec![make_trade(3, 1, 30, vec![hop(9, "x.near", "y.near")])];
     assert_eq!(
-        record(1, &second, ReplacePolicy::Always, 2000).await?,
+        record(1, &second, 2000).await?,
         EnrichmentOutcome::Recorded { trades: 1 }
     );
     let rec = get(&tx_hash(1)).await?.unwrap();
@@ -63,7 +58,7 @@ async fn record_enrichment_replaces_trades_and_marks_once() -> Result<()> {
 
     // Zero trades is a valid enrichment result.
     assert_eq!(
-        record(1, &[], ReplacePolicy::Always, 3000).await?,
+        record(1, &[], 3000).await?,
         EnrichmentOutcome::Recorded { trades: 0 }
     );
     let rec = get(&tx_hash(1)).await?.unwrap();
@@ -74,40 +69,13 @@ async fn record_enrichment_replaces_trades_and_marks_once() -> Result<()> {
 
 #[tokio::test]
 #[serial(ref_flow_db)]
-async fn only_if_pending_skips_already_enriched_transactions() -> Result<()> {
-    clean_tables().await?;
-    seed(1, 0).await?;
-    let live = vec![make_trade(1, 1, 10, chain_hops())];
-    assert_eq!(
-        record(1, &live, ReplacePolicy::OnlyIfPending, 100).await?,
-        EnrichmentOutcome::Recorded { trades: 1 }
-    );
-    let imported = vec![make_trade(2, 1, 10, chain_hops())];
-    assert_eq!(
-        record(1, &imported, ReplacePolicy::OnlyIfPending, 200).await?,
-        EnrichmentOutcome::Skipped
-    );
-    assert_eq!(
-        trade::get_by_tx_hash(&tx_hash(1)).await?,
-        live,
-        "live rows win"
-    );
-    assert_eq!(get(&tx_hash(1)).await?.unwrap().enriched_at, Some(ts(100)));
-    Ok(())
-}
-
-#[tokio::test]
-#[serial(ref_flow_db)]
 async fn record_enrichment_rejects_missing_frame_and_foreign_trades() -> Result<()> {
     clean_tables().await?;
-    assert_eq!(
-        record(5, &[], ReplacePolicy::Always, 0).await?,
-        EnrichmentOutcome::NotInFrame
-    );
+    assert_eq!(record(5, &[], 0).await?, EnrichmentOutcome::NotInFrame);
     seed(5, 0).await?;
     // A trade of another transaction must not be written under tx 5.
     let foreign = vec![make_trade(1, 6, 0, chain_hops())];
-    assert!(record(5, &foreign, ReplacePolicy::Always, 0).await.is_err());
+    assert!(record(5, &foreign, 0).await.is_err());
     assert!(!get(&tx_hash(5)).await?.unwrap().is_enriched());
     assert_eq!(count_txs().await?, 1);
     Ok(())
@@ -157,7 +125,7 @@ async fn pending_candidates_are_newest_first_filtered_and_limited() -> Result<()
     for (tx, secs) in [(1, 100), (2, 400), (3, 200), (4, 300)] {
         seed(tx, secs).await?;
     }
-    record(3, &[], ReplacePolicy::Always, 999).await?;
+    record(3, &[], 999).await?;
 
     let all = pending_candidates(ts(0), 10).await?;
     let order: Vec<u32> = all
@@ -186,20 +154,8 @@ async fn reset_enrichment_clears_range_and_deletes_trades() -> Result<()> {
     clean_tables().await?;
     seed(1, 100).await?;
     seed(2, 500).await?;
-    record(
-        1,
-        &[make_trade(1, 1, 100, chain_hops())],
-        ReplacePolicy::Always,
-        1,
-    )
-    .await?;
-    record(
-        2,
-        &[make_trade(2, 2, 500, chain_hops())],
-        ReplacePolicy::Always,
-        1,
-    )
-    .await?;
+    record(1, &[make_trade(1, 1, 100, chain_hops())], 1).await?;
+    record(2, &[make_trade(2, 2, 500, chain_hops())], 1).await?;
     mark_failed_attempt(&tx_hash(1), 10, ts(2)).await?;
 
     let reset = reset_enrichment(&TimeRange {
@@ -227,8 +183,8 @@ async fn coverage_by_bucket_counts_total_and_enriched() -> Result<()> {
     for (tx, secs) in [(1, 0), (2, 60), (3, 1700), (4, 1900)] {
         seed(tx, secs).await?;
     }
-    record(1, &[], ReplacePolicy::Always, 1).await?;
-    record(4, &[], ReplacePolicy::Always, 1).await?;
+    record(1, &[], 1).await?;
+    record(4, &[], 1).await?;
 
     let rows = coverage_by_bucket(
         &TimeRange {
@@ -261,5 +217,117 @@ async fn coverage_by_bucket_counts_total_and_enriched() -> Result<()> {
         .await
         .is_err()
     );
+    Ok(())
+}
+
+#[tokio::test]
+#[serial(ref_flow_db)]
+async fn batch_marks_pending_transactions_only_and_counts_the_rest() -> Result<()> {
+    clean_tables().await?;
+    seed(1, 0).await?; // pending
+    seed(2, 0).await?; // already enriched by the live collector
+    record(2, &[make_trade(20, 2, 5, chain_hops())], 50).await?;
+    let items = vec![
+        (
+            tx_hash(1),
+            vec![
+                make_trade(11, 1, 1, chain_hops()),
+                make_trade(12, 1, 2, chain_hops()),
+            ],
+        ),
+        (tx_hash(2), vec![make_trade(21, 2, 3, chain_hops())]),
+        (tx_hash(3), vec![]), // no frame row
+    ];
+    let out = record_enrichment_batch(&items, ts(100)).await?;
+    assert_eq!(
+        out,
+        EnrichmentBatchOutcome {
+            recorded: 1,
+            trades: 2,
+            skipped: 1,
+            not_in_frame: 1,
+        }
+    );
+    let one = get(&tx_hash(1)).await?.unwrap();
+    assert_eq!(one.enriched_at, Some(ts(100)));
+    assert_eq!(one.trade_count, Some(2));
+    // The live row kept its own trade and timestamp.
+    let two = get(&tx_hash(2)).await?.unwrap();
+    assert_eq!(two.enriched_at, Some(ts(50)));
+    assert_eq!(two.trade_count, Some(1));
+    let two_trades = crate::ref_flow::trade::get_by_tx_hash(&tx_hash(2)).await?;
+    assert_eq!(two_trades.len(), 1);
+    assert_eq!(two_trades[0].receipt_id, receipt_id(20));
+    // Re-running the same batch is a no-op for the recorded transaction.
+    let again = record_enrichment_batch(&items, ts(200)).await?;
+    assert_eq!(again.recorded, 0);
+    assert_eq!(again.skipped, 2);
+    assert_eq!(again.not_in_frame, 1);
+    assert_eq!(
+        crate::ref_flow::trade::get_by_tx_hash(&tx_hash(1))
+            .await?
+            .len(),
+        2
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[serial(ref_flow_db)]
+async fn batch_rejects_misattributed_trades_and_duplicates() -> Result<()> {
+    clean_tables().await?;
+    seed(1, 0).await?;
+    let stray = vec![(tx_hash(1), vec![make_trade(11, 2, 1, chain_hops())])];
+    assert!(record_enrichment_batch(&stray, ts(1)).await.is_err());
+    let twice = vec![(tx_hash(1), vec![]), (tx_hash(1), vec![])];
+    assert!(record_enrichment_batch(&twice, ts(1)).await.is_err());
+    assert!(get(&tx_hash(1)).await?.unwrap().enriched_at.is_none());
+    assert_eq!(
+        record_enrichment_batch(&[], ts(1)).await?,
+        EnrichmentBatchOutcome::default()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[serial(ref_flow_db)]
+async fn batch_replaces_stale_trades_and_accepts_empty_trade_lists() -> Result<()> {
+    clean_tables().await?;
+    seed(1, 0).await?;
+    seed(2, 0).await?;
+    // A trade row left under a still-pending transaction (no code path
+    // creates one today; the batch must not trust that forever).
+    let stale = crate::ref_flow::trade::to_new_db(&make_trade(90, 1, 1, chain_hops()))?;
+    let conn = crate::connection_pool::get_test_only().await?;
+    conn.interact(move |conn| {
+        crate::ref_flow::trade::insert_chunked_with(
+            &[stale],
+            crate::ref_flow::trade::NewDbRefTrade::CHUNK_ROWS,
+            conn,
+        )
+    })
+    .await
+    .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
+    let items = vec![
+        (tx_hash(1), vec![make_trade(11, 1, 2, chain_hops())]),
+        (tx_hash(2), vec![]), // pending, legitimately no trades
+    ];
+    let out = record_enrichment_batch(&items, ts(100)).await?;
+    assert_eq!(
+        out,
+        EnrichmentBatchOutcome {
+            recorded: 2,
+            trades: 1,
+            skipped: 0,
+            not_in_frame: 0,
+        }
+    );
+    let one = crate::ref_flow::trade::get_by_tx_hash(&tx_hash(1)).await?;
+    assert_eq!(one.len(), 1, "stale row replaced, not accumulated");
+    assert_eq!(one[0].receipt_id, receipt_id(11));
+    let two = get(&tx_hash(2)).await?.unwrap();
+    assert_eq!(two.enriched_at, Some(ts(100)));
+    assert_eq!(two.trade_count, Some(0));
     Ok(())
 }

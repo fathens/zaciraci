@@ -1,41 +1,20 @@
 use super::*;
+use chrono::Timelike;
+
+use crate::ref_flow::test_support::{
+    FEE_FIXTURE_POOL_ID_MIN, clear_pool_fee_snapshots, insert_pool_fee_snapshot,
+};
 
 /// Pool ids far above anything the other pool_info tests use.
-const POOL_A: u32 = 900_001;
-const POOL_B: u32 = 900_002;
+const POOL_A: u32 = FEE_FIXTURE_POOL_ID_MIN + 1;
+const POOL_B: u32 = FEE_FIXTURE_POOL_ID_MIN + 2;
 
 async fn clear_fee_pools() -> Result<()> {
-    let conn = connection_pool::get_test_only().await?;
-    conn.interact(|conn| {
-        diesel::delete(pool_info::table.filter(pool_info::pool_id.ge(900_000))).execute(conn)
-    })
-    .await
-    .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-    Ok(())
+    clear_pool_fee_snapshots().await
 }
 
-/// Insert one pool_info snapshot directly. `pool_info::batch_insert` is
-/// avoided on purpose: it spawns the retention DELETE over the whole
-/// (multi-million row) table, which makes these tests slow and flaky.
 async fn snapshot(pool_id: u32, fee: u32, at: NaiveDateTime) -> Result<()> {
-    let conn = connection_pool::get_test_only().await?;
-    conn.interact(move |conn| {
-        diesel::insert_into(pool_info::table)
-            .values((
-                pool_info::pool_id.eq(pool_id as i32),
-                pool_info::pool_kind.eq("SIMPLE_POOL"),
-                pool_info::token_account_ids.eq(serde_json::json!(["a.near", "b.near"])),
-                pool_info::amounts.eq(serde_json::json!(["1", "1"])),
-                pool_info::total_fee.eq(fee as i32),
-                pool_info::shares_total_supply.eq(serde_json::json!("1")),
-                pool_info::amp.eq(0i64),
-                pool_info::timestamp.eq(at),
-            ))
-            .execute(conn)
-    })
-    .await
-    .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
-    Ok(())
+    insert_pool_fee_snapshot(pool_id, fee, at).await
 }
 
 #[tokio::test]
@@ -75,4 +54,63 @@ async fn missing_pool_makes_the_whole_fee_list_unknown() -> Result<()> {
     snapshot(POOL_B, 7, now - chrono::TimeDelta::minutes(30)).await?;
     assert_eq!(lookup_hop_fees(&hops, now).await?, Some(vec![30, 7]));
     clear_fee_pools().await
+}
+
+fn point(pool_id: u32, at: NaiveDateTime) -> PoolFeePoint {
+    PoolFeePoint { pool_id, at }
+}
+
+#[tokio::test]
+#[serial(ref_flow_db, pool_info)]
+async fn pool_fees_at_resolve_each_point_at_its_own_instant_in_input_order() -> Result<()> {
+    clear_fee_pools().await?;
+    let now = chrono::Utc::now().naive_utc();
+    let h = |n: i64| now - chrono::TimeDelta::hours(n);
+    snapshot(POOL_A, 30, h(3)).await?;
+    snapshot(POOL_A, 40, h(1)).await?;
+    snapshot(POOL_B, 7, h(2)).await?;
+    let fees = lookup_pool_fees_at(&[
+        point(POOL_A, now),
+        point(POOL_A, h(2)), // between the two snapshots: the older fee
+        point(POOL_B, h(3)), // before POOL_B's first snapshot
+        point(900_003, now), // unknown pool
+        point(POOL_B, now),
+        point(POOL_A, h(1)), // exactly at a snapshot counts
+    ])
+    .await?;
+    assert_eq!(
+        fees,
+        vec![Some(40), Some(30), None, None, Some(7), Some(40)]
+    );
+    assert!(lookup_pool_fees_at(&[]).await?.is_empty());
+    clear_fee_pools().await
+}
+
+#[tokio::test]
+#[serial(ref_flow_db, pool_info)]
+async fn pool_fees_at_survive_nanosecond_block_times() -> Result<()> {
+    // Block times carry nanoseconds; `timestamp` has microseconds. The
+    // result is matched by ordinality, so the precision loss on the bound
+    // value must not lose the fee.
+    clear_fee_pools().await?;
+    let now = chrono::Utc::now().naive_utc();
+    snapshot(POOL_A, 30, now - chrono::TimeDelta::hours(1)).await?;
+    let ns = (now - chrono::TimeDelta::minutes(30))
+        .with_nanosecond(123_456_789)
+        .unwrap();
+    assert_eq!(ns.and_utc().timestamp_subsec_nanos(), 123_456_789);
+    assert_eq!(
+        lookup_pool_fees_at(&[point(POOL_A, ns)]).await?,
+        vec![Some(30)]
+    );
+    let hops = vec![hop(POOL_A, "a.near", "b.near")];
+    assert_eq!(lookup_hop_fees(&hops, ns).await?, Some(vec![30]));
+    clear_fee_pools().await
+}
+
+#[test]
+fn all_hop_fees_is_all_or_nothing() {
+    assert_eq!(all_hop_fees(&[Some(1), Some(2)]), Some(vec![1, 2]));
+    assert_eq!(all_hop_fees(&[Some(1), None]), None);
+    assert_eq!(all_hop_fees(&[]), Some(vec![]));
 }

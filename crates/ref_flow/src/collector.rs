@@ -28,7 +28,7 @@ use futures::stream::FuturesUnordered;
 use logging::*;
 use persistence::ref_flow::receipt::{RefReceipt, ingest_receipts};
 use persistence::ref_flow::runs::{RunRecord, RunStream};
-use persistence::ref_flow::tx::{self as tx_store, EnrichmentOutcome, PendingTx, ReplacePolicy};
+use persistence::ref_flow::tx::{self as tx_store, EnrichmentOutcome, PendingTx};
 use persistence::ref_flow::{self as rf, trade as trade_store};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -610,14 +610,12 @@ impl<A: NearBlocksApi + 'static, L: LedgerStore> Cycle<A, L> {
             };
             trades.push(trade);
         }
-        match tx_store::record_enrichment(tx_hash, &trades, ReplacePolicy::Always, Self::now())
-            .await?
-        {
+        match tx_store::record_enrichment(tx_hash, &trades, Self::now()).await? {
             EnrichmentOutcome::Recorded { trades: n } => {
                 summary.recorded += 1;
                 summary.trades += u32::try_from(n).unwrap_or(u32::MAX);
             }
-            EnrichmentOutcome::Skipped | EnrichmentOutcome::NotInFrame => {
+            EnrichmentOutcome::NotInFrame => {
                 // Retention removed the frame row while we were fetching.
                 debug!(self.log, "enrichment not recorded: frame row gone");
             }

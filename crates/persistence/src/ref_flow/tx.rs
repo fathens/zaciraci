@@ -16,7 +16,7 @@ use chrono::NaiveDateTime;
 use common::types::{TimeRange, TxHash};
 use dex::Trade;
 use diesel::prelude::*;
-use diesel::sql_types::{BigInt, Int4, Timestamp};
+use diesel::sql_types::{Array, BigInt, Int4, SmallInt, Timestamp, VarChar};
 use logging::*;
 
 /// One frame row.
@@ -119,24 +119,10 @@ pub async fn pending_candidates(not_before: NaiveDateTime, limit: i64) -> Result
         .collect()
 }
 
-/// Whether [`record_enrichment`] may overwrite a transaction that is
-/// already enriched.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReplacePolicy {
-    /// Replace unconditionally (collector re-fetch, parser upgrade).
-    Always,
-    /// Write only if the transaction is still pending (importer: rows
-    /// written by the live collector win).
-    OnlyIfPending,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EnrichmentOutcome {
     /// Trades written and the frame row marked enriched.
     Recorded { trades: usize },
-    /// The transaction was already enriched and the policy forbids
-    /// replacing it. Nothing was written.
-    Skipped,
     /// No frame row exists for the transaction. Nothing was written.
     NotInFrame,
 }
@@ -150,10 +136,13 @@ diesel::define_sql_function! {
 /// first, `enriched_at` is set only the first time, and `trade_count`
 /// always reflects this write. An empty `trades` slice is valid and marks
 /// the transaction enriched with zero trades.
+///
+/// This is the live collector's path and replaces unconditionally (re-fetch
+/// after a parser upgrade included). The importer, whose rows must never
+/// override the collector's, uses [`record_enrichment_batch`] instead.
 pub async fn record_enrichment(
     tx_hash: &TxHash,
     trades: &[Trade],
-    policy: ReplacePolicy,
     now: NaiveDateTime,
 ) -> Result<EnrichmentOutcome> {
     if let Some(stray) = trades.iter().find(|t| &t.tx_hash != tx_hash) {
@@ -176,29 +165,133 @@ pub async fn record_enrichment(
         .interact(move |conn| {
             conn.transaction::<_, diesel::result::Error, _>(|conn| {
                 let target = ref_flow_txs::table.filter(ref_flow_txs::tx_hash.eq(&key));
-                let update = diesel::update(target).set((
-                    ref_flow_txs::enriched_at
-                        .eq(coalesce(ref_flow_txs::enriched_at, now).nullable()),
-                    ref_flow_txs::trade_count.eq(Some(trade_count)),
-                ));
-                let updated = match policy {
-                    ReplacePolicy::Always => update.execute(conn)?,
-                    ReplacePolicy::OnlyIfPending => update
-                        .filter(ref_flow_txs::enriched_at.is_null())
-                        .execute(conn)?,
-                };
+                let updated = diesel::update(target)
+                    .set((
+                        ref_flow_txs::enriched_at
+                            .eq(coalesce(ref_flow_txs::enriched_at, now).nullable()),
+                        ref_flow_txs::trade_count.eq(Some(trade_count)),
+                    ))
+                    .execute(conn)?;
                 if updated == 0 {
-                    let exists =
-                        diesel::select(diesel::dsl::exists(target)).get_result::<bool>(conn)?;
-                    return Ok(if exists {
-                        EnrichmentOutcome::Skipped
-                    } else {
-                        EnrichmentOutcome::NotInFrame
-                    });
+                    return Ok(EnrichmentOutcome::NotInFrame);
                 }
                 trade::delete_by_tx_hash(&key, conn)?;
                 let inserted = trade::insert_chunked_with(&rows, NewDbRefTrade::CHUNK_ROWS, conn)?;
                 Ok(EnrichmentOutcome::Recorded { trades: inserted })
+            })
+        })
+        .await
+        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+    Ok(outcome)
+}
+
+/// Result of [`record_enrichment_batch`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EnrichmentBatchOutcome {
+    /// Transactions marked enriched by this call.
+    pub recorded: usize,
+    /// Trade rows inserted for them.
+    pub trades: usize,
+    /// Transactions that were already enriched (left untouched).
+    pub skipped: usize,
+    /// Transactions with no frame row.
+    pub not_in_frame: usize,
+}
+
+#[derive(QueryableByName)]
+struct HashRow {
+    #[diesel(sql_type = VarChar)]
+    tx_hash: String,
+}
+
+/// The importer's path: record many transactions in one DB transaction and
+/// a handful of statements, writing **only transactions still pending** so
+/// that rows produced by the live collector always win. Pending
+/// transactions are marked and get their trades (replacing any stale
+/// ones); enriched ones are skipped; unknown ones are counted. One round
+/// trip per transaction, as the live path does, is far too slow through
+/// the proxy for this use.
+pub async fn record_enrichment_batch(
+    items: &[(TxHash, Vec<Trade>)],
+    now: NaiveDateTime,
+) -> Result<EnrichmentBatchOutcome> {
+    if items.is_empty() {
+        return Ok(EnrichmentBatchOutcome::default());
+    }
+    let mut hashes = Vec::with_capacity(items.len());
+    let mut counts = Vec::with_capacity(items.len());
+    let mut rows_by_tx: std::collections::HashMap<String, Vec<NewDbRefTrade>> =
+        std::collections::HashMap::with_capacity(items.len());
+    for (tx_hash, trades) in items {
+        if let Some(stray) = trades.iter().find(|t| &t.tx_hash != tx_hash) {
+            return Err(anyhow!(
+                "trade {} belongs to transaction {}, not {}",
+                stray.receipt_id,
+                stray.tx_hash,
+                tx_hash
+            ));
+        }
+        let rows = trades
+            .iter()
+            .map(trade::to_new_db)
+            .collect::<Result<Vec<NewDbRefTrade>>>()?;
+        counts.push(
+            i16::try_from(rows.len())
+                .with_context(|| format!("{} trades exceed the i16 trade_count", rows.len()))?,
+        );
+        let key = tx_hash.as_str().to_owned();
+        if rows_by_tx.insert(key.clone(), rows).is_some() {
+            return Err(anyhow!("transaction {tx_hash} appears twice in the batch"));
+        }
+        hashes.push(key);
+    }
+    let total = hashes.len();
+    let conn = connection_pool::get().await?;
+    let outcome = conn
+        .interact(move |conn| {
+            conn.transaction::<_, diesel::result::Error, _>(|conn| {
+                // Mark first, count second: under READ COMMITTED each
+                // statement sees its own snapshot, so a frame row committed
+                // by the live collector between the two would otherwise be
+                // marked but not known and the subtraction below would
+                // underflow. After the UPDATE, known always contains marked.
+                let marked: Vec<HashRow> = diesel::sql_query(
+                    "UPDATE ref_flow_txs AS t \
+                     SET enriched_at = $1, trade_count = v.n \
+                     FROM unnest($2::varchar[], $3::smallint[]) AS v(tx_hash, n) \
+                     WHERE t.tx_hash = v.tx_hash AND t.enriched_at IS NULL \
+                     RETURNING t.tx_hash",
+                )
+                .bind::<Timestamp, _>(now)
+                .bind::<Array<VarChar>, _>(&hashes)
+                .bind::<Array<SmallInt>, _>(&counts)
+                .load(conn)?;
+                let known: i64 = ref_flow_txs::table
+                    .filter(ref_flow_txs::tx_hash.eq_any(&hashes))
+                    .count()
+                    .get_result(conn)?;
+                let known = usize::try_from(known).unwrap_or(usize::MAX);
+                let marked_hashes: Vec<&str> = marked.iter().map(|m| m.tx_hash.as_str()).collect();
+                let mut rows: Vec<NewDbRefTrade> = Vec::new();
+                for m in &marked {
+                    if let Some(r) = rows_by_tx.remove(&m.tx_hash) {
+                        rows.extend(r);
+                    }
+                }
+                // Same contract as record_enrichment: this write owns the
+                // transaction's trades, so stale rows (if any) go first and
+                // trade_count can never disagree with what is stored.
+                diesel::delete(
+                    ref_flow_trades::table.filter(ref_flow_trades::tx_hash.eq_any(&marked_hashes)),
+                )
+                .execute(conn)?;
+                let inserted = trade::insert_chunked_with(&rows, NewDbRefTrade::CHUNK_ROWS, conn)?;
+                Ok(EnrichmentBatchOutcome {
+                    recorded: marked.len(),
+                    trades: inserted,
+                    skipped: known.saturating_sub(marked.len()),
+                    not_in_frame: total.saturating_sub(known),
+                })
             })
         })
         .await
