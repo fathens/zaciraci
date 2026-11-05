@@ -1,8 +1,9 @@
 //! Global send limiter shared by every worker: at most `per_minute` sends
 //! in any 60-second window (the provider's per-minute cap) and at least
 //! `min_interval` between consecutive sends (the provider's burst cap,
-//! measured at ~10 req/s). Uses `tokio::time::Instant` so tests can drive
-//! it with `tokio::time::pause`.
+//! measured at ~5 req/s on 2026-11-05: 40 per 10 s pass, 56 per 10 s are
+//! refused). Uses `tokio::time::Instant` so tests can drive it with
+//! `tokio::time::pause`.
 
 use std::collections::VecDeque;
 use std::time::Duration;

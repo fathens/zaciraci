@@ -71,6 +71,13 @@ pub struct PlanLimits {
 /// NearBlocks Standard (2026-09-19): provider 500/min, 187,500/day,
 /// 3,750,000/month. `day_max` 113k is as close to 3.6M/31 as the enrich
 /// wall allows.
+///
+/// `rate_per_sec` is 4, one below the burst limit the provider actually
+/// enforces: probed 2026-11-05, 40 requests per 10 s always pass and 56
+/// per 10 s are refused with 429. The Python collector configured 5/s
+/// but was latency-bound to ~3.3/s; this client reaches its configured
+/// rate, and at exactly 5/s half of the live cycles ended in a 429 and a
+/// 55-minute cooldown. The daily budget needs only ~1.3/s on average.
 pub const STANDARD: PlanLimits = PlanLimits {
     day_max: 113_000,
     month: 3_600_000,
@@ -81,7 +88,7 @@ pub const STANDARD: PlanLimits = PlanLimits {
     enr_wall_margin: 40_000,
     workers: 4,
     rate_per_min: 420,
-    rate_per_sec: 5,
+    rate_per_sec: 4,
     provider_day_hard: 187_500,
 };
 

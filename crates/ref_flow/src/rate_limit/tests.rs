@@ -63,5 +63,5 @@ async fn window_slides_rather_than_resets() {
 fn plan_limiter_uses_the_plan_rates() {
     let l = RateLimiter::for_plan(&crate::budget::STANDARD);
     assert_eq!(l.per_minute, 420);
-    assert_eq!(l.min_interval, Duration::from_millis(200));
+    assert_eq!(l.min_interval, Duration::from_millis(250));
 }
