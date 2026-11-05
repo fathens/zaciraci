@@ -331,10 +331,22 @@ pub async fn lookup_hop_fees(hops: &[Hop], block_time: NaiveDateTime) -> Result<
 /// pool id. Pools without a snapshot by then are absent. One query for
 /// the whole set: the importer resolves the fees of a chunk of trades
 /// with it instead of one [`lookup_hop_fees`] round trip per trade.
+///
+/// Written as one `LIMIT 1` sub-select per pool: that is an index
+/// backward scan on `(pool_id, timestamp)` per pool, while `DISTINCT ON`
+/// over the same filter read every snapshot of every pool (seconds for
+/// 50 pools against a 25M-row table).
 pub async fn lookup_pool_fees_at(
     pool_ids: &[u32],
     at: NaiveDateTime,
 ) -> Result<std::collections::HashMap<u32, u32>> {
+    #[derive(QueryableByName)]
+    struct FeeRow {
+        #[diesel(sql_type = diesel::sql_types::Integer)]
+        pool_id: i32,
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Integer>)]
+        total_fee: Option<i32>,
+    }
     let ids = pool_ids
         .iter()
         .map(|&p| i32::try_from(p).with_context(|| format!("pool_id {p} exceeds i32")))
@@ -345,17 +357,21 @@ pub async fn lookup_pool_fees_at(
     let conn = connection_pool::get().await?;
     let rows = conn
         .interact(move |conn| {
-            pool_info::table
-                .filter(pool_info::pool_id.eq_any(&ids))
-                .filter(pool_info::timestamp.le(at))
-                .distinct_on(pool_info::pool_id)
-                .order((pool_info::pool_id, pool_info::timestamp.desc()))
-                .select((pool_info::pool_id, pool_info::total_fee))
-                .load::<(i32, i32)>(conn)
+            diesel::sql_query(
+                "SELECT p.pool_id, \
+                        (SELECT i.total_fee FROM pool_info AS i \
+                          WHERE i.pool_id = p.pool_id AND i.timestamp <= $2 \
+                          ORDER BY i.timestamp DESC LIMIT 1) AS total_fee \
+                   FROM unnest($1::integer[]) AS p(pool_id)",
+            )
+            .bind::<diesel::sql_types::Array<diesel::sql_types::Integer>, _>(&ids)
+            .bind::<diesel::sql_types::Timestamp, _>(at)
+            .load::<FeeRow>(conn)
         })
         .await
         .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
     rows.into_iter()
+        .filter_map(|r| r.total_fee.map(|fee| (r.pool_id, fee)))
         .map(|(pool_id, fee)| {
             Ok((
                 u32::try_from(pool_id).with_context(|| format!("negative pool_id {pool_id}"))?,
