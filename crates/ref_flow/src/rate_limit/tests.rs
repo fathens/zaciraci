@@ -65,3 +65,22 @@ fn plan_limiter_uses_the_plan_rates() {
     assert_eq!(l.per_minute, 420);
     assert_eq!(l.min_interval, Duration::from_millis(250));
 }
+
+#[tokio::test(start_paused = true)]
+async fn pause_holds_every_acquire_until_the_deadline() {
+    let limiter = RateLimiter::new(1_000, Duration::ZERO);
+    let start = Instant::now();
+    limiter.acquire().await;
+    limiter.pause_for(Duration::from_secs(10)).await;
+    // A shorter pause never shortens an existing one.
+    limiter.pause_for(Duration::from_secs(2)).await;
+    limiter.acquire().await;
+    let elapsed = Instant::now() - start;
+    assert!(
+        elapsed >= Duration::from_secs(10) && elapsed < Duration::from_secs(11),
+        "{elapsed:?}"
+    );
+    // Once the deadline passed, sends flow again at once.
+    limiter.acquire().await;
+    assert!(Instant::now() - start < Duration::from_secs(11));
+}

@@ -349,3 +349,49 @@ fn debug_output_does_not_contain_the_key() {
     assert!(!text.contains("super-secret-key"));
     assert!(text.contains("api.nearblocks.io"));
 }
+
+#[tokio::test]
+async fn a_429_with_retry_after_pauses_the_shared_limiter() {
+    let mut server = Server::new_async().await;
+    let path = format!("/v3/txns/{TX}/receipts");
+    let first = server
+        .mock("GET", path.as_str())
+        .with_status(429)
+        .with_header("Retry-After", "1")
+        .expect(1)
+        .create_async()
+        .await;
+    let second = server
+        .mock("GET", path.as_str())
+        .with_body(r#"{"data":[]}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let limiter = Arc::new(RateLimiter::new(10_000, Duration::ZERO));
+    let c = NearBlocksClient::new(
+        &server.url(),
+        &SecretString::new("k".to_owned()),
+        Arc::clone(&limiter),
+        fast_delays(),
+    )
+    .unwrap();
+    let started = std::time::Instant::now();
+    c.txn_receipts(&TxHash::new(TX).unwrap(), &credits(5))
+        .await
+        .unwrap();
+    first.assert_async().await;
+    second.assert_async().await;
+    assert!(
+        started.elapsed() >= Duration::from_millis(900),
+        "Retry-After outranks the short default delay: {:?}",
+        started.elapsed()
+    );
+    // Another worker going through the same limiter right after the 429
+    // would also have waited: the pause is global, not per call.
+    let t = std::time::Instant::now();
+    limiter.acquire().await;
+    assert!(
+        t.elapsed() < Duration::from_millis(200),
+        "pause has lapsed by now"
+    );
+}

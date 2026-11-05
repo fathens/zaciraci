@@ -33,6 +33,8 @@ pub const LIST_LIMIT: u32 = 100;
 pub const MAX_BODY_BYTES: u64 = 8 * 1024 * 1024;
 pub const MAX_CURSOR_LEN: usize = 512;
 pub const MAX_ATTEMPTS: u32 = 4;
+/// Longest pause honoured from a `Retry-After` header.
+pub const MAX_RETRY_AFTER: Duration = Duration::from_secs(120);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -182,7 +184,7 @@ impl NearBlocksClient {
             self.limiter.acquire().await;
             match self.send_once(credit, url.clone()).await {
                 Ok(value) => return Ok(value),
-                Err(Attempt::Status(StatusCode::TOO_MANY_REQUESTS)) => {
+                Err(Attempt::RateLimited(retry_after)) => {
                     // The single 429 retry counts against MAX_ATTEMPTS too:
                     // one call never takes more than MAX_ATTEMPTS credits,
                     // which is what the collector reserves per request.
@@ -190,7 +192,14 @@ impl NearBlocksClient {
                         return Err(FetchError::RateLimited);
                     }
                     got_429 = true;
-                    tokio::time::sleep(self.delays.after_429).await;
+                    // Back off for what the provider asked (at least our own
+                    // delay) and hold the other workers too, or the retry
+                    // lands in the same refused window.
+                    let pause = retry_after
+                        .unwrap_or(self.delays.after_429)
+                        .clamp(self.delays.after_429, MAX_RETRY_AFTER);
+                    self.limiter.pause_for(pause).await;
+                    tokio::time::sleep(pause).await;
                 }
                 Err(Attempt::Status(status)) => return Err(FetchError::Http(status)),
                 Err(Attempt::Network(e)) => {
@@ -215,6 +224,9 @@ impl NearBlocksClient {
             .await
             .map_err(|e| Attempt::Network(e.without_url().to_string()))?;
         let status = response.status();
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            return Err(Attempt::RateLimited(retry_after(&response)));
+        }
         if !status.is_success() {
             return Err(Attempt::Status(status));
         }
@@ -224,9 +236,25 @@ impl NearBlocksClient {
 }
 
 enum Attempt {
+    /// 429 with the `Retry-After` delay, when the provider sent one.
+    RateLimited(Option<Duration>),
     Status(StatusCode),
     Network(String),
     Fatal(FetchError),
+}
+
+/// `Retry-After` in seconds (the delay form; the HTTP-date form is rare
+/// and ignored). Absent or unparsable: `None`.
+fn retry_after(response: &reqwest::Response) -> Option<Duration> {
+    response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .map(Duration::from_secs)
 }
 
 /// Stream the body into memory, aborting once it exceeds `cap` (guards

@@ -18,6 +18,8 @@ const WINDOW_SLACK: Duration = Duration::from_millis(50);
 struct State {
     sends: VecDeque<Instant>,
     last_send: Option<Instant>,
+    /// No send before this instant (set when the provider answered 429).
+    blocked_until: Option<Instant>,
 }
 
 #[derive(Debug)]
@@ -35,6 +37,7 @@ impl RateLimiter {
             state: Mutex::new(State {
                 sends: VecDeque::new(),
                 last_send: None,
+                blocked_until: None,
             }),
         }
     }
@@ -43,6 +46,16 @@ impl RateLimiter {
     pub fn for_plan(plan: &crate::budget::PlanLimits) -> Self {
         let min_interval = Duration::from_secs_f64(1.0 / f64::from(plan.rate_per_sec.max(1)));
         Self::new(plan.rate_per_min, min_interval)
+    }
+
+    /// Hold every worker back for `pause` from now. Called when the
+    /// provider answers 429: a lone retry after a sleep would be refused
+    /// again if the other workers kept sending meanwhile, and a second 429
+    /// costs the whole cycle.
+    pub async fn pause_for(&self, pause: Duration) {
+        let mut st = self.state.lock().await;
+        let until = Instant::now() + pause;
+        st.blocked_until = Some(st.blocked_until.map_or(until, |b| b.max(until)));
     }
 
     /// Wait until a send is allowed, then record it. The lock is only held
@@ -71,7 +84,11 @@ impl RateLimiter {
                 } else {
                     Duration::ZERO
                 };
-                let wait = interval_wait.max(window_wait);
+                let block_wait = st
+                    .blocked_until
+                    .map(|b| b.saturating_duration_since(now))
+                    .unwrap_or(Duration::ZERO);
+                let wait = interval_wait.max(window_wait).max(block_wait);
                 if wait.is_zero() {
                     st.sends.push_back(now);
                     st.last_send = Some(now);
