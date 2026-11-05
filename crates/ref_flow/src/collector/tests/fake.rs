@@ -28,6 +28,7 @@ pub struct FakeApi {
     pub list_errors: Mutex<HashMap<String, TxAnswer>>,
     pub list_calls: Mutex<Vec<ListFrom>>,
     pub txn_calls: Mutex<Vec<String>>,
+    pub http429: std::sync::atomic::AtomicU64,
 }
 
 impl FakeApi {
@@ -84,6 +85,10 @@ impl NearBlocksApi for FakeApi {
                 .get(c)
                 .and_then(answer_error)
         {
+            if matches!(err, FetchError::RateLimited) {
+                self.http429
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             return Err(err);
         }
         let page = match from {
@@ -115,9 +120,19 @@ impl NearBlocksApi for FakeApi {
             .push(tx_hash.as_str().to_owned());
         match self.txns.lock().unwrap().get(tx_hash.as_str()) {
             Some(TxAnswer::Receipts(v)) => Ok(v.clone()),
-            Some(other) => Err(answer_error(other).expect("non-receipt answer is an error")),
+            Some(other) => {
+                if matches!(other, TxAnswer::RateLimited) {
+                    self.http429
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                Err(answer_error(other).expect("non-receipt answer is an error"))
+            }
             None => Ok(vec![]),
         }
+    }
+
+    fn http429_total(&self) -> u64 {
+        self.http429.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
