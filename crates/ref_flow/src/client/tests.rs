@@ -375,6 +375,15 @@ async fn a_429_with_retry_after_pauses_the_shared_limiter() {
         fast_delays(),
     )
     .unwrap();
+    // Another worker sharing the limiter: it starts sending while the
+    // first call is being refused and must be held by the same pause.
+    let other = Arc::clone(&limiter);
+    let other_worker = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(300)).await; // after the 429 landed
+        let t = std::time::Instant::now();
+        other.acquire().await;
+        t.elapsed()
+    });
     let started = std::time::Instant::now();
     c.txn_receipts(&TxHash::new(TX).unwrap(), &credits(5))
         .await
@@ -386,8 +395,13 @@ async fn a_429_with_retry_after_pauses_the_shared_limiter() {
         "Retry-After outranks the short default delay: {:?}",
         started.elapsed()
     );
-    // Another worker going through the same limiter right after the 429
-    // would also have waited: the pause is global, not per call.
+    assert_eq!(c.http429_total(), 1, "the absorbed 429 is still counted");
+    let held = other_worker.await.unwrap();
+    assert!(
+        held >= Duration::from_millis(500),
+        "the pause is global: the other worker waited only {held:?}"
+    );
+    // Once the deadline passed, sends flow again at once.
     let t = std::time::Instant::now();
     limiter.acquire().await;
     assert!(

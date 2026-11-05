@@ -205,9 +205,10 @@ impl NearBlocksClient {
                     // Back off for what the provider asked (at least our own
                     // delay) and hold the other workers too, or the retry
                     // lands in the same refused window.
+                    // The retry itself waits in `acquire()` at the top of the
+                    // loop, like every other worker: one wait mechanism.
                     let pause = backoff_after_429(retry_after, self.delays.after_429);
                     self.limiter.pause_for(pause).await;
-                    tokio::time::sleep(pause).await;
                 }
                 Err(Attempt::Status(status)) => return Err(FetchError::Http(status)),
                 Err(Attempt::Network(e)) => {
