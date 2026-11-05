@@ -269,10 +269,11 @@ pub async fn record_enrichment_batch(
     let outcome = conn
         .interact(move |conn| {
             conn.transaction::<_, diesel::result::Error, _>(|conn| {
-                let known: Vec<String> = ref_flow_txs::table
-                    .filter(ref_flow_txs::tx_hash.eq_any(&hashes))
-                    .select(ref_flow_txs::tx_hash)
-                    .load(conn)?;
+                // Mark first, count second: under READ COMMITTED each
+                // statement sees its own snapshot, so a frame row committed
+                // by the live collector between the two would otherwise be
+                // marked but not known and the subtraction below would
+                // underflow. After the UPDATE, known always contains marked.
                 let marked: Vec<HashRow> = diesel::sql_query(
                     "UPDATE ref_flow_txs AS t \
                      SET enriched_at = $1, trade_count = v.n \
@@ -284,18 +285,31 @@ pub async fn record_enrichment_batch(
                 .bind::<Array<VarChar>, _>(&hashes)
                 .bind::<Array<SmallInt>, _>(&counts)
                 .load(conn)?;
+                let known: i64 = ref_flow_txs::table
+                    .filter(ref_flow_txs::tx_hash.eq_any(&hashes))
+                    .count()
+                    .get_result(conn)?;
+                let known = usize::try_from(known).unwrap_or(usize::MAX);
+                let marked_hashes: Vec<&str> = marked.iter().map(|m| m.tx_hash.as_str()).collect();
                 let mut rows: Vec<NewDbRefTrade> = Vec::new();
                 for m in &marked {
                     if let Some(r) = rows_by_tx.remove(&m.tx_hash) {
                         rows.extend(r);
                     }
                 }
+                // Same contract as record_enrichment: this write owns the
+                // transaction's trades, so stale rows (if any) go first and
+                // trade_count can never disagree with what is stored.
+                diesel::delete(
+                    ref_flow_trades::table.filter(ref_flow_trades::tx_hash.eq_any(&marked_hashes)),
+                )
+                .execute(conn)?;
                 let inserted = trade::insert_chunked_with(&rows, NewDbRefTrade::CHUNK_ROWS, conn)?;
                 Ok(BatchOutcome {
                     recorded: marked.len(),
                     trades: inserted,
-                    skipped: known.len() - marked.len(),
-                    not_in_frame: total - known.len(),
+                    skipped: known.saturating_sub(marked.len()),
+                    not_in_frame: total.saturating_sub(known),
                 })
             })
         })

@@ -338,3 +338,46 @@ async fn batch_rejects_misattributed_trades_and_duplicates() -> Result<()> {
     );
     Ok(())
 }
+
+#[tokio::test]
+#[serial(ref_flow_db)]
+async fn batch_replaces_stale_trades_and_accepts_empty_trade_lists() -> Result<()> {
+    clean_tables().await?;
+    seed(1, 0).await?;
+    seed(2, 0).await?;
+    // A trade row left under a still-pending transaction (no code path
+    // creates one today; the batch must not trust that forever).
+    let stale = crate::ref_flow::trade::to_new_db(&make_trade(90, 1, 1, chain_hops()))?;
+    let conn = crate::connection_pool::get_test_only().await?;
+    conn.interact(move |conn| {
+        crate::ref_flow::trade::insert_chunked_with(
+            &[stale],
+            crate::ref_flow::trade::NewDbRefTrade::CHUNK_ROWS,
+            conn,
+        )
+    })
+    .await
+    .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+
+    let items = vec![
+        (tx_hash(1), vec![make_trade(11, 1, 2, chain_hops())]),
+        (tx_hash(2), vec![]), // pending, legitimately no trades
+    ];
+    let out = record_enrichment_batch(&items, ts(100)).await?;
+    assert_eq!(
+        out,
+        BatchOutcome {
+            recorded: 2,
+            trades: 1,
+            skipped: 0,
+            not_in_frame: 0,
+        }
+    );
+    let one = crate::ref_flow::trade::get_by_tx_hash(&tx_hash(1)).await?;
+    assert_eq!(one.len(), 1, "stale row replaced, not accumulated");
+    assert_eq!(one[0].receipt_id, receipt_id(11));
+    let two = get(&tx_hash(2)).await?.unwrap();
+    assert_eq!(two.enriched_at, Some(ts(100)));
+    assert_eq!(two.trade_count, Some(0));
+    Ok(())
+}
