@@ -22,7 +22,7 @@ use dex::Trade;
 use flate2::read::MultiGzDecoder;
 use persistence::ref_flow::receipt::{RefReceipt, ingest_receipts};
 use persistence::ref_flow::trade as trade_store;
-use persistence::ref_flow::tx::{self as tx_store, EnrichmentOutcome, ReplacePolicy};
+use persistence::ref_flow::tx as tx_store;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::io::{BufRead, BufReader, Read};
@@ -329,30 +329,54 @@ pub struct ApplyEnrichSummary {
 
 /// Record parsed trades for transactions still pending. Pool fees are
 /// attached from `pool_info` when a snapshot exists.
+/// Transactions per DB transaction when applying enrichment data.
+pub const APPLY_CHUNK_TXS: usize = 500;
+
 pub async fn apply_enriched(
     parsed: &[(TxHash, ParsedTx)],
     now: NaiveDateTime,
 ) -> Result<ApplyEnrichSummary> {
     let mut summary = ApplyEnrichSummary::default();
-    for (tx_hash, parsed) in parsed {
-        let mut trades = Vec::with_capacity(parsed.trades.len());
-        for trade in &parsed.trades {
-            let trade = match trade_store::lookup_hop_fees(trade.hops(), trade.block_time).await? {
-                Some(fees) => trade.clone().with_fees(fees).context("attach pool fees")?,
-                None => trade.clone(),
-            };
-            trades.push(trade);
-        }
-        match tx_store::record_enrichment(tx_hash, &trades, ReplacePolicy::OnlyIfPending, now)
-            .await?
-        {
-            EnrichmentOutcome::Recorded { trades: n } => {
-                summary.recorded += 1;
-                summary.trades += n;
+    for chunk in parsed.chunks(APPLY_CHUNK_TXS) {
+        // Pool fees for the whole chunk in one query, taken at the newest
+        // trade time of the chunk: Ref pool fees are fixed at creation, so
+        // the small time spread inside a chunk cannot change the answer.
+        let mut pool_ids: Vec<u32> = chunk
+            .iter()
+            .flat_map(|(_, p)| p.trades.iter())
+            .flat_map(|t| t.hops().iter().map(|h| h.pool_id))
+            .collect();
+        pool_ids.sort_unstable();
+        pool_ids.dedup();
+        let at = chunk
+            .iter()
+            .flat_map(|(_, p)| p.trades.iter().map(|t| t.block_time))
+            .max();
+        let fees = match at {
+            Some(at) => trade_store::lookup_pool_fees_at(&pool_ids, at).await?,
+            None => Default::default(),
+        };
+        let mut items = Vec::with_capacity(chunk.len());
+        for (tx_hash, parsed) in chunk {
+            let mut trades = Vec::with_capacity(parsed.trades.len());
+            for trade in &parsed.trades {
+                let hop_fees: Option<Vec<u32>> = trade
+                    .hops()
+                    .iter()
+                    .map(|h| fees.get(&h.pool_id).copied())
+                    .collect();
+                trades.push(match hop_fees {
+                    Some(f) => trade.clone().with_fees(f).context("attach pool fees")?,
+                    None => trade.clone(),
+                });
             }
-            EnrichmentOutcome::Skipped => summary.skipped_live += 1,
-            EnrichmentOutcome::NotInFrame => summary.not_in_frame += 1,
+            items.push((tx_hash.clone(), trades));
         }
+        let out = tx_store::record_enrichment_batch(&items, now).await?;
+        summary.recorded += out.recorded;
+        summary.trades += out.trades;
+        summary.skipped_live += out.skipped;
+        summary.not_in_frame += out.not_in_frame;
     }
     Ok(summary)
 }
