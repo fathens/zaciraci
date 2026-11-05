@@ -327,5 +327,44 @@ pub async fn lookup_hop_fees(hops: &[Hop], block_time: NaiveDateTime) -> Result<
     .transpose()
 }
 
+/// Latest `total_fee` of each of `pool_ids` at or before `at`, keyed by
+/// pool id. Pools without a snapshot by then are absent. One query for
+/// the whole set: the importer resolves the fees of a chunk of trades
+/// with it instead of one [`lookup_hop_fees`] round trip per trade.
+pub async fn lookup_pool_fees_at(
+    pool_ids: &[u32],
+    at: NaiveDateTime,
+) -> Result<std::collections::HashMap<u32, u32>> {
+    let ids = pool_ids
+        .iter()
+        .map(|&p| i32::try_from(p).with_context(|| format!("pool_id {p} exceeds i32")))
+        .collect::<Result<Vec<i32>>>()?;
+    if ids.is_empty() {
+        return Ok(Default::default());
+    }
+    let conn = connection_pool::get().await?;
+    let rows = conn
+        .interact(move |conn| {
+            pool_info::table
+                .filter(pool_info::pool_id.eq_any(&ids))
+                .filter(pool_info::timestamp.le(at))
+                .distinct_on(pool_info::pool_id)
+                .order((pool_info::pool_id, pool_info::timestamp.desc()))
+                .select((pool_info::pool_id, pool_info::total_fee))
+                .load::<(i32, i32)>(conn)
+        })
+        .await
+        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+    rows.into_iter()
+        .map(|(pool_id, fee)| {
+            Ok((
+                u32::try_from(pool_id).with_context(|| format!("negative pool_id {pool_id}"))?,
+                u32::try_from(fee)
+                    .with_context(|| format!("negative total_fee {fee} in pool_info"))?,
+            ))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 pub(crate) mod tests;

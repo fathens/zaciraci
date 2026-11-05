@@ -16,7 +16,7 @@ use chrono::NaiveDateTime;
 use common::types::{TimeRange, TxHash};
 use dex::Trade;
 use diesel::prelude::*;
-use diesel::sql_types::{BigInt, Int4, Timestamp};
+use diesel::sql_types::{Array, BigInt, Int4, SmallInt, Timestamp, VarChar};
 use logging::*;
 
 /// One frame row.
@@ -199,6 +199,104 @@ pub async fn record_enrichment(
                 trade::delete_by_tx_hash(&key, conn)?;
                 let inserted = trade::insert_chunked_with(&rows, NewDbRefTrade::CHUNK_ROWS, conn)?;
                 Ok(EnrichmentOutcome::Recorded { trades: inserted })
+            })
+        })
+        .await
+        .map_err(|e| anyhow!("Database interaction error: {:?}", e))??;
+    Ok(outcome)
+}
+
+/// Result of [`record_enrichment_batch`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BatchOutcome {
+    /// Transactions marked enriched by this call.
+    pub recorded: usize,
+    /// Trade rows inserted for them.
+    pub trades: usize,
+    /// Transactions that were already enriched (left untouched).
+    pub skipped: usize,
+    /// Transactions with no frame row.
+    pub not_in_frame: usize,
+}
+
+#[derive(QueryableByName)]
+struct HashRow {
+    #[diesel(sql_type = VarChar)]
+    tx_hash: String,
+}
+
+/// [`record_enrichment`] with [`ReplacePolicy::OnlyIfPending`] for many
+/// transactions in one DB transaction and a handful of statements: the
+/// importer's path, where one round trip per transaction is far too slow
+/// through the proxy. Pending transactions are marked and get their
+/// trades; enriched ones are skipped; unknown ones are counted.
+pub async fn record_enrichment_batch(
+    items: &[(TxHash, Vec<Trade>)],
+    now: NaiveDateTime,
+) -> Result<BatchOutcome> {
+    if items.is_empty() {
+        return Ok(BatchOutcome::default());
+    }
+    let mut hashes = Vec::with_capacity(items.len());
+    let mut counts = Vec::with_capacity(items.len());
+    let mut rows_by_tx: std::collections::HashMap<String, Vec<NewDbRefTrade>> =
+        std::collections::HashMap::with_capacity(items.len());
+    for (tx_hash, trades) in items {
+        if let Some(stray) = trades.iter().find(|t| &t.tx_hash != tx_hash) {
+            return Err(anyhow!(
+                "trade {} belongs to transaction {}, not {}",
+                stray.receipt_id,
+                stray.tx_hash,
+                tx_hash
+            ));
+        }
+        let rows = trades
+            .iter()
+            .map(trade::to_new_db)
+            .collect::<Result<Vec<NewDbRefTrade>>>()?;
+        counts.push(
+            i16::try_from(rows.len())
+                .with_context(|| format!("{} trades exceed the i16 trade_count", rows.len()))?,
+        );
+        let key = tx_hash.as_str().to_owned();
+        if rows_by_tx.insert(key.clone(), rows).is_some() {
+            return Err(anyhow!("transaction {tx_hash} appears twice in the batch"));
+        }
+        hashes.push(key);
+    }
+    let total = hashes.len();
+    let conn = connection_pool::get().await?;
+    let outcome = conn
+        .interact(move |conn| {
+            conn.transaction::<_, diesel::result::Error, _>(|conn| {
+                let known: Vec<String> = ref_flow_txs::table
+                    .filter(ref_flow_txs::tx_hash.eq_any(&hashes))
+                    .select(ref_flow_txs::tx_hash)
+                    .load(conn)?;
+                let marked: Vec<HashRow> = diesel::sql_query(
+                    "UPDATE ref_flow_txs AS t \
+                     SET enriched_at = $1, trade_count = v.n \
+                     FROM unnest($2::varchar[], $3::smallint[]) AS v(tx_hash, n) \
+                     WHERE t.tx_hash = v.tx_hash AND t.enriched_at IS NULL \
+                     RETURNING t.tx_hash",
+                )
+                .bind::<Timestamp, _>(now)
+                .bind::<Array<VarChar>, _>(&hashes)
+                .bind::<Array<SmallInt>, _>(&counts)
+                .load(conn)?;
+                let mut rows: Vec<NewDbRefTrade> = Vec::new();
+                for m in &marked {
+                    if let Some(r) = rows_by_tx.remove(&m.tx_hash) {
+                        rows.extend(r);
+                    }
+                }
+                let inserted = trade::insert_chunked_with(&rows, NewDbRefTrade::CHUNK_ROWS, conn)?;
+                Ok(BatchOutcome {
+                    recorded: marked.len(),
+                    trades: inserted,
+                    skipped: known.len() - marked.len(),
+                    not_in_frame: total - known.len(),
+                })
             })
         })
         .await

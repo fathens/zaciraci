@@ -76,3 +76,24 @@ async fn missing_pool_makes_the_whole_fee_list_unknown() -> Result<()> {
     assert_eq!(lookup_hop_fees(&hops, now).await?, Some(vec![30, 7]));
     clear_fee_pools().await
 }
+
+#[tokio::test]
+#[serial(ref_flow_db, pool_info)]
+async fn pool_fees_at_returns_the_latest_snapshot_per_known_pool() -> Result<()> {
+    clear_fee_pools().await?;
+    let now = chrono::Utc::now().naive_utc();
+    let h = |n: i64| now - chrono::TimeDelta::hours(n);
+    snapshot(POOL_A, 30, h(3)).await?;
+    snapshot(POOL_A, 40, h(1)).await?;
+    snapshot(POOL_B, 7, h(2)).await?;
+    let fees = lookup_pool_fees_at(&[POOL_A, POOL_B, 900_003], now).await?;
+    assert_eq!(fees.get(&POOL_A), Some(&40));
+    assert_eq!(fees.get(&POOL_B), Some(&7));
+    assert!(!fees.contains_key(&900_003), "no snapshot: absent");
+    // Only snapshots at or before `at` count.
+    let fees = lookup_pool_fees_at(&[POOL_A, POOL_B], h(2)).await?;
+    assert_eq!(fees.get(&POOL_A), Some(&30));
+    assert_eq!(fees.get(&POOL_B), Some(&7));
+    assert!(lookup_pool_fees_at(&[], now).await?.is_empty());
+    clear_fee_pools().await
+}

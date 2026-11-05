@@ -263,3 +263,78 @@ async fn coverage_by_bucket_counts_total_and_enriched() -> Result<()> {
     );
     Ok(())
 }
+
+#[tokio::test]
+#[serial(ref_flow_db)]
+async fn batch_marks_pending_transactions_only_and_counts_the_rest() -> Result<()> {
+    clean_tables().await?;
+    seed(1, 0).await?; // pending
+    seed(2, 0).await?; // already enriched by the live collector
+    record(
+        2,
+        &[make_trade(20, 2, 5, chain_hops())],
+        ReplacePolicy::Always,
+        50,
+    )
+    .await?;
+    let items = vec![
+        (
+            tx_hash(1),
+            vec![
+                make_trade(11, 1, 1, chain_hops()),
+                make_trade(12, 1, 2, chain_hops()),
+            ],
+        ),
+        (tx_hash(2), vec![make_trade(21, 2, 3, chain_hops())]),
+        (tx_hash(3), vec![]), // no frame row
+    ];
+    let out = record_enrichment_batch(&items, ts(100)).await?;
+    assert_eq!(
+        out,
+        BatchOutcome {
+            recorded: 1,
+            trades: 2,
+            skipped: 1,
+            not_in_frame: 1,
+        }
+    );
+    let one = get(&tx_hash(1)).await?.unwrap();
+    assert_eq!(one.enriched_at, Some(ts(100)));
+    assert_eq!(one.trade_count, Some(2));
+    // The live row kept its own trade and timestamp.
+    let two = get(&tx_hash(2)).await?.unwrap();
+    assert_eq!(two.enriched_at, Some(ts(50)));
+    assert_eq!(two.trade_count, Some(1));
+    let two_trades = crate::ref_flow::trade::get_by_tx_hash(&tx_hash(2)).await?;
+    assert_eq!(two_trades.len(), 1);
+    assert_eq!(two_trades[0].receipt_id, receipt_id(20));
+    // Re-running the same batch is a no-op for the recorded transaction.
+    let again = record_enrichment_batch(&items, ts(200)).await?;
+    assert_eq!(again.recorded, 0);
+    assert_eq!(again.skipped, 2);
+    assert_eq!(again.not_in_frame, 1);
+    assert_eq!(
+        crate::ref_flow::trade::get_by_tx_hash(&tx_hash(1))
+            .await?
+            .len(),
+        2
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[serial(ref_flow_db)]
+async fn batch_rejects_misattributed_trades_and_duplicates() -> Result<()> {
+    clean_tables().await?;
+    seed(1, 0).await?;
+    let stray = vec![(tx_hash(1), vec![make_trade(11, 2, 1, chain_hops())])];
+    assert!(record_enrichment_batch(&stray, ts(1)).await.is_err());
+    let twice = vec![(tx_hash(1), vec![]), (tx_hash(1), vec![])];
+    assert!(record_enrichment_batch(&twice, ts(1)).await.is_err());
+    assert!(get(&tx_hash(1)).await?.unwrap().enriched_at.is_none());
+    assert_eq!(
+        record_enrichment_batch(&[], ts(1)).await?,
+        BatchOutcome::default()
+    );
+    Ok(())
+}
