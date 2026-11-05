@@ -33,6 +33,8 @@ pub const LIST_LIMIT: u32 = 100;
 pub const MAX_BODY_BYTES: u64 = 8 * 1024 * 1024;
 pub const MAX_CURSOR_LEN: usize = 512;
 pub const MAX_ATTEMPTS: u32 = 4;
+/// Longest pause honoured from a `Retry-After` header.
+pub const MAX_RETRY_AFTER: Duration = Duration::from_secs(120);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -110,6 +112,12 @@ pub trait NearBlocksApi: Send + Sync {
         tx_hash: &TxHash,
         credits: &dyn CreditSource,
     ) -> impl Future<Output = Result<Vec<Value>, FetchError>> + Send;
+
+    /// 429 answers received so far (including the ones absorbed by a
+    /// retry). The collector records the per-pass delta on the run rows.
+    /// Required rather than defaulted: an implementation that forgot to
+    /// count would otherwise report a healthy 0 forever.
+    fn http429_total(&self) -> u64;
 }
 
 pub struct NearBlocksClient {
@@ -117,6 +125,7 @@ pub struct NearBlocksClient {
     base: Url,
     limiter: Arc<RateLimiter>,
     delays: RetryDelays,
+    http429: std::sync::atomic::AtomicU64,
 }
 
 impl std::fmt::Debug for NearBlocksClient {
@@ -156,6 +165,7 @@ impl NearBlocksClient {
             base,
             limiter,
             delays,
+            http429: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -182,7 +192,9 @@ impl NearBlocksClient {
             self.limiter.acquire().await;
             match self.send_once(credit, url.clone()).await {
                 Ok(value) => return Ok(value),
-                Err(Attempt::Status(StatusCode::TOO_MANY_REQUESTS)) => {
+                Err(Attempt::RateLimited(retry_after)) => {
+                    self.http429
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     // The single 429 retry counts against MAX_ATTEMPTS too:
                     // one call never takes more than MAX_ATTEMPTS credits,
                     // which is what the collector reserves per request.
@@ -190,7 +202,13 @@ impl NearBlocksClient {
                         return Err(FetchError::RateLimited);
                     }
                     got_429 = true;
-                    tokio::time::sleep(self.delays.after_429).await;
+                    // Back off for what the provider asked (at least our own
+                    // delay) and hold the other workers too, or the retry
+                    // lands in the same refused window.
+                    // The retry itself waits in `acquire()` at the top of the
+                    // loop, like every other worker: one wait mechanism.
+                    let pause = backoff_after_429(retry_after, self.delays.after_429);
+                    self.limiter.pause_for(pause).await;
                 }
                 Err(Attempt::Status(status)) => return Err(FetchError::Http(status)),
                 Err(Attempt::Network(e)) => {
@@ -215,6 +233,9 @@ impl NearBlocksClient {
             .await
             .map_err(|e| Attempt::Network(e.without_url().to_string()))?;
         let status = response.status();
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            return Err(Attempt::RateLimited(retry_after(response.headers())));
+        }
         if !status.is_success() {
             return Err(Attempt::Status(status));
         }
@@ -224,9 +245,35 @@ impl NearBlocksClient {
 }
 
 enum Attempt {
+    /// 429 with the `Retry-After` delay, when the provider sent one.
+    RateLimited(Option<Duration>),
     Status(StatusCode),
     Network(String),
     Fatal(FetchError),
+}
+
+/// `Retry-After` in seconds (the delay form, `1*DIGIT` per RFC 9110; the
+/// HTTP-date form is rare and ignored). Absent or anything else: `None`.
+fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    let text = headers
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim();
+    if text.is_empty() || !text.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    text.parse::<u64>().ok().map(Duration::from_secs)
+}
+
+/// How long to hold every worker after a 429: the provider's `Retry-After`
+/// when given, never less than our own `after_429` delay and never more
+/// than [`MAX_RETRY_AFTER`]. Written without `clamp` so an `after_429`
+/// above the cap (the fields of [`RetryDelays`] are public) widens the cap
+/// instead of panicking.
+fn backoff_after_429(retry_after: Option<Duration>, after_429: Duration) -> Duration {
+    let cap = MAX_RETRY_AFTER.max(after_429);
+    retry_after.unwrap_or(after_429).max(after_429).min(cap)
 }
 
 /// Stream the body into memory, aborting once it exceeds `cap` (guards
@@ -260,6 +307,10 @@ fn data_array(mut value: Value) -> Result<Vec<Value>, FetchError> {
 }
 
 impl NearBlocksApi for NearBlocksClient {
+    fn http429_total(&self) -> u64 {
+        self.http429.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     async fn list_receipts(
         &self,
         from: &ListFrom,

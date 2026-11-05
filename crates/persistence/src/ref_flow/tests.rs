@@ -3,7 +3,7 @@ use crate::ref_flow::receipt::{RefReceipt, RefReceiptParts, ingest_receipts};
 use crate::ref_flow::test_ids::*;
 use crate::ref_flow::test_support::*;
 use crate::ref_flow::trade::tests::{chain_hops, make_trade};
-use crate::ref_flow::tx::{ReplacePolicy, record_enrichment};
+use crate::ref_flow::tx::record_enrichment;
 use common::types::TimeRange;
 use serial_test::serial;
 
@@ -60,17 +60,10 @@ async fn cleanup_batches_until_done_and_cascades_trades() -> Result<()> {
         seed_at(n, ts(i64::from(n))).await?;
     }
     seed_at(4, ts(10_000)).await?;
-    record_enrichment(
-        &tx_hash(1),
-        &[make_trade(1, 1, 1, chain_hops())],
-        ReplacePolicy::Always,
-        ts(0),
-    )
-    .await?;
+    record_enrichment(&tx_hash(1), &[make_trade(1, 1, 1, chain_hops())], ts(0)).await?;
     record_enrichment(
         &tx_hash(4),
         &[make_trade(4, 4, 10_000, chain_hops())],
-        ReplacePolicy::Always,
         ts(0),
     )
     .await?;

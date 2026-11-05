@@ -349,3 +349,117 @@ fn debug_output_does_not_contain_the_key() {
     assert!(!text.contains("super-secret-key"));
     assert!(text.contains("api.nearblocks.io"));
 }
+
+#[tokio::test]
+async fn a_429_with_retry_after_pauses_the_shared_limiter() {
+    let mut server = Server::new_async().await;
+    let path = format!("/v3/txns/{TX}/receipts");
+    let first = server
+        .mock("GET", path.as_str())
+        .with_status(429)
+        .with_header("Retry-After", "1")
+        .expect(1)
+        .create_async()
+        .await;
+    let second = server
+        .mock("GET", path.as_str())
+        .with_body(r#"{"data":[]}"#)
+        .expect(1)
+        .create_async()
+        .await;
+    let limiter = Arc::new(RateLimiter::new(10_000, Duration::ZERO));
+    let c = NearBlocksClient::new(
+        &server.url(),
+        &SecretString::new("k".to_owned()),
+        Arc::clone(&limiter),
+        fast_delays(),
+    )
+    .unwrap();
+    // Another worker sharing the limiter: it starts sending while the
+    // first call is being refused and must be held by the same pause.
+    let other = Arc::clone(&limiter);
+    let other_worker = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(300)).await; // after the 429 landed
+        let t = std::time::Instant::now();
+        other.acquire().await;
+        t.elapsed()
+    });
+    let started = std::time::Instant::now();
+    c.txn_receipts(&TxHash::new(TX).unwrap(), &credits(5))
+        .await
+        .unwrap();
+    first.assert_async().await;
+    second.assert_async().await;
+    assert!(
+        started.elapsed() >= Duration::from_millis(900),
+        "Retry-After outranks the short default delay: {:?}",
+        started.elapsed()
+    );
+    assert_eq!(c.http429_total(), 1, "the absorbed 429 is still counted");
+    let held = other_worker.await.unwrap();
+    assert!(
+        held >= Duration::from_millis(500),
+        "the pause is global: the other worker waited only {held:?}"
+    );
+    // Once the deadline passed, sends flow again at once.
+    let t = std::time::Instant::now();
+    limiter.acquire().await;
+    assert!(
+        t.elapsed() < Duration::from_millis(200),
+        "pause has lapsed by now"
+    );
+}
+
+#[test]
+fn retry_after_accepts_only_whole_seconds() {
+    use reqwest::header::{HeaderMap, HeaderValue, RETRY_AFTER};
+    let with = |v: &str| {
+        let mut h = HeaderMap::new();
+        h.insert(RETRY_AFTER, HeaderValue::from_str(v).unwrap());
+        retry_after(&h)
+    };
+    assert_eq!(with("7"), Some(Duration::from_secs(7)));
+    assert_eq!(with(" 0 "), Some(Duration::ZERO));
+    assert_eq!(
+        with("18446744073709551615"),
+        Some(Duration::from_secs(u64::MAX))
+    );
+    assert_eq!(with("+5"), None, "sign is not part of the delay form");
+    assert_eq!(with("-5"), None);
+    assert_eq!(with("1.5"), None);
+    assert_eq!(with("1e9"), None);
+    assert_eq!(
+        with("Wed, 21 Oct 2026 07:28:00 GMT"),
+        None,
+        "HTTP-date ignored"
+    );
+    assert_eq!(retry_after(&HeaderMap::new()), None);
+}
+
+#[test]
+fn backoff_is_bounded_by_our_delay_and_the_cap_without_panicking() {
+    let d = Duration::from_secs(10);
+    assert_eq!(backoff_after_429(None, d), d);
+    assert_eq!(
+        backoff_after_429(Some(Duration::ZERO), d),
+        d,
+        "never below our delay"
+    );
+    assert_eq!(
+        backoff_after_429(Some(Duration::from_secs(30)), d),
+        Duration::from_secs(30)
+    );
+    assert_eq!(
+        backoff_after_429(Some(Duration::from_secs(u64::MAX)), d),
+        MAX_RETRY_AFTER,
+        "huge Retry-After is capped"
+    );
+    // A delay above the cap used to make Duration::clamp panic.
+    let big = MAX_RETRY_AFTER + Duration::from_secs(60);
+    assert_eq!(backoff_after_429(None, big), big);
+    assert_eq!(backoff_after_429(Some(Duration::from_secs(1)), big), big);
+    assert_eq!(
+        backoff_after_429(Some(Duration::from_secs(u64::MAX)), big),
+        big
+    );
+}
